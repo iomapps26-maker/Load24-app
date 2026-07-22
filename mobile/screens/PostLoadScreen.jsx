@@ -1,0 +1,124 @@
+import { useState } from 'react';
+import { View, Text, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { TextInput, Button, HelperText, Chip } from 'react-native-paper';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
+import { api } from '../lib/api';
+
+const TRUCK_TYPES = [
+  'mahindra_pickup', 'tata_407', 'tata_ace', 'chota_hathi', 'four_vehicle_loader',
+  'eicher_truck', 'ashok_leyland', 'lcv', 'lgv', 'open_body', 'closed_body',
+  'container', 'trailer', 'tanker', 'tipper', 'flatbed', 'car_carrier'
+];
+
+// Fields the loads table requires (see Backend/sql/001_init.sql) — everything
+// else on the form is optional context for the sales/matching side.
+const REQUIRED = ['loading_pincode', 'loading_address', 'unloading_pincode', 'unloading_address', 'material_type', 'weight_tons', 'bhada_price'];
+
+function Field({ label, value, onChangeText, required, ...props }) {
+  return (
+    <View className="mb-4">
+      <Text className="mb-1 text-sm text-slate-600">{label}{required ? ' *' : ''}</Text>
+      <TextInput mode="outlined" value={value} onChangeText={onChangeText} dense {...props} />
+    </View>
+  );
+}
+
+export default function PostLoadScreen() {
+  const navigation = useNavigation();
+  const queryClient = useQueryClient();
+  const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
+
+  const [form, setForm] = useState({
+    loading_pincode: '', loading_address: '', loading_city: '', loading_state: '',
+    unloading_pincode: '', unloading_address: '', unloading_city: '', unloading_state: '',
+    material_type: '', weight_tons: '', bhada_price: '',
+    loading_poc_name: '', loading_poc_mobile: ''
+  });
+  const [truckType, setTruckType] = useState('tata_407');
+  const [error, setError] = useState('');
+
+  const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
+
+  const posterType = ['shipper', 'transporter', 'broker'].includes(profile?.user_type) ? profile.user_type : 'shipper';
+
+  const createLoad = useMutation({
+    mutationFn: () =>
+      api.loads.create({
+        ...form,
+        weight_tons: Number(form.weight_tons),
+        bhada_price: Number(form.bhada_price),
+        required_truck_type: truckType,
+        poster_type: posterType,
+        company_name: profile?.company_name || undefined
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['myLoads'] });
+      queryClient.invalidateQueries({ queryKey: ['loads'] });
+      navigation.goBack();
+    },
+    onError: (err) => setError(err.message)
+  });
+
+  const isValid = REQUIRED.every((k) => String(form[k]).trim().length > 0) && !isNaN(Number(form.weight_tons)) && !isNaN(Number(form.bhada_price));
+
+  const handleSubmit = () => {
+    setError('');
+    if (!isValid) return setError('Please fill all required fields');
+    createLoad.mutate();
+  };
+
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1 bg-white">
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        <Text className="mb-4 text-lg font-bold text-slate-900">Loading point</Text>
+        <Field label="Pincode" required keyboardType="number-pad" value={form.loading_pincode} onChangeText={set('loading_pincode')} />
+        <Field label="Address" required value={form.loading_address} onChangeText={set('loading_address')} />
+        <View className="flex-row gap-3">
+          <View className="flex-1"><Field label="City" value={form.loading_city} onChangeText={set('loading_city')} /></View>
+          <View className="flex-1"><Field label="State" value={form.loading_state} onChangeText={set('loading_state')} /></View>
+        </View>
+
+        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Unloading point</Text>
+        <Field label="Pincode" required keyboardType="number-pad" value={form.unloading_pincode} onChangeText={set('unloading_pincode')} />
+        <Field label="Address" required value={form.unloading_address} onChangeText={set('unloading_address')} />
+        <View className="flex-row gap-3">
+          <View className="flex-1"><Field label="City" value={form.unloading_city} onChangeText={set('unloading_city')} /></View>
+          <View className="flex-1"><Field label="State" value={form.unloading_state} onChangeText={set('unloading_state')} /></View>
+        </View>
+
+        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Load details</Text>
+        <Field label="Material type" required value={form.material_type} onChangeText={set('material_type')} placeholder="e.g. Cement, Steel, Cotton" />
+        <View className="flex-row gap-3">
+          <View className="flex-1"><Field label="Weight (tons)" required keyboardType="decimal-pad" value={form.weight_tons} onChangeText={set('weight_tons')} /></View>
+          <View className="flex-1"><Field label="Bhada price (₹)" required keyboardType="number-pad" value={form.bhada_price} onChangeText={set('bhada_price')} /></View>
+        </View>
+
+        <Text className="mb-2 text-sm text-slate-600">Required truck type *</Text>
+        <View className="mb-4 flex-row flex-wrap gap-2">
+          {TRUCK_TYPES.map((type) => (
+            <Chip key={type} selected={truckType === type} onPress={() => setTruckType(type)} compact>
+              {type.replace(/_/g, ' ')}
+            </Chip>
+          ))}
+        </View>
+
+        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Contact at loading point (optional)</Text>
+        <Field label="Contact name" value={form.loading_poc_name} onChangeText={set('loading_poc_name')} />
+        <Field label="Contact mobile" keyboardType="phone-pad" value={form.loading_poc_mobile} onChangeText={set('loading_poc_mobile')} />
+
+        <HelperText type="error" visible={!!error}>{error}</HelperText>
+
+        <Button
+          mode="contained"
+          buttonColor="#f97316"
+          loading={createLoad.isPending}
+          disabled={createLoad.isPending}
+          onPress={handleSubmit}
+        >
+          Post Load
+        </Button>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}

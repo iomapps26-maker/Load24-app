@@ -6,23 +6,31 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { PaperProvider } from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { LanguageProvider } from './lib/i18n';
 import { queryClient } from './lib/queryClient';
+import { api } from './lib/api';
 import LandingScreen from './screens/LandingScreen';
 import AuthChoiceScreen from './screens/AuthChoiceScreen';
 import LoginScreen from './screens/LoginScreen';
-import FindLoadsScreen from './screens/FindLoadsScreen';
+import ProfileSetupScreen from './screens/ProfileSetupScreen';
+import MainTabs from './navigation/MainTabs';
 
 const Stack = createNativeStackNavigator();
 
-// Swaps between the auth stack and the app stack based on Supabase session
-// state — same role the web app's <AuthProvider>/<AuthenticatedApp> pair played.
+// Swaps between the auth stack, profile-setup, and the app stack based on
+// Supabase session state and whether a user_profiles row exists yet — same
+// role the web app's <AuthProvider>/<AuthenticatedApp> pair played.
 function AuthGate() {
   const { isAuthenticated, isLoadingAuth } = useAuth();
+  const { data: profile, isLoading: isLoadingProfile } = useQuery({
+    queryKey: ['profile'],
+    queryFn: api.profile.me,
+    enabled: isAuthenticated
+  });
 
-  if (isLoadingAuth) {
+  if (isLoadingAuth || (isAuthenticated && isLoadingProfile)) {
     return (
       <View className="flex-1 items-center justify-center bg-white">
         <ActivityIndicator size="large" color="#1d4ed8" />
@@ -33,7 +41,14 @@ function AuthGate() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {isAuthenticated ? (
-        <Stack.Screen name="FindLoads" component={FindLoadsScreen} options={{ headerShown: true, title: 'Find Loads' }} />
+        profile ? (
+          <>
+            <Stack.Screen name="Main" component={MainTabs} />
+            <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
+          </>
+        ) : (
+          <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} />
+        )
       ) : (
         <>
           <Stack.Screen name="Landing" component={LandingScreen} />

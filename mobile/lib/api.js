@@ -32,6 +32,7 @@ export const api = {
       const qs = new URLSearchParams(params).toString();
       return request(`/api/loads${qs ? `?${qs}` : ''}`);
     },
+    mine: () => request('/api/loads?mine=true'),
     create: (body) => request('/api/loads', { method: 'POST', body })
   },
   loadLikes: {

@@ -3,18 +3,23 @@ import { Router } from 'express';
 const router = Router();
 
 // GET /api/loads?truck_type=tata_407&pincode=110001 — mirrors FindLoads.jsx's query
+// GET /api/loads?mine=true — the caller's own posted loads, any status (for the home dashboard)
 router.get('/', async (req, res) => {
-  const { truck_type, pincode, limit = 50 } = req.query;
+  const { truck_type, pincode, mine, limit = 50 } = req.query;
 
   let query = req.supabase
     .from('loads')
     .select('*')
-    .eq('status', 'active')
     .order('created_at', { ascending: false })
     .limit(Number(limit));
 
-  if (truck_type && truck_type !== 'all') query = query.eq('required_truck_type', truck_type);
-  if (pincode) query = query.or(`loading_pincode.eq.${pincode},unloading_pincode.eq.${pincode}`);
+  if (mine === 'true') {
+    query = query.eq('posted_by', req.user.email);
+  } else {
+    query = query.eq('status', 'active');
+    if (truck_type && truck_type !== 'all') query = query.eq('required_truck_type', truck_type);
+    if (pincode) query = query.or(`loading_pincode.eq.${pincode},unloading_pincode.eq.${pincode}`);
+  }
 
   const { data, error } = await query;
   if (error) return res.status(400).json({ error: error.message });
