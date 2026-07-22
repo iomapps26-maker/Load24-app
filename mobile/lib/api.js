@@ -29,7 +29,10 @@ export const api = {
   },
   loads: {
     list: (params = {}) => {
-      const qs = new URLSearchParams(params).toString();
+      const defined = Object.fromEntries(
+        Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
+      );
+      const qs = new URLSearchParams(defined).toString();
       return request(`/api/loads${qs ? `?${qs}` : ''}`);
     },
     mine: () => request('/api/loads?mine=true'),

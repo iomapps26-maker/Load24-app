@@ -120,9 +120,10 @@ export default function ProfileSetupScreen() {
                 value={user?.email ?? ''}
                 editable={false}
                 left={<TextInput.Icon icon="email-outline" />}
+                right={<TextInput.Icon icon="check-decagram" color="#16a34a" />}
                 className="mb-1"
               />
-              <Text className="mb-4 text-xs text-slate-400">{t('otpSentToEmail')}</Text>
+              <Text className="mb-4 text-xs text-green-600">✓ {t('emailVerified')}</Text>
 
               <Text className="mb-1 text-sm text-slate-600">{t('mobileNumber')} *</Text>
               <TextInput
@@ -172,7 +173,7 @@ export default function ProfileSetupScreen() {
                 disabled={saveProfile.isPending || !fullName.trim() || !mobile.trim()}
                 onPress={handleSubmit}
               >
-                {t('sendOtp')}
+                {t('saveAndContinue')}
               </Button>
             </View>
           </>

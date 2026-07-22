@@ -55,6 +55,7 @@ export default function PostLoadScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['myLoads'] });
       queryClient.invalidateQueries({ queryKey: ['loads'] });
+      queryClient.invalidateQueries({ queryKey: ['recentLoads'] });
       navigation.goBack();
     },
     onError: (err) => setError(err.message)
