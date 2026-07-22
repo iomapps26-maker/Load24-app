@@ -1,6 +1,7 @@
 import { View, Text, ScrollView } from 'react-native';
 import { Button } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../lib/i18n';
 
 const STEPS = [
@@ -14,11 +15,15 @@ const FEATURES = ['feature1', 'feature2', 'feature3', 'feature4', 'feature5', 'f
 export default function LandingScreen() {
   const navigation = useNavigation();
   const { language, setLanguage, t } = useLanguage();
+  const insets = useSafeAreaInsets();
 
   return (
     <ScrollView className="flex-1 bg-navy" contentContainerStyle={{ paddingBottom: 48 }}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-5 pb-4 pt-14">
+      <View
+        className="flex-row items-center justify-between px-5 pb-4"
+        style={{ paddingTop: insets.top + 12 }}
+      >
         <View className="flex-row items-center gap-2">
           <Text className="text-2xl">🚚</Text>
           <Text className="text-xl font-bold text-white">

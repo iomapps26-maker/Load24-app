@@ -3,6 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, Alert, Linking } from 'react-
 import { Icon } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery } from '@tanstack/react-query';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
@@ -85,8 +86,13 @@ export default function HomeScreen() {
   const { language, setLanguage, t } = useLanguage();
   const scrollRef = useRef(null);
   const [summaryY, setSummaryY] = useState(0);
+  const insets = useSafeAreaInsets();
 
   const { data: myLoads = [] } = useQuery({ queryKey: ['myLoads'], queryFn: api.loads.mine });
+  const { data: recentLoads = [] } = useQuery({
+    queryKey: ['recentLoads'],
+    queryFn: () => api.loads.list({ limit: 5 })
+  });
 
   const stats = {
     active: myLoads.filter((l) => l.status === 'active').length,
@@ -103,9 +109,12 @@ export default function HomeScreen() {
   };
 
   return (
-    <ScrollView ref={scrollRef} className="flex-1 bg-white" contentContainerStyle={{ paddingBottom: 32 }}>
+    <ScrollView ref={scrollRef} className="flex-1 bg-white">
       {/* Header */}
-      <View className="flex-row items-center justify-between border-b border-slate-100 px-4 pb-3 pt-14">
+      <View
+        className="flex-row items-center justify-between border-b border-slate-100 px-4 pb-3"
+        style={{ paddingTop: insets.top + 12 }}
+      >
         <View className="flex-row items-center gap-2">
           <Text className="text-2xl">🚚</Text>
           <Text className="text-lg font-bold text-navy">
@@ -177,15 +186,23 @@ export default function HomeScreen() {
       </View>
 
       {/* Recent loads */}
-      {myLoads.length > 0 && (
+      {recentLoads.length > 0 && (
         <View className="px-4 pt-2">
           <View className="mb-3 flex-row items-center justify-between">
             <Text className="text-xl font-bold text-slate-900">{t('recentLoads')}</Text>
-            <Text className="text-sm font-semibold text-brand">{t('viewAll')} →</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Loads')}>
+              <Text className="text-sm font-semibold text-brand">{t('viewAll')} →</Text>
+            </TouchableOpacity>
           </View>
-          {myLoads.slice(0, 5).map((load) => (
+          {recentLoads.slice(0, 5).map((load) => (
             <RecentLoadCard key={load.id} load={load} t={t} />
           ))}
+          <TouchableOpacity
+            className="mb-2 items-center rounded-xl border border-brand py-3"
+            onPress={() => navigation.navigate('Loads')}
+          >
+            <Text className="text-sm font-bold text-brand">{t('viewMoreLoads')}</Text>
+          </TouchableOpacity>
         </View>
       )}
 

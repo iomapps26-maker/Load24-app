@@ -162,37 +162,40 @@ create policy "user_profiles_update_own_or_admin" on public.user_profiles
   for update using (user_id = auth.uid() or public.has_role(array['admin','support_manager']));
 
 -- loads policies (read: anyone authenticated; write: owner or sales staff)
+-- Uses auth.jwt() ->> 'email' rather than querying auth.users directly —
+-- the authenticated role has no SELECT grant on auth.users, so a subquery
+-- against it fails with "permission denied for table users".
 create policy "loads_select_all" on public.loads
   for select using (auth.role() = 'authenticated');
 create policy "loads_insert_own" on public.loads
   for insert with check (
-    posted_by = (select email from auth.users where id = auth.uid())
+    posted_by = (auth.jwt() ->> 'email')
   );
 create policy "loads_update_own_or_staff" on public.loads
   for update using (
-    posted_by = (select email from auth.users where id = auth.uid())
+    posted_by = (auth.jwt() ->> 'email')
     or public.has_role(array['admin','sales_executive','sales_team_lead','sales_manager'])
   );
 create policy "loads_delete_own_or_admin" on public.loads
   for delete using (
-    posted_by = (select email from auth.users where id = auth.uid())
+    posted_by = (auth.jwt() ->> 'email')
     or public.has_role(array['admin'])
   );
 
 -- load_likes policies
 create policy "load_likes_select_own_or_staff" on public.load_likes
   for select using (
-    liked_by_email = (select email from auth.users where id = auth.uid())
-    or assigned_sales_executive = (select email from auth.users where id = auth.uid())
+    liked_by_email = (auth.jwt() ->> 'email')
+    or assigned_sales_executive = (auth.jwt() ->> 'email')
     or public.has_role(array['admin','sales_executive','sales_team_lead','sales_manager'])
   );
 create policy "load_likes_insert_own" on public.load_likes
   for insert with check (
-    liked_by_email = (select email from auth.users where id = auth.uid())
+    liked_by_email = (auth.jwt() ->> 'email')
   );
 create policy "load_likes_delete_own_or_admin" on public.load_likes
   for delete using (
-    liked_by_email = (select email from auth.users where id = auth.uid())
+    liked_by_email = (auth.jwt() ->> 'email')
     or public.has_role(array['admin'])
-  ); 
+  );
   
