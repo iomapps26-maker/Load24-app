@@ -60,33 +60,36 @@ export default function FindLoadsScreen() {
         dense
         className="mb-3"
       />
-      <FlatList
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        data={TRUCK_TYPES}
-        keyExtractor={(item) => item}
-        style={{ flexGrow: 0 }}
-        contentContainerStyle={{ gap: 8, paddingVertical: 4, paddingRight: 16 }}
-        renderItem={({ item }) => {
-          const selected = truckType === item;
-          return (
-            <Chip
-              selected={selected}
-              onPress={() => setTruckType(item)}
-              style={{
-                backgroundColor: selected ? '#f97316' : '#ffffff',
-                borderColor: selected ? '#f97316' : '#e2e8f0',
-                borderWidth: 1
-              }}
-              textStyle={{ color: selected ? '#ffffff' : '#334155', fontWeight: '600' }}
-              selectedColor={selected ? '#ffffff' : '#334155'}
-            >
-              {item.replace(/_/g, ' ')}
-            </Chip>
-          );
-        }}
-      />
-      <View className="mb-3" />
+      <View style={{ marginHorizontal: -16 }}>
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={TRUCK_TYPES}
+          keyExtractor={(item) => item}
+          style={{ flexGrow: 0 }}
+          contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingVertical: 10 }}
+          renderItem={({ item }) => {
+            const selected = truckType === item;
+            return (
+              <Chip
+                selected={selected}
+                onPress={() => setTruckType(item)}
+                style={{
+                  backgroundColor: selected ? '#f97316' : '#ffffff',
+                  borderColor: selected ? '#f97316' : '#e2e8f0',
+                  borderWidth: 1,
+                  paddingVertical: 2
+                }}
+                textStyle={{ color: selected ? '#ffffff' : '#334155', fontWeight: '600' }}
+                selectedColor={selected ? '#ffffff' : '#334155'}
+              >
+                {item.replace(/_/g, ' ')}
+              </Chip>
+            );
+          }}
+        />
+      </View>
+      <View className="mb-4" />
 
       {isLoading ? (
         <ActivityIndicator className="mt-10" />
