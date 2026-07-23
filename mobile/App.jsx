@@ -4,7 +4,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { PaperProvider } from 'react-native-paper';
+import { PaperProvider, MD3LightTheme } from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './lib/AuthContext';
@@ -13,11 +13,23 @@ import { queryClient } from './lib/queryClient';
 import { api } from './lib/api';
 import LandingScreen from './screens/LandingScreen';
 import AuthChoiceScreen from './screens/AuthChoiceScreen';
-import LoginScreen from './screens/LoginScreen';
 import ProfileSetupScreen from './screens/ProfileSetupScreen';
 import MainTabs from './navigation/MainTabs';
 
 const Stack = createNativeStackNavigator();
+
+// Keeps every react-native-paper component (Button, Chip, TextInput focus
+// outline, ActivityIndicator, etc.) on the brand orange instead of MD3's
+// default purple, so the theme stays consistent without hand-coloring each
+// screen individually.
+const paperTheme = {
+  ...MD3LightTheme,
+  colors: {
+    ...MD3LightTheme.colors,
+    primary: '#f97316',
+    secondary: '#1e3a8a'
+  }
+};
 
 // Swaps between the auth stack, profile-setup, and the app stack based on
 // Supabase session state and whether a user_profiles row exists yet — same
@@ -33,7 +45,7 @@ function AuthGate() {
   if (isLoadingAuth || (isAuthenticated && isLoadingProfile)) {
     return (
       <View className="flex-1 items-center justify-center bg-white">
-        <ActivityIndicator size="large" color="#1d4ed8" />
+        <ActivityIndicator size="large" color="#f97316" />
       </View>
     );
   }
@@ -53,7 +65,6 @@ function AuthGate() {
         <>
           <Stack.Screen name="Landing" component={LandingScreen} />
           <Stack.Screen name="AuthChoice" component={AuthChoiceScreen} />
-          <Stack.Screen name="Login" component={LoginScreen} />
         </>
       )}
     </Stack.Navigator>
@@ -67,7 +78,7 @@ export default function App() {
         <QueryClientProvider client={queryClient}>
           <LanguageProvider>
             <AuthProvider>
-              <PaperProvider settings={{ icon: (props) => <Icon {...props} /> }}>
+              <PaperProvider theme={paperTheme} settings={{ icon: (props) => <Icon {...props} /> }}>
                 <NavigationContainer>
                   <AuthGate />
                 </NavigationContainer>

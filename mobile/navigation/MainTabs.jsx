@@ -33,8 +33,24 @@ export default function MainTabs() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Loads" component={FindLoadsScreen} options={{ headerShown: true, title: 'Find Loads' }} />
-      <Tab.Screen name="Create" component={PostLoadScreen} options={{ headerShown: true, title: 'Post Load' }} />
+      <Tab.Screen
+        name="Loads"
+        component={FindLoadsScreen}
+        options={{
+          headerShown: true,
+          title: 'Find Loads',
+          headerTitleStyle: { fontWeight: '800', color: '#0f172a' }
+        }}
+      />
+      <Tab.Screen
+        name="Create"
+        component={PostLoadScreen}
+        options={{
+          headerShown: true,
+          title: 'Post Load',
+          headerTitleStyle: { fontWeight: '800', color: '#0f172a' }
+        }}
+      />
       <Tab.Screen name="Chat" component={ChatScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>

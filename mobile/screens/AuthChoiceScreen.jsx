@@ -116,7 +116,7 @@ export default function AuthChoiceScreen() {
 
               <Button
                 mode="contained"
-                buttonColor="#0f172a"
+                buttonColor="#f97316"
                 loading={loading}
                 disabled={!otp || loading}
                 onPress={handleVerifySignupOtp}
@@ -193,7 +193,7 @@ export default function AuthChoiceScreen() {
 
               <Button
                 mode="contained"
-                buttonColor="#0f172a"
+                buttonColor="#f97316"
                 loading={loading}
                 disabled={
                   loading ||
