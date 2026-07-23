@@ -1,7 +1,28 @@
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Icon } from 'react-native-paper';
 import { useLanguage } from '../lib/i18n';
-import { TRUCK_TYPE_LABELS, FUEL_LABELS } from '../lib/loadOptions';
+
+const TRUCK_TYPE_LABELS = {
+  en: {
+    mahindra_pickup: 'Mahindra Pickup', tata_407: 'Tata 407', tata_ace: 'Tata Ace',
+    chota_hathi: 'Chota Hathi', four_vehicle_loader: '4-Wheeler Loader', eicher_truck: 'Eicher Truck',
+    ashok_leyland: 'Ashok Leyland', lcv: 'LCV', lgv: 'LGV', open_body: 'Open Body',
+    closed_body: 'Closed Body', container: 'Container', trailer: 'Trailer', tanker: 'Tanker',
+    tipper: 'Tipper', flatbed: 'Flatbed', car_carrier: 'Car Carrier'
+  },
+  hi: {
+    mahindra_pickup: 'महिंद्रा पिकअप', tata_407: 'टाटा 407', tata_ace: 'टाटा ऐस',
+    chota_hathi: 'छोटा हाथी', four_vehicle_loader: '4-व्हीलर लोडर', eicher_truck: 'आयशर ट्रक',
+    ashok_leyland: 'अशोक लेलैंड', lcv: 'LCV', lgv: 'LGV', open_body: 'खुला बॉडी',
+    closed_body: 'बंद बॉडी', container: 'कंटेनर', trailer: 'ट्रेलर', tanker: 'टैंकर',
+    tipper: 'टिपर', flatbed: 'फ्लैटबेड', car_carrier: 'कार कैरियर'
+  }
+};
+
+const FUEL_LABELS = {
+  en: { diesel: 'Diesel', cng: 'CNG', electric: 'Electric', any: 'Any' },
+  hi: { diesel: 'डीजल', cng: 'सीएनजी', electric: 'इलेक्ट्रिक', any: 'कोई भी' }
+};
 
 function formatDate(dateStr, language) {
   if (!dateStr) return '—';

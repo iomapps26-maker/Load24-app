@@ -2,11 +2,10 @@ import { Router } from 'express';
 
 const router = Router();
 
-// GET /api/loads?truck_type=tata_407&pincode=110001&material_type=cement — mirrors
-// FindLoads.jsx's query, filtering on the same fields PostLoadScreen collects
+// GET /api/loads?truck_type=tata_407&pincode=110001 — mirrors FindLoads.jsx's query
 // GET /api/loads?mine=true — the caller's own posted loads, any status (for the home dashboard)
 router.get('/', async (req, res) => {
-  const { truck_type, pincode, material_type, mine, limit = 50 } = req.query;
+  const { truck_type, pincode, mine, limit = 50 } = req.query;
 
   let query = req.supabase
     .from('loads')
@@ -20,7 +19,6 @@ router.get('/', async (req, res) => {
     query = query.eq('status', 'active');
     if (truck_type && truck_type !== 'all') query = query.eq('required_truck_type', truck_type);
     if (pincode) query = query.or(`loading_pincode.eq.${pincode},unloading_pincode.eq.${pincode}`);
-    if (material_type) query = query.ilike('material_type', `%${material_type}%`);
   }
 
   const { data, error } = await query;

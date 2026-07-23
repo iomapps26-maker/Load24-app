@@ -4,8 +4,12 @@ import { TextInput, Button, HelperText, Chip } from 'react-native-paper';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import { api } from '../lib/api';
-import { TRUCK_TYPES, TRUCK_TYPE_LABELS } from '../lib/loadOptions';
-import { useLanguage } from '../lib/i18n';
+
+const TRUCK_TYPES = [
+  'mahindra_pickup', 'tata_407', 'tata_ace', 'chota_hathi', 'four_vehicle_loader',
+  'eicher_truck', 'ashok_leyland', 'lcv', 'lgv', 'open_body', 'closed_body',
+  'container', 'trailer', 'tanker', 'tipper', 'flatbed', 'car_carrier'
+];
 
 // Fields the loads table requires (see Backend/sql/001_init.sql) — everything
 // else on the form is optional context for the sales/matching side.
@@ -23,7 +27,6 @@ function Field({ label, value, onChangeText, required, ...props }) {
 export default function PostLoadScreen() {
   const navigation = useNavigation();
   const queryClient = useQueryClient();
-  const { language } = useLanguage();
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
 
   const [form, setForm] = useState({
@@ -96,7 +99,7 @@ export default function PostLoadScreen() {
         <View className="mb-4 flex-row flex-wrap gap-2">
           {TRUCK_TYPES.map((type) => (
             <Chip key={type} selected={truckType === type} onPress={() => setTruckType(type)} compact>
-              {TRUCK_TYPE_LABELS[language]?.[type] ?? type.replace(/_/g, ' ')}
+              {type.replace(/_/g, ' ')}
             </Chip>
           ))}
         </View>
