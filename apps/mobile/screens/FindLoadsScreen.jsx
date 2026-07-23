@@ -79,36 +79,28 @@ export default function FindLoadsScreen() {
           className="flex-1"
         />
       </View>
-      <View style={{ marginHorizontal: -16 }}>
-        <FlatList
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          data={TRUCK_TYPES}
-          keyExtractor={(item) => item}
-          style={{ flexGrow: 0 }}
-          contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingVertical: 10 }}
-          renderItem={({ item }) => {
-            const selected = truckType === item;
-            return (
-              <Chip
-                selected={selected}
-                onPress={() => setTruckType(item)}
-                style={{
-                  backgroundColor: selected ? '#f97316' : '#ffffff',
-                  borderColor: selected ? '#f97316' : '#e2e8f0',
-                  borderWidth: 1,
-                  paddingVertical: 2
-                }}
-                textStyle={{ color: selected ? '#ffffff' : '#334155', fontWeight: '600' }}
-                selectedColor={selected ? '#ffffff' : '#334155'}
-              >
-                {item === 'all' ? t('allTrucks') : (TRUCK_TYPE_LABELS[language]?.[item] ?? item.replace(/_/g, ' '))}
-              </Chip>
-            );
-          }}
-        />
+      <View className="mb-4 flex-row flex-wrap gap-2">
+        {TRUCK_TYPES.map((item) => {
+          const selected = truckType === item;
+          return (
+            <Chip
+              key={item}
+              selected={selected}
+              onPress={() => setTruckType(item)}
+              compact
+              style={{
+                backgroundColor: selected ? '#f97316' : '#ffffff',
+                borderColor: selected ? '#f97316' : '#e2e8f0',
+                borderWidth: 1
+              }}
+              textStyle={{ color: selected ? '#ffffff' : '#334155', fontWeight: '600' }}
+              selectedColor={selected ? '#ffffff' : '#334155'}
+            >
+              {item === 'all' ? t('allTrucks') : (TRUCK_TYPE_LABELS[language]?.[item] ?? item.replace(/_/g, ' '))}
+            </Chip>
+          );
+        })}
       </View>
-      <View className="mb-4" />
 
       {isLoading ? (
         <ActivityIndicator className="mt-10" />

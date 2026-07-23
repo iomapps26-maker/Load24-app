@@ -1,0 +1,8 @@
+{
+  "name": "load24",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

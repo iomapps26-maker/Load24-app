@@ -2,49 +2,28 @@
 
 A freight marketplace connecting shippers, transporters, and truck owners.
 
-This repo contains three projects:
+## Layout
 
 ```
-.         Vite + React web app (this directory) — being migrated off Base44 onto Supabase
-Backend/  Node + Express REST API, talks to Supabase
-mobile/   Expo Router app (React Native) — the target Supabase-native client
+apps/backend/   Node + Express REST API, talks to Supabase
+apps/mobile/    React Native CLI app (Android + iOS) — the client
+packages/       Code shared between apps (empty for now)
+infra/          Infra-as-code / local-environment definitions (empty for now)
+db/             Postgres schema migrations, applied via Supabase SQL Editor
+docs/           Design notes and historical records
 ```
 
-See [MIGRATION.md](./MIGRATION.md) for the full migration plan and status.
+This is an npm workspaces monorepo (`package.json` at root lists
+`apps/*` and `packages/*`). Each app still has its own independent
+`package.json`/`node_modules` — install and run them from within their own
+folder (`apps/backend/README.md`, `apps/mobile/README.md`), not from root.
 
-## Web app (this directory)
+## Getting started
 
-The web app used to run entirely on Base44. It now talks to Supabase directly
-(`src/api/base44Client.js`) for `UserProfile`, `Load`, and `LoadLike`, and to
-the Express API in `Backend/` for profile writes. Every other entity (Deal,
-Wallet, Invoice, Truck, Notification, etc.) doesn't have a Supabase table yet
-and will throw/return empty until it's migrated — see MIGRATION.md for the
-page-by-page plan.
+1. Create a Supabase project and run the migrations in `db/migrations/`, in
+   order, via its SQL Editor.
+2. Follow `apps/backend/README.md` to get the API running locally.
+3. Follow `apps/mobile/README.md` to get the mobile app running against it.
 
-### Setup
-
-1. Create a Supabase project and run `Backend/sql/001_init.sql` in its SQL editor.
-2. Copy `.env.example` to `.env.local` and fill in your Supabase project URL,
-   anon key, and the URL of your local `Backend/` instance:
-
-   ```
-   VITE_SUPABASE_URL=https://your-project.supabase.co
-   VITE_SUPABASE_ANON_KEY=your-anon-key
-   VITE_API_URL=http://localhost:4000
-   ```
-3. Install dependencies and run the app:
-
-   ```
-   npm install
-   npm run dev
-   ```
-
-You'll also want the `Backend/` API running locally (see its own setup in
-MIGRATION.md) since profile creation goes through it.
-
-### Scripts
-
-- `npm run dev` — start the Vite dev server
-- `npm run build` — production build
-- `npm run lint` / `npm run lint:fix` — ESLint
-- `npm run typecheck` — type-check the codebase (JSDoc-based, via `jsconfig.json`)
+See `docs/MIGRATION.md` for the historical Base44 → Supabase migration
+record, and `CONTRIBUTING.md` for the branching/PR workflow.

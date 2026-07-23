@@ -1,3 +1,11 @@
+> **Historical record.** Written during the early Base44→Supabase migration.
+> Paths below refer to the pre-monorepo layout (`Backend/`, `mobile/`) — these
+> now live at `apps/backend/` and `apps/mobile/`. Some details (e.g. Expo
+> Router) describe an earlier iteration of the mobile app, which moved to a
+> bare React Native CLI app with React Navigation. Kept for context, not as
+> current setup instructions — see `apps/backend/README.md` and
+> `apps/mobile/README.md` for that.
+
 # Migrating LOAD24 to Expo / Express / Supabase
 
 This repo now contains two new sibling projects alongside the existing Vite

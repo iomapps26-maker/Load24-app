@@ -1,6 +1,8 @@
 #env
 .env
 .env.*
+!.env.example
+!**/.env.example
 
 # Logs
 logs
@@ -31,11 +33,11 @@ dist-ssr
 base44/.app.jsonc
 
 # React Native / Android / Expo build artifacts
-mobile/android/.gradle/
-mobile/android/app/build/
-mobile/android/build/
-mobile/android/local.properties
-mobile/.expo/
-mobile/.bundle/
-mobile/ios/build/
-mobile/ios/Pods/
+apps/mobile/android/.gradle/
+apps/mobile/android/app/build/
+apps/mobile/android/build/
+apps/mobile/android/local.properties
+apps/mobile/.expo/
+apps/mobile/.bundle/
+apps/mobile/ios/build/
+apps/mobile/ios/Pods/
