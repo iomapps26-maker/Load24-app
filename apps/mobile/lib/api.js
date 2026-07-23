@@ -25,7 +25,27 @@ async function request(path, { method = 'GET', body } = {}) {
 export const api = {
   profile: {
     me: () => request('/api/profile/me'),
-    save: (body) => request('/api/profile', { method: 'POST', body })
+    save: (body) => request('/api/profile', { method: 'POST', body }),
+    submitKyc: () => request('/api/profile/kyc/submit', { method: 'POST' }),
+    deleteAccount: () => request('/api/profile', { method: 'DELETE' })
+  },
+  bankDetails: {
+    me: () => request('/api/bank-details/me'),
+    save: (body) => request('/api/bank-details', { method: 'POST', body })
+  },
+  reviews: {
+    mine: () => request('/api/reviews/mine')
+  },
+  supportTickets: {
+    mine: () => request('/api/support-tickets/mine'),
+    create: (body) => request('/api/support-tickets', { method: 'POST', body })
+  },
+  onboarding: {
+    selectRole: (roles) => request('/api/onboarding/select-role', { method: 'POST', body: { roles } })
+  },
+  auth: {
+    deviceCheckin: (body) => request('/api/auth/devices/checkin', { method: 'POST', body }),
+    logoutAllDevices: () => request('/api/auth/logout-all-devices', { method: 'POST' })
   },
   loads: {
     list: (params = {}) => {

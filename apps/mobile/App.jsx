@@ -8,12 +8,16 @@ import { PaperProvider, MD3LightTheme } from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './lib/AuthContext';
-import { LanguageProvider } from './lib/i18n';
+import { LanguageProvider, useLanguage } from './lib/i18n';
 import { queryClient } from './lib/queryClient';
 import { api } from './lib/api';
 import LandingScreen from './screens/LandingScreen';
 import AuthChoiceScreen from './screens/AuthChoiceScreen';
 import ProfileSetupScreen from './screens/ProfileSetupScreen';
+import ProfitCalculatorScreen from './screens/ProfitCalculatorScreen';
+import FinancialForecastScreen from './screens/FinancialForecastScreen';
+import KycVerificationScreen from './screens/KycVerificationScreen';
+import SupportTicketsScreen from './screens/SupportTicketsScreen';
 import MainTabs from './navigation/MainTabs';
 
 const Stack = createNativeStackNavigator();
@@ -36,6 +40,7 @@ const paperTheme = {
 // role the web app's <AuthProvider>/<AuthenticatedApp> pair played.
 function AuthGate() {
   const { isAuthenticated, isLoadingAuth } = useAuth();
+  const { t } = useLanguage();
   const { data: profile, isLoading: isLoadingProfile } = useQuery({
     queryKey: ['profile'],
     queryFn: api.profile.me,
@@ -57,6 +62,26 @@ function AuthGate() {
           <>
             <Stack.Screen name="Main" component={MainTabs} />
             <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
+            <Stack.Screen
+              name="ProfitCalculator"
+              component={ProfitCalculatorScreen}
+              options={{ headerShown: true, title: t('profitCalculator') }}
+            />
+            <Stack.Screen
+              name="FinancialForecast"
+              component={FinancialForecastScreen}
+              options={{ headerShown: true, title: t('financialForecast') }}
+            />
+            <Stack.Screen
+              name="KycVerification"
+              component={KycVerificationScreen}
+              options={{ headerShown: true, title: t('kycVerification') }}
+            />
+            <Stack.Screen
+              name="SupportTickets"
+              component={SupportTicketsScreen}
+              options={{ headerShown: true, title: t('supportTickets') }}
+            />
           </>
         ) : (
           <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} />

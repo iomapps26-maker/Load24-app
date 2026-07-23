@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, Text, FlatList, RefreshControl } from 'react-native';
-import { ActivityIndicator, Chip, TextInput } from 'react-native-paper';
+import { ActivityIndicator, Button, Menu, TextInput } from 'react-native-paper';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
@@ -20,6 +20,7 @@ export default function FindLoadsScreen() {
   const [truckType, setTruckType] = useState('all');
   const [pincode, setPincode] = useState('');
   const [materialType, setMaterialType] = useState('');
+  const [filterMenuVisible, setFilterMenuVisible] = useState(false);
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
 
@@ -68,7 +69,7 @@ export default function FindLoadsScreen() {
           value={pincode}
           onChangeText={setPincode}
           dense
-          className="flex-1"
+          style={{ flex: 1 }}
         />
         <TextInput
           mode="outlined"
@@ -76,30 +77,38 @@ export default function FindLoadsScreen() {
           value={materialType}
           onChangeText={setMaterialType}
           dense
-          className="flex-1"
+          style={{ flex: 1 }}
         />
       </View>
-      <View className="mb-4 flex-row flex-wrap gap-2">
-        {TRUCK_TYPES.map((item) => {
-          const selected = truckType === item;
-          return (
-            <Chip
-              key={item}
-              selected={selected}
-              onPress={() => setTruckType(item)}
-              compact
-              style={{
-                backgroundColor: selected ? '#f97316' : '#ffffff',
-                borderColor: selected ? '#f97316' : '#e2e8f0',
-                borderWidth: 1
-              }}
-              textStyle={{ color: selected ? '#ffffff' : '#334155', fontWeight: '600' }}
-              selectedColor={selected ? '#ffffff' : '#334155'}
+      <View className="mb-4">
+        <Menu
+          visible={filterMenuVisible}
+          onDismiss={() => setFilterMenuVisible(false)}
+          anchor={
+            <Button
+              mode="outlined"
+              onPress={() => setFilterMenuVisible(true)}
+              icon="chevron-down"
+              contentStyle={{ flexDirection: 'row-reverse' }}
+              textColor="#334155"
+              style={{ borderColor: '#e2e8f0', alignSelf: 'flex-start' }}
             >
-              {item === 'all' ? t('allTrucks') : (TRUCK_TYPE_LABELS[language]?.[item] ?? item.replace(/_/g, ' '))}
-            </Chip>
-          );
-        })}
+              {truckType === 'all' ? t('allTrucks') : (TRUCK_TYPE_LABELS[language]?.[truckType] ?? truckType.replace(/_/g, ' '))}
+            </Button>
+          }
+        >
+          {TRUCK_TYPES.map((item) => (
+            <Menu.Item
+              key={item}
+              onPress={() => {
+                setTruckType(item);
+                setFilterMenuVisible(false);
+              }}
+              title={item === 'all' ? t('allTrucks') : (TRUCK_TYPE_LABELS[language]?.[item] ?? item.replace(/_/g, ' '))}
+              titleStyle={truckType === item ? { color: '#f97316', fontWeight: '700' } : undefined}
+            />
+          ))}
+        </Menu>
       </View>
 
       {isLoading ? (

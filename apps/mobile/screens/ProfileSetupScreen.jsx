@@ -10,7 +10,7 @@ const ROLES = [
   { value: 'shipper', icon: 'package-variant-closed', titleKey: 'roleShipperTitle', descKey: 'roleShipperDesc' },
   { value: 'transporter', icon: 'office-building-outline', titleKey: 'roleTransporterTitle', descKey: 'roleTransporterDesc' },
   { value: 'broker', icon: 'account-outline', titleKey: 'roleBrokerTitle', descKey: 'roleBrokerDesc' },
-  { value: 'truck_owner', icon: 'truck-outline', titleKey: 'roleTruckOwnerTitle', descKey: 'roleTruckOwnerDesc' },
+  { value: 'vehicle_owner', icon: 'truck-outline', titleKey: 'roleTruckOwnerTitle', descKey: 'roleTruckOwnerDesc' },
   { value: 'driver', icon: 'account-outline', titleKey: 'roleDriverTitle', descKey: 'roleDriverDesc' }
 ];
 
@@ -50,7 +50,7 @@ export default function ProfileSetupScreen() {
   const queryClient = useQueryClient();
 
   const [step, setStep] = useState(0); // 0: role, 1: basic info
-  const [userType, setUserType] = useState(null);
+  const [selectedRoles, setSelectedRoles] = useState([]);
   const [fullName, setFullName] = useState('');
   const [mobile, setMobile] = useState('');
   const [companyName, setCompanyName] = useState('');
@@ -60,19 +60,27 @@ export default function ProfileSetupScreen() {
   const [error, setError] = useState('');
 
   const saveProfile = useMutation({
-    mutationFn: () =>
-      api.profile.save({
+    mutationFn: async () => {
+      await api.profile.save({
         full_name: fullName.trim(),
         mobile: mobile.trim(),
-        user_type: userType,
+        user_type: selectedRoles[0],
         company_name: companyName.trim() || undefined,
         pincode: pincode.trim() || undefined,
         city: city.trim() || undefined,
         state: state.trim() || undefined
-      }),
+      });
+      await api.onboarding.selectRole(selectedRoles);
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['profile'] }),
     onError: (err) => setError(err.message)
   });
+
+  const toggleRole = (value) => {
+    setSelectedRoles((prev) =>
+      prev.includes(value) ? prev.filter((r) => r !== value) : [...prev, value]
+    );
+  };
 
   const handleSubmit = () => {
     setError('');
@@ -92,8 +100,8 @@ export default function ProfileSetupScreen() {
               <RoleCard
                 key={role.value}
                 role={role}
-                selected={userType === role.value}
-                onPress={() => setUserType(role.value)}
+                selected={selectedRoles.includes(role.value)}
+                onPress={() => toggleRole(role.value)}
                 t={t}
               />
             ))}
@@ -101,7 +109,7 @@ export default function ProfileSetupScreen() {
               mode="contained"
               buttonColor="#f97316"
               className="mt-2"
-              disabled={!userType}
+              disabled={selectedRoles.length === 0}
               onPress={() => setStep(1)}
             >
               {t('next')}

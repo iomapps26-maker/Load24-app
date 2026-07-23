@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Linking } from 'react-native';
 import { supabase } from './supabase';
+import { api } from './api';
+import { getDeviceId, getDeviceInfo } from './device';
 
 const AuthContext = createContext(null);
 
@@ -29,8 +31,13 @@ export function AuthProvider({ children }) {
       setIsLoadingAuth(false);
     });
 
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
+      if (event === 'SIGNED_IN' && newSession) {
+        getDeviceId()
+          .then((device_id) => api.auth.deviceCheckin({ device_id, device_info: getDeviceInfo() }))
+          .catch(() => {}); // best-effort; never block sign-in on this
+      }
     });
 
     // Catches the browser redirect back into the app after Google sign-in.
@@ -96,6 +103,12 @@ export function AuthProvider({ children }) {
 
   const signOut = () => supabase.auth.signOut();
 
+  // Revokes every device's session, not just this one, then signs out locally.
+  const signOutAllDevices = async () => {
+    await api.auth.logoutAllDevices();
+    await supabase.auth.signOut();
+  };
+
   const value = {
     session,
     user: session?.user ?? null,
@@ -109,7 +122,8 @@ export function AuthProvider({ children }) {
     signInWithPassword,
     signUpWithPassword,
     resetPassword,
-    signOut
+    signOut,
+    signOutAllDevices
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
