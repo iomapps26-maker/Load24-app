@@ -4,17 +4,22 @@ import { ActivityIndicator, Chip, TextInput } from 'react-native-paper';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
+import { TRUCK_TYPES as ALL_TRUCK_TYPES, TRUCK_TYPE_LABELS } from '../lib/loadOptions';
 import LoadCard from '../components/LoadCard';
 
-const TRUCK_TYPES = ['all', 'tata_407', 'tata_ace', 'eicher_truck', 'container', 'trailer'];
+// Same enum PostLoadScreen posts with, plus "all" — every filter here mirrors
+// a field collected on the Post Load form so shippers/vehicle owners can
+// search by exactly what was posted.
+const TRUCK_TYPES = ['all', ...ALL_TRUCK_TYPES];
 
 // Mobile port of src/pages/FindLoads.jsx: same three queries (loads, my likes,
 // profile) plus an optimistic like/unlike mutation, now via the Express API.
 export default function FindLoadsScreen() {
   const queryClient = useQueryClient();
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [truckType, setTruckType] = useState('all');
   const [pincode, setPincode] = useState('');
+  const [materialType, setMaterialType] = useState('');
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
 
@@ -24,8 +29,12 @@ export default function FindLoadsScreen() {
     isRefetching,
     refetch
   } = useQuery({
-    queryKey: ['loads', truckType, pincode],
-    queryFn: () => api.loads.list({ truck_type: truckType, pincode: pincode || undefined })
+    queryKey: ['loads', truckType, pincode, materialType],
+    queryFn: () => api.loads.list({
+      truck_type: truckType,
+      pincode: pincode || undefined,
+      material_type: materialType || undefined
+    })
   });
 
   const { data: myLikes = [] } = useQuery({
@@ -52,14 +61,24 @@ export default function FindLoadsScreen() {
 
   return (
     <View className="flex-1 bg-slate-50 px-4 pt-3">
-      <TextInput
-        mode="outlined"
-        placeholder={t('searchByPincode')}
-        value={pincode}
-        onChangeText={setPincode}
-        dense
-        className="mb-3"
-      />
+      <View className="mb-3 flex-row gap-2">
+        <TextInput
+          mode="outlined"
+          placeholder={t('searchByPincode')}
+          value={pincode}
+          onChangeText={setPincode}
+          dense
+          className="flex-1"
+        />
+        <TextInput
+          mode="outlined"
+          placeholder={t('material')}
+          value={materialType}
+          onChangeText={setMaterialType}
+          dense
+          className="flex-1"
+        />
+      </View>
       <View style={{ marginHorizontal: -16 }}>
         <FlatList
           horizontal
@@ -83,7 +102,7 @@ export default function FindLoadsScreen() {
                 textStyle={{ color: selected ? '#ffffff' : '#334155', fontWeight: '600' }}
                 selectedColor={selected ? '#ffffff' : '#334155'}
               >
-                {item.replace(/_/g, ' ')}
+                {item === 'all' ? t('allTrucks') : (TRUCK_TYPE_LABELS[language]?.[item] ?? item.replace(/_/g, ' '))}
               </Chip>
             );
           }}
