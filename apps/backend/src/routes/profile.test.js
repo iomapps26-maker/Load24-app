@@ -70,27 +70,6 @@ function buildApp(mockSupabase, userId = 'user-1') {
   return app;
 }
 
-describe('POST /api/profile/kyc/submit', () => {
-  it('moves pending to submitted', async () => {
-    const app = buildApp(createMockSupabase([{ user_id: 'user-1', kyc_status: 'pending' }]));
-    const res = await request(app).post('/api/profile/kyc/submit');
-    expect(res.status).toBe(200);
-    expect(res.body.kyc_status).toBe('submitted');
-  });
-
-  it('rejects when already verified', async () => {
-    const app = buildApp(createMockSupabase([{ user_id: 'user-1', kyc_status: 'verified' }]));
-    const res = await request(app).post('/api/profile/kyc/submit');
-    expect(res.status).toBe(400);
-  });
-
-  it('404s when profile does not exist', async () => {
-    const app = buildApp(createMockSupabase([]));
-    const res = await request(app).post('/api/profile/kyc/submit');
-    expect(res.status).toBe(404);
-  });
-});
-
 describe('DELETE /api/profile', () => {
   beforeEach(() => {
     mockAdminState.deleteUserCalls = [];

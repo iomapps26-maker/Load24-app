@@ -17,7 +17,7 @@ export default function LoadCard({ load, liked, onToggleLike }) {
   const fuelLabel = FUEL_LABELS[language]?.[load.fuel_type_required] ?? t('any');
 
   return (
-    <View className="mb-4 overflow-hidden rounded-2xl border-l-4 border-brand bg-white shadow-sm">
+    <View className="mb-4 overflow-hidden rounded-3xl border-l-4 border-brand bg-white shadow-md">
       {/* Route */}
       <View className="bg-orange-50 px-4 py-3">
         <View className="flex-row items-center justify-between">
@@ -53,14 +53,14 @@ export default function LoadCard({ load, liked, onToggleLike }) {
       <View className="px-4 py-3">
         <View className="flex-row justify-between">
           <View className="flex-1 flex-row items-center gap-2">
-            <Icon source="package-variant-closed" size={16} color="#64748b" />
+            <Icon source="package-variant-closed" size={18} color="#64748b" />
             <View>
               <Text className="text-xs text-slate-400">{t('material')}</Text>
               <Text className="text-sm font-semibold text-slate-800">{load.material_type}</Text>
             </View>
           </View>
           <View className="flex-1 flex-row items-center gap-2">
-            <Icon source="weight-kilogram" size={16} color="#64748b" />
+            <Icon source="weight-kilogram" size={18} color="#64748b" />
             <View>
               <Text className="text-xs text-slate-400">{t('weight')}</Text>
               <Text className="text-sm font-semibold text-slate-800">{load.weight_tons} {t('tons')}</Text>
@@ -70,14 +70,14 @@ export default function LoadCard({ load, liked, onToggleLike }) {
 
         <View className="mt-3 flex-row justify-between">
           <View className="flex-1 flex-row items-center gap-2">
-            <Icon source="truck-outline" size={16} color="#64748b" />
+            <Icon source="truck-outline" size={18} color="#64748b" />
             <View>
               <Text className="text-xs text-slate-400">{t('truckType')}</Text>
               <Text className="text-sm font-semibold text-slate-800">{truckTypeLabel}</Text>
             </View>
           </View>
           <View className="flex-1 flex-row items-center gap-2">
-            <Icon source="gas-station-outline" size={16} color="#64748b" />
+            <Icon source="gas-station-outline" size={18} color="#64748b" />
             <View>
               <Text className="text-xs text-slate-400">{t('fuel')}</Text>
               <Text className="text-sm font-semibold text-slate-800">{fuelLabel}</Text>
@@ -90,7 +90,7 @@ export default function LoadCard({ load, liked, onToggleLike }) {
         <View className="flex-row items-center justify-between">
           <View>
             <Text className="text-xs text-slate-400">{t('price')}</Text>
-            <Text className="text-xl font-extrabold text-green-600">
+            <Text className="text-2xl font-extrabold text-green-600">
               ₹{Number(load.bhada_price).toLocaleString('en-IN')}
             </Text>
             <View className="mt-1 flex-row items-center gap-1">
@@ -101,10 +101,10 @@ export default function LoadCard({ load, liked, onToggleLike }) {
 
           <TouchableOpacity
             onPress={() => onToggleLike(load)}
-            className={`flex-row items-center gap-1.5 rounded-xl px-5 py-3 ${liked ? 'bg-red-600' : 'bg-brand'}`}
+            className={`flex-row items-center gap-1.5 rounded-xl px-6 py-3.5 ${liked ? 'bg-red-600' : 'bg-brand'}`}
           >
             <Icon source={liked ? 'heart' : 'heart-outline'} size={18} color="#ffffff" />
-            <Text className="text-sm font-bold text-white">{liked ? t('liked') : t('like')}</Text>
+            <Text className="text-base font-bold text-white">{liked ? t('liked') : t('like')}</Text>
           </TouchableOpacity>
         </View>
       </View>

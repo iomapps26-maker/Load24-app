@@ -12,6 +12,9 @@ router.get('/me', async (req, res) => {
     .maybeSingle();
 
   if (error) return res.status(400).json({ error: error.message });
+  // mpin_hash is a bcrypt hash, not something the client needs — never send
+  // credential material back over the wire even to its own owner.
+  if (data) delete data.mpin_hash;
   res.json(data);
 });
 
@@ -43,31 +46,6 @@ router.post('/', async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json(data);
-});
-
-// POST /api/profile/kyc/submit — moves kyc_status from pending/partial to submitted
-router.post('/kyc/submit', async (req, res) => {
-  const { data: existing, error: fetchError } = await req.supabase
-    .from('user_profiles')
-    .select('kyc_status')
-    .eq('user_id', req.user.id)
-    .maybeSingle();
-
-  if (fetchError) return res.status(400).json({ error: fetchError.message });
-  if (!existing) return res.status(404).json({ error: 'Profile not found' });
-  if (!['pending', 'partial'].includes(existing.kyc_status)) {
-    return res.status(400).json({ error: `Cannot submit KYC from status '${existing.kyc_status}'` });
-  }
-
-  const { data, error } = await req.supabase
-    .from('user_profiles')
-    .update({ kyc_status: 'submitted' })
-    .eq('user_id', req.user.id)
-    .select()
-    .single();
-
-  if (error) return res.status(400).json({ error: error.message });
-  res.json(data);
 });
 
 // DELETE /api/profile — permanently deletes the caller's account. Cascades

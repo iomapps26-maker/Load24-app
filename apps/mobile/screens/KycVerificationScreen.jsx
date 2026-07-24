@@ -1,8 +1,17 @@
-import { View, Text } from 'react-native';
+import { useState } from 'react';
+import { View, Text, ScrollView, Alert, ActivityIndicator, Modal, Pressable } from 'react-native';
 import { Icon, Button } from 'react-native-paper';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import { pick, types as documentTypes } from '@react-native-documents/picker';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { supabase } from '../lib/supabase';
 import { useLanguage } from '../lib/i18n';
+import { KYC_DOCUMENT_META } from '../lib/kycDocuments';
+import { beginExternalPicker, endExternalPicker } from '../lib/pickerGuard';
+import { compressImageToLimit, assertFileWithinLimit } from '../lib/fileSizeLimit';
+
+const KYC_BUCKET = 'kyc-documents';
 
 const KYC_BADGE = {
   pending: { key: 'kycStatusPending', bg: 'bg-slate-100', text: 'text-slate-600' },
@@ -12,42 +21,206 @@ const KYC_BADGE = {
   rejected: { key: 'kycStatusRejected', bg: 'bg-red-100', text: 'text-red-700' }
 };
 
+// RN's fetch can read a local file:// / content:// / ph:// picker URI, but
+// its Android fetch/OkHttp layer unreliably sends Blob-bodied HTTPS PUTs
+// (a long-standing RN gap) — supabase-js's uploadToSignedUrl silently fails
+// with "Network request failed" when given a Blob. An ArrayBuffer body goes
+// through RN's binary-body path instead and uploads reliably.
+async function uploadToSignedUrl(storagePath, token, file) {
+  const response = await fetch(file.uri);
+  const arrayBuffer = await response.arrayBuffer();
+  const { error } = await supabase.storage
+    .from(KYC_BUCKET)
+    .uploadToSignedUrl(storagePath, token, arrayBuffer, { contentType: file.type || 'application/octet-stream' });
+  if (error) throw error;
+}
+
+// Android's native Alert.alert only reliably renders 3 buttons — a 4th
+// (Cancel) silently disappears — so the source/Cancel choice is a real
+// bottom-sheet modal instead, with Cancel always visible as its own row.
+function PickerSheet({ visible, label, onTakePhoto, onChooseGallery, onAttachPdf, onCancel, t }) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
+      <Pressable className="flex-1 justify-end bg-black/40" onPress={onCancel}>
+        <Pressable className="rounded-t-3xl bg-white p-5 pb-8" onPress={() => {}}>
+          <Text className="mb-4 text-center text-base font-bold text-slate-900">{label}</Text>
+          <Button mode="outlined" className="mb-3" onPress={onTakePhoto}>
+            {t('takePhoto')}
+          </Button>
+          <Button mode="outlined" className="mb-3" onPress={onChooseGallery}>
+            {t('chooseFromGallery')}
+          </Button>
+          <Button mode="outlined" className="mb-3" onPress={onAttachPdf}>
+            {t('attachPdf')}
+          </Button>
+          <Button mode="text" onPress={onCancel}>
+            {t('cancel')}
+          </Button>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function DocumentRow({ documentType, uploadedDoc, t, onUploaded }) {
+  const meta = KYC_DOCUMENT_META[documentType] ?? { labelKey: null, icon: 'file-outline' };
+  const label = meta.labelKey ? t(meta.labelKey) : documentType;
+  const [busy, setBusy] = useState(false);
+  const [sheetVisible, setSheetVisible] = useState(false);
+
+  const handleFile = async (file) => {
+    setBusy(true);
+    try {
+      const { storage_path, token } = await api.kyc.uploadUrl(documentType, file.name);
+      await uploadToSignedUrl(storage_path, token, file);
+      await api.kyc.confirmDocument({
+        document_type: documentType,
+        storage_path,
+        file_name: file.name,
+        mime_type: file.type
+      });
+      onUploaded();
+    } catch (err) {
+      Alert.alert(t('uploadFailed'), err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickPhoto = async (fromCamera) => {
+    setSheetVisible(false);
+    beginExternalPicker();
+    try {
+      const result = fromCamera
+        ? await launchCamera({ mediaType: 'photo', quality: 0.8 })
+        : await launchImageLibrary({ mediaType: 'photo', quality: 0.8 });
+      const asset = result?.assets?.[0];
+      if (!asset?.uri) return;
+      let compressed;
+      try {
+        compressed = await compressImageToLimit(asset.uri);
+      } catch (err) {
+        Alert.alert(t('uploadFailed'), t('imageCompressFailed'));
+        return;
+      }
+      const baseName = (asset.fileName || `${documentType}.jpg`).replace(/\.[^./]+$/, '');
+      await handleFile({ uri: compressed.uri, name: `${baseName}.jpg`, type: 'image/jpeg' });
+    } finally {
+      endExternalPicker();
+    }
+  };
+
+  const pickPdf = async () => {
+    setSheetVisible(false);
+    beginExternalPicker();
+    try {
+      const result = await pick({ type: [documentTypes.pdf] });
+      const picked = Array.isArray(result) ? result[0] : result;
+      if (!picked?.uri) return;
+      try {
+        await assertFileWithinLimit(picked.uri);
+      } catch (err) {
+        Alert.alert(t('uploadFailed'), t('pdfTooLarge'));
+        return;
+      }
+      await handleFile({ uri: picked.uri, name: picked.name || `${documentType}.pdf`, type: picked.type || 'application/pdf' });
+    } catch (err) {
+      const canceled = err?.code === 'DOCUMENT_PICKER_CANCELED' || /cancel/i.test(err?.message || '');
+      if (!canceled) Alert.alert(t('uploadFailed'), err.message);
+    } finally {
+      endExternalPicker();
+    }
+  };
+
+  return (
+    <View className="mb-3 flex-row items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-4">
+      <View className="mr-3 flex-1 flex-row items-center">
+        <Icon source={meta.icon} size={22} color={uploadedDoc ? '#16a34a' : '#64748b'} />
+        <View className="ml-3 flex-1">
+          <Text className="text-sm font-semibold text-slate-800">{label}</Text>
+          {!!uploadedDoc && <Text className="text-xs text-green-600">✓ {t('uploaded')}</Text>}
+        </View>
+      </View>
+      {busy ? (
+        <ActivityIndicator color="#f97316" />
+      ) : (
+        <Button
+          mode={uploadedDoc ? 'outlined' : 'contained'}
+          buttonColor={uploadedDoc ? undefined : '#f97316'}
+          compact
+          onPress={() => setSheetVisible(true)}
+        >
+          {uploadedDoc ? t('replace') : t('upload')}
+        </Button>
+      )}
+
+      <PickerSheet
+        visible={sheetVisible}
+        label={label}
+        onTakePhoto={() => pickPhoto(true)}
+        onChooseGallery={() => pickPhoto(false)}
+        onAttachPdf={pickPdf}
+        onCancel={() => setSheetVisible(false)}
+        t={t}
+      />
+    </View>
+  );
+}
+
 export default function KycVerificationScreen() {
   const { t } = useLanguage();
   const queryClient = useQueryClient();
-  const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
+  const { data, isLoading } = useQuery({ queryKey: ['kyc-case'], queryFn: api.kyc.case, retry: false });
 
-  const submitKyc = useMutation({
-    mutationFn: api.profile.submitKyc,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['profile'] })
-  });
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['kyc-case'] });
+    queryClient.invalidateQueries({ queryKey: ['profile'] });
+  };
 
-  const status = profile?.kyc_status ?? 'pending';
+  if (isLoading) {
+    return (
+      <View className="flex-1 items-center justify-center bg-white">
+        <ActivityIndicator size="large" color="#f97316" />
+      </View>
+    );
+  }
+
+  if (!data) {
+    return (
+      <View className="flex-1 items-center justify-center bg-white px-8">
+        <Text className="text-center text-sm text-slate-500">{t('comingSoonFeature')}</Text>
+      </View>
+    );
+  }
+
+  const status = data.case.status;
   const badge = KYC_BADGE[status] ?? KYC_BADGE.pending;
-  const canSubmit = status === 'pending' || status === 'partial';
+  const isFinal = status === 'submitted' || status === 'verified';
+  const documentsByType = Object.fromEntries((data.documents || []).map((d) => [d.document_type, d]));
 
   return (
-    <View className="flex-1 items-center bg-white px-8 pt-16">
-      <View className="mb-4 h-16 w-16 items-center justify-center rounded-full bg-blue-50">
-        <Icon source="shield-check-outline" size={32} color="#2563eb" />
+    <ScrollView className="flex-1 bg-slate-50" contentContainerStyle={{ padding: 20 }}>
+      <View className="mb-5 items-center">
+        <View className="mb-3 h-16 w-16 items-center justify-center rounded-full bg-blue-50">
+          <Icon source="shield-check-outline" size={32} color="#2563eb" />
+        </View>
+        <View className={`mb-3 rounded-full px-4 py-2 ${badge.bg}`}>
+          <Text className={`text-sm font-semibold ${badge.text}`}>{t(badge.key)}</Text>
+        </View>
+        <Text className="text-center text-sm text-slate-500">
+          {isFinal ? t('kycAllDocumentsUploaded') : t('kycUploadDesc')}
+        </Text>
       </View>
-      <Text className="mb-3 text-center text-lg font-bold text-slate-900">{t('kycVerification')}</Text>
-      <View className={`mb-4 rounded-full px-4 py-2 ${badge.bg}`}>
-        <Text className={`text-sm font-semibold ${badge.text}`}>{t(badge.key)}</Text>
-      </View>
-      <Text className="mb-6 text-center text-sm text-slate-500">{t('kycSubmitDesc')}</Text>
 
-      {canSubmit && (
-        <Button
-          mode="contained"
-          buttonColor="#f97316"
-          loading={submitKyc.isPending}
-          disabled={submitKyc.isPending}
-          onPress={() => submitKyc.mutate()}
-        >
-          {t('submitKyc')}
-        </Button>
-      )}
-    </View>
+      {data.required_documents.map((documentType) => (
+        <DocumentRow
+          key={documentType}
+          documentType={documentType}
+          uploadedDoc={documentsByType[documentType]}
+          t={t}
+          onUploaded={refresh}
+        />
+      ))}
+    </ScrollView>
   );
 }

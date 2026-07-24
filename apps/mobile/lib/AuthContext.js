@@ -103,6 +103,31 @@ export function AuthProvider({ children }) {
 
   const signOut = () => supabase.auth.signOut();
 
+  // WhatsApp OTP login: the backend generates/verifies the code and
+  // delivers it via the WhatsApp Cloud API (Supabase Free has no custom
+  // "Send SMS" hook to reuse its built-in phone auth), then hands back a
+  // magic-link token minted server-side for a phone-derived account. The
+  // actual session is still established here, client-side, via Supabase's
+  // own verifyOtp — same trust boundary as every other sign-in method, no
+  // custom session-forging.
+  const sendPhoneOtp = async (phone) => {
+    try {
+      await api.auth.whatsappSendOtp(phone);
+      return { error: null };
+    } catch (err) {
+      return { error: err };
+    }
+  };
+
+  const verifyPhoneOtp = async (phone, code) => {
+    try {
+      const { token_hash } = await api.auth.whatsappVerifyOtp(phone, code);
+      return await supabase.auth.verifyOtp({ token_hash, type: 'magiclink' });
+    } catch (err) {
+      return { error: err };
+    }
+  };
+
   // Revokes every device's session, not just this one, then signs out locally.
   const signOutAllDevices = async () => {
     await api.auth.logoutAllDevices();
@@ -123,7 +148,9 @@ export function AuthProvider({ children }) {
     signUpWithPassword,
     resetPassword,
     signOut,
-    signOutAllDevices
+    signOutAllDevices,
+    sendPhoneOtp,
+    verifyPhoneOtp
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

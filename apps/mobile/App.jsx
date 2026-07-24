@@ -1,4 +1,5 @@
 import './global.css';
+import { useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -18,6 +19,8 @@ import ProfitCalculatorScreen from './screens/ProfitCalculatorScreen';
 import FinancialForecastScreen from './screens/FinancialForecastScreen';
 import KycVerificationScreen from './screens/KycVerificationScreen';
 import SupportTicketsScreen from './screens/SupportTicketsScreen';
+import TermsAcceptanceScreen from './screens/TermsAcceptanceScreen';
+import MpinSetupScreen from './screens/MpinSetupScreen';
 import MainTabs from './navigation/MainTabs';
 
 const Stack = createNativeStackNavigator();
@@ -47,7 +50,20 @@ function AuthGate() {
     enabled: isAuthenticated
   });
 
-  if (isLoadingAuth || (isAuthenticated && isLoadingProfile)) {
+  // Blocks non-onboarding routes on the backend too (requireConsents) —
+  // checked here so the app can show the terms screen proactively instead
+  // of bouncing off a 403 from whichever route loads first.
+  const { data: consentsStatus, isLoading: isLoadingConsents } = useQuery({
+    queryKey: ['consents-status'],
+    queryFn: api.auth.consentsStatus,
+    enabled: isAuthenticated && !!profile
+  });
+  const needsTerms = (consentsStatus?.missing_consents?.length ?? 0) > 0;
+
+  const isLoadingGate =
+    isLoadingAuth || (isAuthenticated && isLoadingProfile) || (isAuthenticated && !!profile && isLoadingConsents);
+
+  if (isLoadingGate) {
     return (
       <View className="flex-1 items-center justify-center bg-white">
         <ActivityIndicator size="large" color="#f97316" />
@@ -59,30 +75,35 @@ function AuthGate() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {isAuthenticated ? (
         profile ? (
-          <>
-            <Stack.Screen name="Main" component={MainTabs} />
-            <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
-            <Stack.Screen
-              name="ProfitCalculator"
-              component={ProfitCalculatorScreen}
-              options={{ headerShown: true, title: t('profitCalculator') }}
-            />
-            <Stack.Screen
-              name="FinancialForecast"
-              component={FinancialForecastScreen}
-              options={{ headerShown: true, title: t('financialForecast') }}
-            />
-            <Stack.Screen
-              name="KycVerification"
-              component={KycVerificationScreen}
-              options={{ headerShown: true, title: t('kycVerification') }}
-            />
-            <Stack.Screen
-              name="SupportTickets"
-              component={SupportTicketsScreen}
-              options={{ headerShown: true, title: t('supportTickets') }}
-            />
-          </>
+          needsTerms ? (
+            <Stack.Screen name="AcceptTerms" component={TermsAcceptanceScreen} />
+          ) : (
+            <>
+              <Stack.Screen name="Main" component={MainTabs} />
+              <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
+              <Stack.Screen name="MpinSetup" component={MpinSetupScreen} options={{ headerShown: true, title: t('mpinSettings') }} />
+              <Stack.Screen
+                name="ProfitCalculator"
+                component={ProfitCalculatorScreen}
+                options={{ headerShown: true, title: t('profitCalculator') }}
+              />
+              <Stack.Screen
+                name="FinancialForecast"
+                component={FinancialForecastScreen}
+                options={{ headerShown: true, title: t('financialForecast') }}
+              />
+              <Stack.Screen
+                name="KycVerification"
+                component={KycVerificationScreen}
+                options={{ headerShown: true, title: t('kycVerification') }}
+              />
+              <Stack.Screen
+                name="SupportTickets"
+                component={SupportTicketsScreen}
+                options={{ headerShown: true, title: t('supportTickets') }}
+              />
+            </>
+          )
         ) : (
           <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} />
         )

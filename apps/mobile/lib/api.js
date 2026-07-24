@@ -16,7 +16,13 @@ async function request(path, { method = 'GET', body } = {}) {
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({}));
-    throw new Error(payload.error || `Request failed: ${res.status}`);
+    const err = new Error(payload.error || `Request failed: ${res.status}`);
+    err.status = res.status;
+    // Some endpoints (e.g. mpin/login) put extra detail alongside `error`
+    // (attempts_remaining, locked_until) — surface it on the thrown Error
+    // instead of forcing every caller to re-parse the response body.
+    Object.assign(err, payload);
+    throw err;
   }
   if (res.status === 204) return null;
   return res.json();
@@ -26,7 +32,6 @@ export const api = {
   profile: {
     me: () => request('/api/profile/me'),
     save: (body) => request('/api/profile', { method: 'POST', body }),
-    submitKyc: () => request('/api/profile/kyc/submit', { method: 'POST' }),
     deleteAccount: () => request('/api/profile', { method: 'DELETE' })
   },
   bankDetails: {
@@ -43,9 +48,23 @@ export const api = {
   onboarding: {
     selectRole: (roles) => request('/api/onboarding/select-role', { method: 'POST', body: { roles } })
   },
+  kyc: {
+    case: () => request('/api/profile/kyc/case'),
+    uploadUrl: (document_type, file_name) =>
+      request('/api/profile/kyc/documents/upload-url', { method: 'POST', body: { document_type, file_name } }),
+    confirmDocument: (body) => request('/api/profile/kyc/documents', { method: 'POST', body }),
+    submit: () => request('/api/profile/kyc/submit', { method: 'POST' })
+  },
   auth: {
     deviceCheckin: (body) => request('/api/auth/devices/checkin', { method: 'POST', body }),
-    logoutAllDevices: () => request('/api/auth/logout-all-devices', { method: 'POST' })
+    logoutAllDevices: () => request('/api/auth/logout-all-devices', { method: 'POST' }),
+    mpinSet: (mpin) => request('/api/auth/mpin/set', { method: 'POST', body: { mpin } }),
+    mpinLogin: (mpin) => request('/api/auth/mpin/login', { method: 'POST', body: { mpin } }),
+    consentsStatus: () => request('/api/auth/consents/status'),
+    acceptTerms: () => request('/api/auth/accept-terms', { method: 'POST' }),
+    whatsappSendOtp: (phone) => request('/api/auth/whatsapp/send-otp', { method: 'POST', body: { phone } }),
+    whatsappVerifyOtp: (phone, code) =>
+      request('/api/auth/whatsapp/verify-otp', { method: 'POST', body: { phone, code } })
   },
   loads: {
     list: (params = {}) => {

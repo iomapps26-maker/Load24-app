@@ -2,6 +2,18 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+// npm workspaces monorepo: react-native is hoisted to the workspace root's
+// node_modules. Some native modules (react-native-gesture-handler) read this
+// from rootProject.ext (set in ../build.gradle); others (react-native-screens)
+// read it from THIS project's (:app) ext specifically — set both so every
+// autolinked module's own react-native lookup resolves correctly.
+ext {
+    // Note: $rootDir is always the multi-project build's root (android/),
+    // regardless of which subproject's build.gradle references it — same 3
+    // levels (android -> mobile -> apps -> repo root) as ../build.gradle.
+    REACT_NATIVE_NODE_MODULES_DIR = "$rootDir/../../../node_modules/react-native"
+}
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -10,12 +22,16 @@ react {
     /* Folders */
     //   The root of your project, i.e. where "package.json" lives. Default is '..'
     // root = file("../")
+    //   npm workspaces monorepo: react-native, its Codegen package, and cli.js are
+    //   hoisted to the workspace root's node_modules rather than apps/mobile/node_modules
+    //   (the plugin's un-overridden defaults assume a single-app repo layout) — see the
+    //   matching note in settings.gradle.
     //   The folder where the react-native NPM package is. Default is ../node_modules/react-native
-    // reactNativeDir = file("../node_modules/react-native")
+    reactNativeDir = file("../../../../node_modules/react-native")
     //   The folder where the react-native Codegen package is. Default is ../node_modules/@react-native/codegen
-    // codegenDir = file("../node_modules/@react-native/codegen")
+    codegenDir = file("../../../../node_modules/@react-native/codegen")
     //   The cli.js file which is the React Native CLI entrypoint. Default is ../node_modules/react-native/cli.js
-    // cliFile = file("../node_modules/react-native/cli.js")
+    cliFile = file("../../../../node_modules/react-native/cli.js")
 
     /* Variants */
     //   The list of variants to that are debuggable. For those we're going to
@@ -115,5 +131,8 @@ dependencies {
     }
 }
 
-apply from: file("../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)
+// cli-platform-android is hoisted to the workspace root (npm workspaces monorepo),
+// unlike react-native-vector-icons below which stayed local to apps/mobile/node_modules —
+// see the note in ../settings.gradle.
+apply from: file("../../../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)
 apply from: file("../../node_modules/react-native-vector-icons/fonts.gradle")

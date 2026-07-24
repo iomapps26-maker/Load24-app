@@ -13,15 +13,19 @@ export default function AuthChoiceScreen() {
     signUpWithPassword,
     verifySignupOtp,
     resendSignupOtp,
-    resetPassword
+    resetPassword,
+    sendPhoneOtp,
+    verifyPhoneOtp
   } = useAuth();
   const { t } = useLanguage();
 
-  const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'signupOtp'
+  const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'signupOtp' | 'phone' | 'phoneOtp'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [otp, setOtp] = useState('');
+  const [phone, setPhone] = useState('');
+  const [phoneOtp, setPhoneOtp] = useState('');
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
@@ -82,6 +86,33 @@ export default function AuthChoiceScreen() {
     setInfo(t('resetLinkSent'));
   };
 
+  const handleSendPhoneOtp = async () => {
+    resetMessages();
+    setLoading(true);
+    const { error: err } = await sendPhoneOtp(phone.trim());
+    setLoading(false);
+    if (err) return setError(err.message);
+    setMode('phoneOtp');
+  };
+
+  const handleResendPhoneOtp = async () => {
+    resetMessages();
+    const { error: err } = await sendPhoneOtp(phone.trim());
+    if (err) return setError(err.message);
+    setInfo(t('accountCreated'));
+  };
+
+  const handleVerifyPhoneOtp = async () => {
+    resetMessages();
+    setLoading(true);
+    const { error: err } = await verifyPhoneOtp(phone.trim(), phoneOtp.trim());
+    setLoading(false);
+    if (err) return setError(err.message);
+    // Supabase signs the user in on successful verification — AuthGate
+    // picks up the new session and swaps screens automatically, same as
+    // every other sign-in method here.
+  };
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -95,7 +126,93 @@ export default function AuthChoiceScreen() {
         </View>
 
         <View className="rounded-3xl bg-white px-6 pb-6 pt-12 shadow">
-          {mode === 'signupOtp' ? (
+          {mode === 'phoneOtp' ? (
+            <>
+              <Text className="mb-1 text-center text-2xl font-bold text-navy">{t('verifyPhone')}</Text>
+              <Text className="mb-6 text-center text-slate-500">
+                {t('enterOtpSentToWhatsapp')} {phone}
+              </Text>
+
+              <Text className="mb-1 text-sm text-slate-600">{t('sixDigitCode')}</Text>
+              <TextInput
+                mode="outlined"
+                keyboardType="number-pad"
+                value={phoneOtp}
+                onChangeText={setPhoneOtp}
+                left={<TextInput.Icon icon="shield-key-outline" />}
+              />
+
+              <HelperText type="error" visible={!!error}>{error}</HelperText>
+              <HelperText type="info" visible={!!info}>{info}</HelperText>
+
+              <Button
+                mode="contained"
+                buttonColor="#25D366"
+                loading={loading}
+                disabled={!phoneOtp || loading}
+                onPress={handleVerifyPhoneOtp}
+                className="mt-1"
+              >
+                {t('verifyAndContinue')}
+              </Button>
+
+              <TouchableOpacity className="mt-4 items-center" onPress={handleResendPhoneOtp}>
+                <Text className="text-sm text-brand">{t('resendCode')}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                className="mt-3 items-center"
+                onPress={() => {
+                  resetMessages();
+                  setPhoneOtp('');
+                  setMode('phone');
+                }}
+              >
+                <Text className="text-sm text-slate-500">{t('back')}</Text>
+              </TouchableOpacity>
+            </>
+          ) : mode === 'phone' ? (
+            <>
+              <Text className="mb-1 text-center text-2xl font-bold text-navy">{t('continueWithWhatsapp')}</Text>
+              <Text className="mb-6 text-center text-slate-500">{t('enterMobileNumberDesc')}</Text>
+
+              <Text className="mb-1 text-sm text-slate-600">{t('mobileNumber')}</Text>
+              <TextInput
+                mode="outlined"
+                placeholder="98765 43210"
+                keyboardType="phone-pad"
+                value={phone}
+                onChangeText={setPhone}
+                left={<TextInput.Icon icon="whatsapp" />}
+                className="mb-3"
+              />
+
+              <HelperText type="error" visible={!!error}>{error}</HelperText>
+              <HelperText type="info" visible={!!info}>{info}</HelperText>
+
+              <Button
+                mode="contained"
+                buttonColor="#25D366"
+                loading={loading}
+                disabled={!phone || loading}
+                onPress={handleSendPhoneOtp}
+                className="mt-1"
+              >
+                {t('sendCode')}
+              </Button>
+
+              <TouchableOpacity
+                className="mt-4 items-center"
+                onPress={() => {
+                  resetMessages();
+                  setPhone('');
+                  setMode('signin');
+                }}
+              >
+                <Text className="text-sm text-slate-500">{t('back')}</Text>
+              </TouchableOpacity>
+            </>
+          ) : mode === 'signupOtp' ? (
             <>
               <Text className="mb-1 text-center text-2xl font-bold text-navy">{t('verifyEmail')}</Text>
               <Text className="mb-6 text-center text-slate-500">
@@ -145,6 +262,20 @@ export default function AuthChoiceScreen() {
                 onPress={handleGoogle}
               >
                 {t('continueWithGoogle')}
+              </Button>
+
+              <Button
+                mode="outlined"
+                icon="whatsapp"
+                textColor="#25D366"
+                style={{ borderColor: '#e2e8f0' }}
+                className="mb-4"
+                onPress={() => {
+                  resetMessages();
+                  setMode('phone');
+                }}
+              >
+                {t('continueWithWhatsapp')}
               </Button>
 
               <View className="mb-4 flex-row items-center">

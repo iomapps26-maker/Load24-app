@@ -6,6 +6,12 @@ buildscript {
         targetSdkVersion = 34
         ndkVersion = "26.1.10909125"
         kotlinVersion = "1.9.22"
+        // npm workspaces monorepo: react-native is hoisted to the workspace root's
+        // node_modules, not apps/mobile/node_modules. Individual native modules
+        // (react-native-gesture-handler, etc.) each do their own react-native lookup
+        // and fall back to this rootProject.ext property when their own relative-path
+        // guesses miss — see the matching notes in app/build.gradle and settings.gradle.
+        REACT_NATIVE_NODE_MODULES_DIR = "$rootDir/../../../node_modules/react-native"
     }
     repositories {
         google()
