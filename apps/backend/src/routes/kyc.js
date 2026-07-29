@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
-import { KYC_REQUIRED_DOCUMENTS } from '../lib/kycRequiredDocs.js';
+import { KYC_REQUIRED_DOCUMENTS, KYC_OPTIONAL_DOCUMENTS, KYC_REQUIRES_LOCATION } from '../lib/kycRequiredDocs.js';
 
 const BUCKET = 'kyc-documents';
 const router = Router();
@@ -40,6 +40,24 @@ function missingDocuments(kycCase, uploadedTypes) {
   return required.filter((docType) => !uploadedTypes.has(docType));
 }
 
+function allowedDocuments(kycType) {
+  return [...(KYC_REQUIRED_DOCUMENTS[kycType] || []), ...(KYC_OPTIONAL_DOCUMENTS[kycType] || [])];
+}
+
+function isLocationMissing(kycCase) {
+  if (!KYC_REQUIRES_LOCATION.includes(kycCase.kyc_type)) return false;
+  return !(kycCase.location_address && kycCase.location_lat != null && kycCase.location_lng != null);
+}
+
+function locationPayload(kycCase) {
+  return {
+    address: kycCase.location_address ?? null,
+    lat: kycCase.location_lat ?? null,
+    lng: kycCase.location_lng ?? null,
+    captured_at: kycCase.location_captured_at ?? null
+  };
+}
+
 // GET /api/profile/kyc/case — the case, its uploaded documents, and which
 // required document types are still missing.
 router.get('/case', async (req, res) => {
@@ -62,7 +80,10 @@ router.get('/case', async (req, res) => {
     case: kycCase,
     documents: documents || [],
     required_documents: KYC_REQUIRED_DOCUMENTS[kycCase.kyc_type] || [],
-    missing_documents: missingDocuments(kycCase, uploadedTypes)
+    optional_documents: KYC_OPTIONAL_DOCUMENTS[kycCase.kyc_type] || [],
+    missing_documents: missingDocuments(kycCase, uploadedTypes),
+    requires_location: KYC_REQUIRES_LOCATION.includes(kycCase.kyc_type),
+    location: locationPayload(kycCase)
   });
 });
 
@@ -82,9 +103,8 @@ router.post('/documents/upload-url', async (req, res) => {
   }
   if (!kycCase) return res.status(404).json({ error: 'No KYC required for this account' });
 
-  const required = KYC_REQUIRED_DOCUMENTS[kycCase.kyc_type] || [];
-  if (!required.includes(document_type)) {
-    return res.status(400).json({ error: `${document_type} is not a required document for ${kycCase.kyc_type}` });
+  if (!allowedDocuments(kycCase.kyc_type).includes(document_type)) {
+    return res.status(400).json({ error: `${document_type} is not a valid document type for ${kycCase.kyc_type}` });
   }
 
   const ext = file_name && file_name.includes('.') ? file_name.split('.').pop().toLowerCase() : 'bin';
@@ -122,9 +142,8 @@ router.post('/documents', async (req, res) => {
   }
   if (!kycCase) return res.status(404).json({ error: 'No KYC required for this account' });
 
-  const required = KYC_REQUIRED_DOCUMENTS[kycCase.kyc_type] || [];
-  if (!required.includes(document_type)) {
-    return res.status(400).json({ error: `${document_type} is not a required document for ${kycCase.kyc_type}` });
+  if (!allowedDocuments(kycCase.kyc_type).includes(document_type)) {
+    return res.status(400).json({ error: `${document_type} is not a valid document type for ${kycCase.kyc_type}` });
   }
 
   const { data: document, error } = await req.supabase
@@ -152,7 +171,7 @@ router.post('/documents', async (req, res) => {
 
   const uploadedTypes = new Set((allDocs || []).map((d) => d.document_type));
   const missing = missingDocuments(kycCase, uploadedTypes);
-  const isComplete = missing.length === 0;
+  const isComplete = missing.length === 0 && !isLocationMissing(kycCase);
 
   let caseStatus = kycCase.status;
   if (isComplete && !['submitted', 'verified'].includes(kycCase.status)) {
@@ -167,6 +186,62 @@ router.post('/documents', async (req, res) => {
   }
 
   res.status(200).json({ document, case_status: caseStatus, missing_documents: missing });
+});
+
+// POST /api/profile/kyc/location — records the address + GPS pin captured on
+// the device for roles in KYC_REQUIRES_LOCATION, then re-evaluates case
+// completeness the same way POST /documents does.
+router.post('/location', async (req, res) => {
+  const { address, lat, lng } = req.body;
+  if (!address || typeof lat !== 'number' || typeof lng !== 'number') {
+    return res.status(400).json({ error: 'address, lat and lng are required' });
+  }
+
+  let kycCase;
+  try {
+    kycCase = await getOrCreateCase(req);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (!kycCase) return res.status(404).json({ error: 'No KYC required for this account' });
+  if (!KYC_REQUIRES_LOCATION.includes(kycCase.kyc_type)) {
+    return res.status(400).json({ error: `Location is not required for ${kycCase.kyc_type}` });
+  }
+
+  const { data: updatedCase, error } = await req.supabase
+    .from('kyc_cases')
+    .update({
+      location_address: address,
+      location_lat: lat,
+      location_lng: lng,
+      location_captured_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', kycCase.id)
+    .select()
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+
+  const { data: docs, error: docsError } = await req.supabase.from('kyc_documents').select('document_type').eq('case_id', kycCase.id);
+  if (docsError) return res.status(400).json({ error: docsError.message });
+
+  const uploadedTypes = new Set((docs || []).map((d) => d.document_type));
+  const missing = missingDocuments(updatedCase, uploadedTypes);
+  const isComplete = missing.length === 0 && !isLocationMissing(updatedCase);
+
+  let caseStatus = updatedCase.status;
+  if (isComplete && !['submitted', 'verified'].includes(updatedCase.status)) {
+    caseStatus = 'submitted';
+  } else if (!isComplete && updatedCase.status === 'pending') {
+    caseStatus = 'partial';
+  }
+
+  if (caseStatus !== updatedCase.status) {
+    await req.supabase.from('kyc_cases').update({ status: caseStatus, updated_at: new Date().toISOString() }).eq('id', kycCase.id);
+    await req.supabase.from('user_profiles').update({ kyc_status: caseStatus }).eq('user_id', req.user.id);
+  }
+
+  res.status(200).json({ location: locationPayload(updatedCase), case_status: caseStatus, missing_documents: missing });
 });
 
 // POST /api/profile/kyc/submit — explicit, idempotent submit-with-validation:
@@ -190,6 +265,9 @@ router.post('/submit', async (req, res) => {
   const missing = missingDocuments(kycCase, uploadedTypes);
   if (missing.length > 0) {
     return res.status(400).json({ error: 'Missing required documents', missing_documents: missing });
+  }
+  if (isLocationMissing(kycCase)) {
+    return res.status(400).json({ error: 'Missing required location' });
   }
   if (!['pending', 'partial'].includes(kycCase.status)) {
     return res.status(400).json({ error: `Cannot submit from status '${kycCase.status}'` });
