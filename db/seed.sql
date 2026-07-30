@@ -39,7 +39,7 @@ begin
   insert into public.user_profiles (user_id, user_email, full_name, mobile, user_type, company_name, city, state, pincode, mobile_verified, kyc_status)
   values
     (v_shipper_id, 'shipper@load24.test', 'Demo Shipper', '9000000001', 'shipper', 'Demo Shipping Co', 'Mumbai', 'Maharashtra', '400001', true, 'verified'),
-    (v_trucker_id, 'trucker@load24.test', 'Demo Trucker', '9000000002', 'truck_owner', null, 'Pune', 'Maharashtra', '411001', true, 'verified');
+    (v_trucker_id, 'trucker@load24.test', 'Demo Trucker', '9000000002', 'vehicle_owner', null, 'Pune', 'Maharashtra', '411001', true, 'verified');
 
   -- ---- user_roles (trucker granted admin for local testing of staff views) ----
   insert into public.user_roles (user_id, role) values (v_trucker_id, 'admin');
@@ -59,7 +59,7 @@ begin
 
   -- ---- load_likes ----
   insert into public.load_likes (load_id, liked_by_email, liked_by_name, liked_by_mobile, liked_by_type, truck_number, offered_price)
-  values (v_load_id, 'trucker@load24.test', 'Demo Trucker', '9000000002', 'truck_owner', 'MH12AB1234', 23000);
+  values (v_load_id, 'trucker@load24.test', 'Demo Trucker', '9000000002', 'vehicle_owner', 'MH12AB1234', 23000);
 
   -- ---- user_devices ----
   insert into public.user_devices (user_id, push_token, platform, device_id, app_version)

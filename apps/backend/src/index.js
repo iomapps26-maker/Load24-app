@@ -14,10 +14,15 @@ import whatsappAuthRouter from './routes/whatsappAuth.js';
 import bankDetailsRouter from './routes/bankDetails.js';
 import reviewsRouter from './routes/reviews.js';
 import supportTicketsRouter from './routes/supportTickets.js';
+import walletRouter, { razorpayWebhookHandler } from './routes/wallet.js';
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// The `verify` hook stashes the raw request bytes on req.rawBody, which the
+// Razorpay webhook handler needs for HMAC signature verification — deriving
+// it from the already-parsed req.body wouldn't reproduce the exact bytes
+// Razorpay signed.
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -27,6 +32,10 @@ app.use('/api', apiRateLimiter);
 // all — mounted at the more specific /api/auth/whatsapp path *before* the
 // requireAuth-gated /api/auth block below so it never hits that middleware.
 app.use('/api/auth/whatsapp', whatsappAuthRouter);
+
+// Same reasoning as WhatsApp OTP above: Razorpay calls this directly with no
+// user session, authenticated only by its HMAC signature.
+app.post('/api/wallet/razorpay-webhook', razorpayWebhookHandler);
 
 // Onboarding-safe routes: reachable with just a valid session, before the
 // user has recorded the consents requireConsents checks for below. Profile
@@ -43,6 +52,7 @@ app.use('/api/load-likes', requireAuth, requireConsents, loadLikesRouter);
 app.use('/api/bank-details', requireAuth, requireConsents, bankDetailsRouter);
 app.use('/api/reviews', requireAuth, requireConsents, reviewsRouter);
 app.use('/api/support-tickets', requireAuth, requireConsents, supportTicketsRouter);
+app.use('/api/wallet', requireAuth, requireConsents, walletRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);

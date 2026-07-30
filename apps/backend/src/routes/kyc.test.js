@@ -147,8 +147,8 @@ describe('GET /api/profile/kyc/case', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.case.kyc_type).toBe('driver');
-    expect(res.body.required_documents).toEqual(['driving_license', 'aadhaar', 'photo']);
-    expect(res.body.missing_documents).toEqual(['driving_license', 'aadhaar', 'photo']);
+    expect(res.body.required_documents).toEqual(['driving_license', 'pan', 'aadhaar', 'photo']);
+    expect(res.body.missing_documents).toEqual(['driving_license', 'pan', 'aadhaar', 'photo']);
   });
 
   it('404s when no profile exists yet', async () => {
@@ -226,7 +226,7 @@ describe('POST /api/profile/kyc/documents', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.case_status).toBe('partial');
-    expect(res.body.missing_documents).toEqual(['driving_license', 'photo']);
+    expect(res.body.missing_documents).toEqual(['driving_license', 'pan', 'photo']);
   });
 
   it('auto-submits once every required document is uploaded', async () => {
@@ -237,6 +237,7 @@ describe('POST /api/profile/kyc/documents', () => {
     await request(app)
       .post('/api/profile/kyc/documents')
       .send({ document_type: 'driving_license', storage_path: 'user-1/driving_license.pdf' });
+    await request(app).post('/api/profile/kyc/documents').send({ document_type: 'pan', storage_path: 'user-1/pan.pdf' });
     const res = await request(app).post('/api/profile/kyc/documents').send({ document_type: 'photo', storage_path: 'user-1/photo.jpg' });
 
     expect(res.status).toBe(200);
@@ -252,7 +253,7 @@ describe('POST /api/profile/kyc/submit', () => {
     const app = buildApp(mockSupabase);
     const res = await request(app).post('/api/profile/kyc/submit');
     expect(res.status).toBe(400);
-    expect(res.body.missing_documents).toEqual(['driving_license', 'aadhaar', 'photo']);
+    expect(res.body.missing_documents).toEqual(['driving_license', 'pan', 'aadhaar', 'photo']);
   });
 
   it('submits once all required documents are present', async () => {
@@ -262,6 +263,7 @@ describe('POST /api/profile/kyc/submit', () => {
       documents: [
         { case_id: 'case-1', document_type: 'aadhaar' },
         { case_id: 'case-1', document_type: 'driving_license' },
+        { case_id: 'case-1', document_type: 'pan' },
         { case_id: 'case-1', document_type: 'photo' }
       ]
     });
@@ -279,6 +281,7 @@ describe('POST /api/profile/kyc/submit', () => {
       documents: [
         { case_id: 'case-1', document_type: 'aadhaar' },
         { case_id: 'case-1', document_type: 'driving_license' },
+        { case_id: 'case-1', document_type: 'pan' },
         { case_id: 'case-1', document_type: 'photo' }
       ]
     });

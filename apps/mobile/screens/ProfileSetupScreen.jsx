@@ -1,16 +1,18 @@
-import { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
 import { TextInput, Button, HelperText, Icon } from 'react-native-paper';
+import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
+import { lookupPincode } from '../lib/pincodeLookup';
 
 const ROLES = [
   { value: 'shipper', icon: 'package-variant-closed', titleKey: 'roleShipperTitle', descKey: 'roleShipperDesc' },
   { value: 'transporter', icon: 'office-building-outline', titleKey: 'roleTransporterTitle', descKey: 'roleTransporterDesc' },
   { value: 'broker', icon: 'account-outline', titleKey: 'roleBrokerTitle', descKey: 'roleBrokerDesc' },
-  { value: 'vehicle_owner', icon: 'truck-outline', titleKey: 'roleTruckOwnerTitle', descKey: 'roleTruckOwnerDesc' },
+  { value: 'vehicle_owner', icon: 'truck-outline', titleKey: 'roleVehicleOwnerTitle', descKey: 'roleVehicleOwnerDesc' },
   { value: 'driver', icon: 'account-outline', titleKey: 'roleDriverTitle', descKey: 'roleDriverDesc' }
 ];
 
@@ -44,43 +46,79 @@ function RoleCard({ role, selected, onPress, t }) {
   );
 }
 
+// WhatsApp/phone-OTP signups have no real email — the backend mints a
+// placeholder like wa919876543210@phone.load24.internal just so Supabase
+// auth has an email identity. It was never entered or seen by the user, so
+// it must not be shown as their (verified) email.
+const isSyntheticEmail = (value) => !!value && value.endsWith('@phone.load24.internal');
+
 export default function ProfileSetupScreen() {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const navigation = useNavigation();
   const queryClient = useQueryClient();
+  const isVerifiedEmail = !!user?.email && !isSyntheticEmail(user.email);
 
   const [step, setStep] = useState(0); // 0: role, 1: basic info
   const [selectedRoles, setSelectedRoles] = useState([]);
   const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState(() => (isSyntheticEmail(user?.email) ? '' : user?.email ?? ''));
   const [mobile, setMobile] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [pincode, setPincode] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [error, setError] = useState('');
+  const [pincodeLoading, setPincodeLoading] = useState(false);
+
+  useEffect(() => {
+    if (pincode.trim().length !== 6) return;
+    let cancelled = false;
+    setPincodeLoading(true);
+    lookupPincode(pincode.trim())
+      .then((result) => {
+        if (cancelled || !result) return;
+        setCity(result.city);
+        setState(result.state);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setPincodeLoading(false); });
+    return () => { cancelled = true; };
+  }, [pincode]);
 
   const saveProfile = useMutation({
     mutationFn: async () => {
-      await api.profile.save({
-        full_name: fullName.trim(),
-        mobile: mobile.trim(),
-        user_type: selectedRoles[0],
-        company_name: companyName.trim() || undefined,
-        pincode: pincode.trim() || undefined,
-        city: city.trim() || undefined,
-        state: state.trim() || undefined
-      });
-      await api.onboarding.selectRole(selectedRoles);
+      // Independent writes (different tables, no FK between them) — run
+      // together instead of waiting on one before starting the other.
+      await Promise.all([
+        api.profile.save({
+          full_name: fullName.trim(),
+          mobile: mobile.trim(),
+          user_type: selectedRoles[0],
+          company_name: companyName.trim() || undefined,
+          pincode: pincode.trim() || undefined,
+          city: city.trim() || undefined,
+          state: state.trim() || undefined,
+          contact_email: !isVerifiedEmail ? email.trim() || undefined : undefined
+        }),
+        // Editing an existing profile re-submits the same role — the
+        // backend rejects a role the user already holds (409), which isn't
+        // a real failure here, just a no-op. Only genuine errors propagate.
+        api.onboarding.selectRole(selectedRoles).catch((err) => {
+          if (err.status !== 409) throw err;
+        })
+      ]);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['profile'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      Alert.alert(t('profileSaved'), t('profileSavedMessage'), [
+        { text: t('ok'), onPress: () => { if (navigation.canGoBack()) navigation.goBack(); } }
+      ]);
+    },
     onError: (err) => setError(err.message)
   });
 
-  const toggleRole = (value) => {
-    setSelectedRoles((prev) =>
-      prev.includes(value) ? prev.filter((r) => r !== value) : [...prev, value]
-    );
-  };
+  const selectRole = (value) => setSelectedRoles([value]);
 
   const handleSubmit = () => {
     setError('');
@@ -101,7 +139,7 @@ export default function ProfileSetupScreen() {
                 key={role.value}
                 role={role}
                 selected={selectedRoles.includes(role.value)}
-                onPress={() => toggleRole(role.value)}
+                onPress={() => selectRole(role.value)}
                 t={t}
               />
             ))}
@@ -122,16 +160,20 @@ export default function ProfileSetupScreen() {
               <Text className="mb-1 text-sm text-slate-600">{t('fullName')} *</Text>
               <TextInput mode="outlined" value={fullName} onChangeText={setFullName} className="mb-4" />
 
-              <Text className="mb-1 text-sm text-slate-600">{t('email')} *</Text>
+              <Text className="mb-1 text-sm text-slate-600">{t('email')}</Text>
               <TextInput
                 mode="outlined"
-                value={user?.email ?? ''}
-                editable={false}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={email}
+                onChangeText={setEmail}
+                editable={!isVerifiedEmail}
                 left={<TextInput.Icon icon="email-outline" />}
-                right={<TextInput.Icon icon="check-decagram" color="#16a34a" />}
+                right={isVerifiedEmail ? <TextInput.Icon icon="check-decagram" color="#16a34a" /> : undefined}
                 className="mb-1"
               />
-              <Text className="mb-4 text-xs text-green-600">✓ {t('emailVerified')}</Text>
+              {isVerifiedEmail && <Text className="mb-4 text-xs text-green-600">✓ {t('emailVerified')}</Text>}
+              {!isVerifiedEmail && <Text className="mb-4 text-xs text-slate-400">{t('emailOptional')}</Text>}
 
               <Text className="mb-1 text-sm text-slate-600">{t('mobileNumber')} *</Text>
               <TextInput
@@ -155,7 +197,14 @@ export default function ProfileSetupScreen() {
               <View className="mb-4 flex-row gap-3">
                 <View className="flex-1">
                   <Text className="mb-1 text-sm text-slate-600">{t('pincode')}</Text>
-                  <TextInput mode="outlined" keyboardType="number-pad" value={pincode} onChangeText={setPincode} />
+                  <TextInput
+                    mode="outlined"
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    value={pincode}
+                    onChangeText={setPincode}
+                    right={pincodeLoading ? <TextInput.Icon icon={() => <ActivityIndicator size={16} color="#f97316" />} /> : undefined}
+                  />
                 </View>
                 <View className="flex-1">
                   <Text className="mb-1 text-sm text-slate-600">{t('city')}</Text>

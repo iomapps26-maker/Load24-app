@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
 import { Icon } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
-import { useQuery } from '@tanstack/react-query';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
@@ -87,12 +87,23 @@ export default function HomeScreen() {
   const scrollRef = useRef(null);
   const [summaryY, setSummaryY] = useState(0);
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
 
   const { data: myLoads = [] } = useQuery({ queryKey: ['myLoads'], queryFn: api.loads.mine });
   const { data: recentLoads = [] } = useQuery({
     queryKey: ['recentLoads'],
     queryFn: () => api.loads.list({ limit: 5 })
   });
+
+  // Bottom-tab screens stay mounted on tab switch, so React Query's
+  // refetch-on-mount never fires again after the first visit — without this,
+  // the summary would only ever reflect loads as of app launch.
+  useFocusEffect(
+    useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: ['myLoads'] });
+      queryClient.invalidateQueries({ queryKey: ['recentLoads'] });
+    }, [queryClient])
+  );
 
   const stats = {
     active: myLoads.filter((l) => l.status === 'active').length,
@@ -122,7 +133,7 @@ export default function HomeScreen() {
           </Text>
         </View>
         <View className="flex-row items-center gap-1">
-          <TouchableOpacity className="h-9 w-9 items-center justify-center rounded-lg bg-slate-100" onPress={() => notImplemented(t)}>
+          <TouchableOpacity className="h-9 w-9 items-center justify-center rounded-lg bg-slate-100" onPress={() => navigation.navigate('Wallet')}>
             <Icon source="wallet-outline" size={18} color="#334155" />
           </TouchableOpacity>
           <TouchableOpacity className="h-9 w-9 items-center justify-center rounded-lg bg-slate-100" onPress={handleSignOut}>

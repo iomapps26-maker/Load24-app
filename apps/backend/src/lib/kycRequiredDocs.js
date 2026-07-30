@@ -4,19 +4,21 @@
 // Storage object names and i18n keys on the mobile side — keep them in sync
 // with apps/mobile/lib/kycDocuments.js if this list changes.
 export const KYC_REQUIRED_DOCUMENTS = {
-  driver: ['driving_license', 'aadhaar', 'photo'],
-  vehicle_owner: ['vehicle_rc', 'pan', 'aadhaar', 'insurance', 'bank_proof'],
-  transporter: ['gst_certificate', 'pan', 'aadhaar', 'company_registration', 'bank_proof', 'lr', 'shop_photo'],
-  broker: ['pan', 'aadhaar', 'bank_proof'],
-  shipper: ['pan', 'gst_certificate', 'aadhaar', 'company_registration', 'bank_proof']
+  driver: ['driving_license', 'pan', 'aadhaar', 'photo'],
+  vehicle_owner: ['vehicle_rc', 'pan', 'aadhaar', 'insurance', 'bank_proof', 'vehicle_photo'],
+  transporter: ['pan', 'aadhaar', 'bank_proof', 'lr', 'shop_photo'],
+  broker: ['pan', 'aadhaar', 'bank_proof', 'lr', 'shop_photo'],
+  shipper: ['pan', 'aadhaar', 'bank_proof', 'lr', 'shop_photo']
 };
 
 // Document types a role may optionally upload on top of the required set
 // above (offered on the KYC screen but not required to complete the case).
-// GST is optional for every role except shipper and transporter, where it
-// stays mandatory (see KYC_REQUIRED_DOCUMENTS).
+// GST certificate and company registration are optional for every role —
+// none of them mandate a registered business.
 export const KYC_OPTIONAL_DOCUMENTS = {
-  broker: ['gst_certificate']
+  broker: ['gst_certificate', 'company_registration'],
+  transporter: ['gst_certificate', 'company_registration'],
+  shipper: ['gst_certificate', 'company_registration']
 };
 
 // Roles that must additionally capture an address + GPS pin (kyc_cases

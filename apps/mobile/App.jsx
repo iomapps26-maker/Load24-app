@@ -19,6 +19,7 @@ import ProfitCalculatorScreen from './screens/ProfitCalculatorScreen';
 import FinancialForecastScreen from './screens/FinancialForecastScreen';
 import KycVerificationScreen from './screens/KycVerificationScreen';
 import SupportTicketsScreen from './screens/SupportTicketsScreen';
+import WalletScreen from './screens/WalletScreen';
 import TermsAcceptanceScreen from './screens/TermsAcceptanceScreen';
 import MpinSetupScreen from './screens/MpinSetupScreen';
 import MainTabs from './navigation/MainTabs';
@@ -52,11 +53,14 @@ function AuthGate() {
 
   // Blocks non-onboarding routes on the backend too (requireConsents) —
   // checked here so the app can show the terms screen proactively instead
-  // of bouncing off a 403 from whichever route loads first.
+  // of bouncing off a 403 from whichever route loads first. Doesn't depend
+  // on `profile` server-side (consents are keyed off the auth user, not the
+  // profile row), so it fires alongside the profile fetch instead of
+  // waiting on it — the result just isn't used until profile is known.
   const { data: consentsStatus, isLoading: isLoadingConsents } = useQuery({
     queryKey: ['consents-status'],
     queryFn: api.auth.consentsStatus,
-    enabled: isAuthenticated && !!profile
+    enabled: isAuthenticated
   });
   const needsTerms = (consentsStatus?.missing_consents?.length ?? 0) > 0;
 
@@ -102,6 +106,7 @@ function AuthGate() {
                 component={SupportTicketsScreen}
                 options={{ headerShown: true, title: t('supportTickets') }}
               />
+              <Stack.Screen name="Wallet" component={WalletScreen} options={{ headerShown: true, title: t('walletBalance') }} />
             </>
           )
         ) : (

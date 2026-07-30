@@ -53,6 +53,7 @@ export const api = {
     uploadUrl: (document_type, file_name) =>
       request('/api/profile/kyc/documents/upload-url', { method: 'POST', body: { document_type, file_name } }),
     confirmDocument: (body) => request('/api/profile/kyc/documents', { method: 'POST', body }),
+    saveLocation: (body) => request('/api/profile/kyc/location', { method: 'POST', body }),
     submit: () => request('/api/profile/kyc/submit', { method: 'POST' })
   },
   auth: {
@@ -81,5 +82,25 @@ export const api = {
     mine: () => request('/api/load-likes/mine'),
     like: (body) => request('/api/load-likes', { method: 'POST', body }),
     unlike: (id) => request(`/api/load-likes/${id}`, { method: 'DELETE' })
+  },
+  wallet: {
+    balance: () => request('/api/wallet'),
+    transactions: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return request(`/api/wallet/transactions${qs ? `?${qs}` : ''}`);
+    },
+    addMoney: (amount) => request('/api/wallet/add-money', { method: 'POST', body: { amount } }),
+    withdrawalsMine: () => request('/api/wallet/withdrawals/mine'),
+    withdraw: (amount) => request('/api/wallet/withdraw', { method: 'POST', body: { amount } }),
+    // CSV response, not JSON — can't go through request() above, which
+    // always calls res.json().
+    statementCsv: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${API_URL}/api/wallet/statement`, {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+      });
+      if (!res.ok) throw new Error(`Failed to fetch statement: ${res.status}`);
+      return res.text();
+    }
   }
 };

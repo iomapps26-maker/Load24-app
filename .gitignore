@@ -37,6 +37,9 @@ apps/mobile/android/.gradle/
 apps/mobile/android/app/build/
 apps/mobile/android/build/
 apps/mobile/android/local.properties
+apps/mobile/android/app/keystore.properties
+apps/mobile/android/app/*.keystore
+!apps/mobile/android/app/debug.keystore
 apps/mobile/.expo/
 apps/mobile/.bundle/
 apps/mobile/ios/build/

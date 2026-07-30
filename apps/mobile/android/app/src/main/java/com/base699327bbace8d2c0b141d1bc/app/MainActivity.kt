@@ -1,4 +1,4 @@
-package com.load24mobile
+package com.base699327bbace8d2c0b141d1bc.app
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

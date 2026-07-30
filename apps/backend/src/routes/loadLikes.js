@@ -1,6 +1,12 @@
 import { Router } from 'express';
+import { supabaseAdmin } from '../lib/supabase.js';
+import { requireRole } from '../middleware/requireRole.js';
+
+const STAFF_ROLES = ['admin', 'sales_executive', 'sales_team_lead', 'sales_manager'];
 
 const router = Router();
+
+const csvField = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
 // GET /api/load-likes/mine — loads the current user has liked, for FindLoads' heart state
 router.get('/mine', async (req, res) => {

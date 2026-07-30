@@ -10,6 +10,12 @@ export const TRUCK_TYPES = [
 
 export const FUEL_TYPES = ['diesel', 'cng', 'electric', 'any'];
 
+export const AXLE_TYPES = ['single_axle', 'multi_axle', 'any'];
+
+export const BODY_TYPES = ['open', 'closed', 'container', 'any'];
+
+export const SPECIAL_CONDITIONS = ['fragile', 'hazardous', 'perishable', 'refrigerated', 'oversized'];
+
 export const TRUCK_TYPE_LABELS = {
   en: {
     mahindra_pickup: 'Mahindra Pickup', tata_407: 'Tata 407', tata_ace: 'Tata Ace',
@@ -30,4 +36,19 @@ export const TRUCK_TYPE_LABELS = {
 export const FUEL_LABELS = {
   en: { diesel: 'Diesel', cng: 'CNG', electric: 'Electric', any: 'Any' },
   hi: { diesel: 'डीजल', cng: 'सीएनजी', electric: 'इलेक्ट्रिक', any: 'कोई भी' }
+};
+
+export const AXLE_LABELS = {
+  en: { single_axle: 'Single Axle', multi_axle: 'Multi Axle', any: 'Any' },
+  hi: { single_axle: 'सिंगल एक्सल', multi_axle: 'मल्टी एक्सल', any: 'कोई भी' }
+};
+
+export const BODY_TYPE_LABELS = {
+  en: { open: 'Open', closed: 'Closed', container: 'Container', any: 'Any' },
+  hi: { open: 'खुला', closed: 'बंद', container: 'कंटेनर', any: 'कोई भी' }
+};
+
+export const SPECIAL_CONDITION_LABELS = {
+  en: { fragile: 'Fragile', hazardous: 'Hazardous', perishable: 'Perishable', refrigerated: 'Refrigerated', oversized: 'Oversized' },
+  hi: { fragile: 'नाज़ुक', hazardous: 'खतरनाक', perishable: 'जल्दी खराब होने वाला', refrigerated: 'रेफ्रिजरेटेड', oversized: 'ओवरसाइज़्ड' }
 };

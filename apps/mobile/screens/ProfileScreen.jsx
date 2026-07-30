@@ -11,7 +11,7 @@ const ROLE_LABEL_KEYS = {
   shipper: 'roleShipper',
   transporter: 'roleTransporter',
   broker: 'roleBroker',
-  truck_owner: 'roleTruckOwner',
+  vehicle_owner: 'roleVehicleOwner',
   driver: 'roleDriver'
 };
 
@@ -256,6 +256,9 @@ export default function ProfileScreen() {
   const kycBadge = KYC_BADGE[profile.kyc_status] ?? KYC_BADGE.pending;
   const initial = (profile.full_name || user?.email || '?').charAt(0).toUpperCase();
   const location = [profile.city, profile.state, profile.pincode].filter(Boolean).join(', ');
+  const isSyntheticEmail = (value) => !!value && value.endsWith('@phone.load24.internal');
+  const rawEmail = profile.user_email || user?.email;
+  const displayEmail = profile.contact_email || (isSyntheticEmail(rawEmail) ? '' : rawEmail);
 
   return (
     <ScrollView className="flex-1 bg-slate-50" contentContainerStyle={{ paddingVertical: 20 }}>
@@ -316,10 +319,12 @@ export default function ProfileScreen() {
           <Icon source="phone-outline" size={16} color="#94a3b8" />
           <Text className="ml-3 text-sm text-slate-700">{profile.mobile}</Text>
         </View>
-        <View className="mb-2 flex-row items-center">
-          <Icon source="email-outline" size={16} color="#94a3b8" />
-          <Text className="ml-3 text-sm text-slate-700">{profile.user_email || user?.email}</Text>
-        </View>
+        {!!displayEmail && (
+          <View className="mb-2 flex-row items-center">
+            <Icon source="email-outline" size={16} color="#94a3b8" />
+            <Text className="ml-3 text-sm text-slate-700">{displayEmail}</Text>
+          </View>
+        )}
         {!!profile.company_name && (
           <View className="mb-2 flex-row items-center">
             <Icon source="office-building-outline" size={16} color="#94a3b8" />
@@ -337,6 +342,7 @@ export default function ProfileScreen() {
       <BankDetailsCard t={t} />
       <ReviewsCard profile={profile} t={t} />
 
+      <NavRow icon="wallet-outline" iconColor="#f97316" label={t('myWallet')} onPress={() => navigation.navigate('Wallet')} />
       <NavRow icon="chart-line" iconColor="#16a34a" label={t('profitCalculator')} onPress={() => navigation.navigate('ProfitCalculator')} />
       <NavRow icon="finance" iconColor="#2563eb" label={t('financialForecast')} onPress={() => navigation.navigate('FinancialForecast')} />
       <NavRow icon="shield-check-outline" iconColor="#2563eb" label={t('kycVerification')} onPress={() => navigation.navigate('KycVerification')} />
