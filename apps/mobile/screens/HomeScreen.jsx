@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
+import MyLoadRow from '../components/MyLoadRow';
 
 const STEPS = [
   { icon: '📦', titleKey: 'step1Title', descKey: 'step1Desc' },
@@ -31,28 +32,6 @@ function StatCard({ icon, iconBg, value, label }) {
       </View>
       <Text className="text-2xl font-bold text-slate-900">{value}</Text>
       <Text className="text-sm text-slate-500">{label}</Text>
-    </View>
-  );
-}
-
-function MyLoadRow({ load, t, navigation }) {
-  return (
-    <View className="mb-3 flex-row items-center justify-between rounded-2xl border border-slate-200 bg-white p-4">
-      <View className="flex-1 pr-2">
-        <Text className="text-sm font-bold text-slate-900" numberOfLines={1}>
-          {load.loading_city || load.loading_pincode} → {load.unloading_city || load.unloading_pincode}
-        </Text>
-        <Text className="mt-1 text-xs text-slate-500">
-          {load.material_type} • ₹{Number(load.bhada_price).toLocaleString('en-IN')}
-        </Text>
-      </View>
-      <TouchableOpacity
-        className="flex-row items-center gap-1 rounded-lg bg-brand px-3 py-2"
-        onPress={() => navigation.navigate('SeeBidding', { loadId: load.id })}
-      >
-        <Icon source="gavel" size={14} color="white" />
-        <Text className="text-xs font-bold text-white">{t('seeBidding')}</Text>
-      </TouchableOpacity>
     </View>
   );
 }
