@@ -41,6 +41,16 @@ router.post('/', async (req, res) => {
   if (!load_id) return res.status(400).json({ error: 'load_id is required' });
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'amount must be greater than 0' });
 
+  const { data: load, error: loadError } = await req.supabase
+    .from('loads')
+    .select('posted_by')
+    .eq('id', load_id)
+    .single();
+  if (loadError) return dbError(res, loadError, 'Could not find this load');
+  if (load.posted_by === req.user.email) {
+    return res.status(403).json({ error: 'You cannot bid on your own posted load' });
+  }
+
   const { data, error } = await req.supabase
     .from('load_bids')
     .insert({
