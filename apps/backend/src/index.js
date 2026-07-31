@@ -63,3 +63,14 @@ app.use((err, req, res, next) => {
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => console.log(`LOAD24 API listening on :${port}`));
+
+// Render's free tier spins the service down after ~15 min with no inbound
+// HTTP traffic. A self-ping only counts as "inbound" if it hits the public
+// URL (RENDER_EXTERNAL_URL, set automatically by Render) rather than
+// localhost, so this only runs when that var is present — i.e. never locally.
+const selfPingUrl = process.env.RENDER_EXTERNAL_URL;
+if (selfPingUrl) {
+  setInterval(() => {
+    fetch(`${selfPingUrl}/health`).catch(() => {});
+  }, 10 * 60 * 1000);
+}

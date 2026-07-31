@@ -1,18 +1,55 @@
 import { API_URL } from '@env';
 import { supabase } from './supabase';
 
+const REQUEST_TIMEOUT_MS = 20000;
+
+// Render's free tier spins the backend down when idle, so the first request
+// after a lull can hang far longer than a normal network call. Without a
+// timeout that hang never rejects, so callers (e.g. React Query) sit on
+// isLoading forever instead of surfacing an error + retry.
+function withTimeout(ms, message) {
+  let timer;
+  const promise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return { promise, cancel: () => clearTimeout(timer) };
+}
+
+async function getSessionWithTimeout() {
+  const { promise, cancel } = withTimeout(REQUEST_TIMEOUT_MS, 'Timed out checking login session');
+  try {
+    return await Promise.race([supabase.auth.getSession(), promise]);
+  } finally {
+    cancel();
+  }
+}
+
 // Thin wrapper around the Express API: attaches the Supabase access token
 // as a bearer token so req.supabase on the server runs under the caller's RLS.
 async function request(path, { method = 'GET', body } = {}) {
-  const { data: { session } } = await supabase.auth.getSession();
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
+  const { data: { session } } = await getSessionWithTimeout();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out. The server may be waking up — please try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({}));
@@ -102,10 +139,23 @@ export const api = {
     // CSV response, not JSON — can't go through request() above, which
     // always calls res.json().
     statementCsv: async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${API_URL}/api/wallet/statement`, {
-        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
-      });
+      const { data: { session } } = await getSessionWithTimeout();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      let res;
+      try {
+        res = await fetch(`${API_URL}/api/wallet/statement`, {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+          signal: controller.signal
+        });
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          throw new Error('Request timed out. The server may be waking up — please try again.');
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok) throw new Error(`Failed to fetch statement: ${res.status}`);
       return res.text();
     }
