@@ -83,6 +83,13 @@ export const api = {
     like: (body) => request('/api/load-likes', { method: 'POST', body }),
     unlike: (id) => request(`/api/load-likes/${id}`, { method: 'DELETE' })
   },
+  loadBids: {
+    mine: () => request('/api/load-bids/mine'),
+    place: (body) => request('/api/load-bids', { method: 'POST', body }),
+    forLoad: (loadId) => request(`/api/load-bids/load/${loadId}`),
+    approve: (id) => request(`/api/load-bids/${id}/approve`, { method: 'POST' }),
+    reject: (id) => request(`/api/load-bids/${id}/reject`, { method: 'POST' })
+  },
   wallet: {
     balance: () => request('/api/wallet'),
     transactions: (params = {}) => {

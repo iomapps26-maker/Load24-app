@@ -8,6 +8,7 @@ import profileRouter from './routes/profile.js';
 import kycRouter from './routes/kyc.js';
 import loadsRouter from './routes/loads.js';
 import loadLikesRouter from './routes/loadLikes.js';
+import loadBidsRouter from './routes/loadBids.js';
 import onboardingRouter from './routes/onboarding.js';
 import authRouter from './routes/auth.js';
 import whatsappAuthRouter from './routes/whatsappAuth.js';
@@ -49,6 +50,7 @@ app.use('/api/auth', requireAuth, authRouter);
 // have been recorded via POST /api/auth/accept-terms first.
 app.use('/api/loads', requireAuth, requireConsents, loadsRouter);
 app.use('/api/load-likes', requireAuth, requireConsents, loadLikesRouter);
+app.use('/api/load-bids', requireAuth, requireConsents, loadBidsRouter);
 app.use('/api/bank-details', requireAuth, requireConsents, bankDetailsRouter);
 app.use('/api/reviews', requireAuth, requireConsents, reviewsRouter);
 app.use('/api/support-tickets', requireAuth, requireConsents, supportTicketsRouter);

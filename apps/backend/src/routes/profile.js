@@ -14,8 +14,12 @@ router.get('/me', async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message });
   // mpin_hash is a bcrypt hash, not something the client needs — never send
-  // credential material back over the wire even to its own owner.
-  if (data) delete data.mpin_hash;
+  // credential material back over the wire even to its own owner. Expose
+  // only whether one is set, so the app knows whether to gate on re-entry.
+  if (data) {
+    data.has_mpin = !!data.mpin_hash;
+    delete data.mpin_hash;
+  }
   res.json(data);
 });
 

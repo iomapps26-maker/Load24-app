@@ -1,6 +1,6 @@
 import './global.css';
-import { useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
@@ -22,9 +22,17 @@ import SupportTicketsScreen from './screens/SupportTicketsScreen';
 import WalletScreen from './screens/WalletScreen';
 import TermsAcceptanceScreen from './screens/TermsAcceptanceScreen';
 import MpinSetupScreen from './screens/MpinSetupScreen';
+import LockScreen from './screens/LockScreen';
+import SeeBiddingScreen from './screens/SeeBiddingScreen';
 import MainTabs from './navigation/MainTabs';
+import { isExternalPickerActive } from './lib/pickerGuard';
 
 const Stack = createNativeStackNavigator();
+
+// How long the app can sit backgrounded before returning triggers an MPIN
+// re-lock — short interruptions (a notification banner, switching to check
+// something and back) shouldn't force the user to unlock again.
+const LOCK_GRACE_MS = 40000;
 
 // Keeps every react-native-paper component (Button, Chip, TextInput focus
 // outline, ActivityIndicator, etc.) on the brand orange instead of MD3's
@@ -64,6 +72,28 @@ function AuthGate() {
   });
   const needsTerms = (consentsStatus?.missing_consents?.length ?? 0) > 0;
 
+  // Re-locks the app with the MPIN screen after it's spent LOCK_GRACE_MS+ in
+  // the background — external pickers (camera/gallery/documents) also
+  // background the app momentarily, so those are excluded via pickerGuard
+  // rather than treated as the user leaving.
+  const [locked, setLocked] = useState(false);
+  const backgroundedAtRef = useRef(null);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        const backgroundedAt = backgroundedAtRef.current;
+        backgroundedAtRef.current = null;
+        if (backgroundedAt && profile?.has_mpin && Date.now() - backgroundedAt >= LOCK_GRACE_MS) {
+          setLocked(true);
+        }
+      } else if (!isExternalPickerActive() && !backgroundedAtRef.current) {
+        backgroundedAtRef.current = Date.now();
+      }
+    });
+    return () => subscription.remove();
+  }, [profile]);
+
   const isLoadingGate =
     isLoadingAuth || (isAuthenticated && isLoadingProfile) || (isAuthenticated && !!profile && isLoadingConsents);
 
@@ -73,6 +103,10 @@ function AuthGate() {
         <ActivityIndicator size="large" color="#f97316" />
       </View>
     );
+  }
+
+  if (isAuthenticated && locked) {
+    return <LockScreen onUnlock={() => setLocked(false)} />;
   }
 
   return (
@@ -107,6 +141,7 @@ function AuthGate() {
                 options={{ headerShown: true, title: t('supportTickets') }}
               />
               <Stack.Screen name="Wallet" component={WalletScreen} options={{ headerShown: true, title: t('walletBalance') }} />
+              <Stack.Screen name="SeeBidding" component={SeeBiddingScreen} options={{ headerShown: true, title: t('seeBidding') }} />
             </>
           )
         ) : (

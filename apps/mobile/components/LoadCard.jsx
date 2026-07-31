@@ -10,7 +10,7 @@ function formatDate(dateStr, language) {
   return d.toLocaleDateString(language === 'hi' ? 'hi-IN' : 'en-IN', { day: '2-digit', month: 'short' });
 }
 
-export default function LoadCard({ load, liked, onToggleLike }) {
+export default function LoadCard({ load, liked, onToggleLike, bidStatus, onOpenBid, hideActions }) {
   const { language, t } = useLanguage();
 
   const truckTypeLabel = TRUCK_TYPE_LABELS[language]?.[load.required_truck_type] ?? load.required_truck_type;
@@ -99,14 +99,42 @@ export default function LoadCard({ load, liked, onToggleLike }) {
             </View>
           </View>
 
-          <TouchableOpacity
-            onPress={() => onToggleLike(load)}
-            className={`flex-row items-center gap-1.5 rounded-xl px-6 py-3.5 ${liked ? 'bg-red-600' : 'bg-brand'}`}
-          >
-            <Icon source={liked ? 'heart' : 'heart-outline'} size={18} color="#ffffff" />
-            <Text className="text-base font-bold text-white">{liked ? t('liked') : t('like')}</Text>
-          </TouchableOpacity>
+          {!hideActions && (
+            <TouchableOpacity
+              onPress={() => onToggleLike(load)}
+              className={`flex-row items-center gap-1.5 rounded-xl px-6 py-3.5 ${liked ? 'bg-red-600' : 'bg-brand'}`}
+            >
+              <Icon source={liked ? 'heart' : 'heart-outline'} size={18} color="#ffffff" />
+              <Text className="text-base font-bold text-white">{liked ? t('liked') : t('like')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
+
+        {!hideActions && !!onOpenBid && (
+          bidStatus ? (
+            <View
+              className={`mt-3 items-center rounded-xl py-2.5 ${
+                bidStatus === 'approved' ? 'bg-green-100' : bidStatus === 'rejected' ? 'bg-red-100' : 'bg-orange-100'
+              }`}
+            >
+              <Text
+                className={`text-sm font-bold ${
+                  bidStatus === 'approved' ? 'text-green-700' : bidStatus === 'rejected' ? 'text-red-700' : 'text-orange-700'
+                }`}
+              >
+                {bidStatus === 'approved' ? t('bidApproved') : bidStatus === 'rejected' ? t('bidRejected') : t('bidPending')}
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              onPress={() => onOpenBid(load)}
+              className="mt-3 flex-row items-center justify-center gap-1.5 rounded-xl border-2 border-brand py-3"
+            >
+              <Icon source="gavel" size={18} color="#f97316" />
+              <Text className="text-base font-bold text-brand">{t('letsBidding')}</Text>
+            </TouchableOpacity>
+          )
+        )}
       </View>
     </View>
   );

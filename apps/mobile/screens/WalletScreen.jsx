@@ -53,17 +53,19 @@ function razorpayCheckoutHtml({ keyId, orderId, amount, currency }) {
 
 function TransactionRow({ txn, t }) {
   const meta = TXN_META[txn.type] ?? { labelKey: null, icon: 'swap-horizontal', positive: true };
+  const isPending = txn.status && txn.status !== 'completed';
   return (
     <View className="mb-3 flex-row items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-4">
       <View className="mr-3 flex-1 flex-row items-center">
-        <Icon source={meta.icon} size={22} color={meta.positive ? '#16a34a' : '#dc2626'} />
+        <Icon source={meta.icon} size={22} color={isPending ? '#94a3b8' : meta.positive ? '#16a34a' : '#dc2626'} />
         <View className="ml-3 flex-1">
           <Text className="text-sm font-semibold text-slate-800">{meta.labelKey ? t(meta.labelKey) : txn.type}</Text>
           <Text className="text-xs text-slate-400">{new Date(txn.created_at).toLocaleString()}</Text>
           <Text className="text-xs text-slate-400">{txn.transaction_id}</Text>
+          {isPending && <Text className="mt-0.5 text-xs font-semibold text-orange-600">{t('txnStatusPending')}</Text>}
         </View>
       </View>
-      <Text className={`text-base font-bold ${meta.positive ? 'text-green-600' : 'text-red-600'}`}>
+      <Text className={`text-base font-bold ${isPending ? 'text-slate-400' : meta.positive ? 'text-green-600' : 'text-red-600'}`}>
         {meta.positive ? '+' : '-'}₹{Number(txn.amount).toLocaleString('en-IN')}
       </Text>
     </View>
