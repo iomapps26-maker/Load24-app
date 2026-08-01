@@ -1,4 +1,8 @@
 import { Router } from 'express';
+import { supabaseAdmin } from '../lib/supabase.js';
+
+const KYC_BUCKET = 'kyc-documents';
+const TRIP_DOC_URL_TTL_SECONDS = 300;
 
 const router = Router();
 
@@ -21,6 +25,39 @@ async function autoRejectExpired(supabase, load_id) {
     .eq('load_id', load_id)
     .eq('status', 'pending')
     .lt('expires_at', new Date().toISOString());
+}
+
+// user_profiles RLS only lets a row's own owner (or staff) select it, so
+// once we've authorized the caller as one of the two trip parties above, we
+// deliberately switch to the service-role client to read the *other*
+// party's profile/documents — same trust model kyc.js uses for signed URLs.
+async function profileForEmail(email) {
+  const { data } = await supabaseAdmin
+    .from('user_profiles')
+    .select('user_id, full_name, mobile, user_type, company_name, city, state, trust_score, rating_score, total_ratings, kyc_status')
+    .eq('user_email', email)
+    .maybeSingle();
+  return data;
+}
+
+// Short-lived (5 min) signed URLs, minted fresh on every trip-details fetch
+// rather than stored/cached, so a leaked link stops working quickly.
+async function documentsForUser(userId) {
+  const { data: kycCase } = await supabaseAdmin.from('kyc_cases').select('id').eq('user_id', userId).maybeSingle();
+  if (!kycCase) return [];
+
+  const { data: docs } = await supabaseAdmin
+    .from('kyc_documents')
+    .select('document_type, file_name, mime_type, storage_path')
+    .eq('case_id', kycCase.id);
+  if (!docs?.length) return [];
+
+  return Promise.all(
+    docs.map(async ({ document_type, file_name, mime_type, storage_path }) => {
+      const { data } = await supabaseAdmin.storage.from(KYC_BUCKET).createSignedUrl(storage_path, TRIP_DOC_URL_TTL_SECONDS);
+      return { document_type, file_name, mime_type, url: data?.signedUrl ?? null };
+    })
+  );
 }
 
 // GET /api/load-bids/mine — bids the current user has placed
@@ -89,6 +126,89 @@ router.get('/load/:load_id', async (req, res) => {
   if (bidsError) return dbError(res, bidsError, 'Could not load bids for this load');
 
   res.json({ load, bids });
+});
+
+// GET /api/load-bids/load/:load_id/trip-details — once a bid on this load
+// has been approved, both counterparties (the poster and the approved
+// bidder) can see each other's contact details, profile, and KYC documents.
+// Authorization is enforced explicitly in JS (not just RLS) because the
+// documents/profile lookups below run on the service-role client, which
+// bypasses RLS entirely.
+router.get('/load/:load_id/trip-details', async (req, res) => {
+  const { data: load, error: loadError } = await req.supabase
+    .from('loads')
+    .select('*')
+    .eq('id', req.params.load_id)
+    .maybeSingle();
+  if (loadError) return dbError(res, loadError, 'Could not load this load');
+  if (!load) return res.status(404).json({ error: 'Load not found' });
+
+  const { data: bid, error: bidError } = await req.supabase
+    .from('load_bids')
+    .select('*')
+    .eq('load_id', req.params.load_id)
+    .eq('status', 'approved')
+    .maybeSingle();
+  if (bidError) return dbError(res, bidError, 'Could not load bidding details');
+  if (!bid) return res.status(404).json({ error: 'No accepted bid yet for this load' });
+
+  const callerEmail = req.user.email;
+  const isPoster = callerEmail === load.posted_by;
+  const isAccepter = callerEmail === bid.bid_by_email;
+  if (!isPoster && !isAccepter) {
+    return res.status(403).json({ error: 'Not authorized to view trip details for this load' });
+  }
+
+  const [posterProfile, accepterProfile] = await Promise.all([
+    profileForEmail(load.posted_by),
+    profileForEmail(bid.bid_by_email)
+  ]);
+
+  const [posterDocuments, accepterDocuments] = await Promise.all([
+    posterProfile ? documentsForUser(posterProfile.user_id) : [],
+    accepterProfile ? documentsForUser(accepterProfile.user_id) : []
+  ]);
+
+  res.json({
+    viewer_role: isPoster ? 'poster' : 'accepter',
+    load,
+    bid: {
+      id: bid.id,
+      amount: bid.amount,
+      truck_id: bid.truck_id,
+      truck_number: bid.truck_number,
+      bid_by_type: bid.bid_by_type,
+      reviewed_at: bid.reviewed_at
+    },
+    poster: {
+      email: load.posted_by,
+      full_name: posterProfile?.full_name ?? null,
+      mobile: posterProfile?.mobile ?? null,
+      user_type: posterProfile?.user_type ?? load.poster_type ?? null,
+      company_name: posterProfile?.company_name ?? load.company_name ?? null,
+      city: posterProfile?.city ?? null,
+      state: posterProfile?.state ?? null,
+      trust_score: posterProfile?.trust_score ?? null,
+      rating_score: posterProfile?.rating_score ?? null,
+      total_ratings: posterProfile?.total_ratings ?? null,
+      kyc_status: posterProfile?.kyc_status ?? null,
+      documents: posterDocuments
+    },
+    accepter: {
+      email: bid.bid_by_email,
+      full_name: accepterProfile?.full_name ?? bid.bid_by_name ?? null,
+      mobile: accepterProfile?.mobile ?? bid.bid_by_mobile ?? null,
+      user_type: accepterProfile?.user_type ?? bid.bid_by_type ?? null,
+      company_name: accepterProfile?.company_name ?? null,
+      city: accepterProfile?.city ?? null,
+      state: accepterProfile?.state ?? null,
+      trust_score: accepterProfile?.trust_score ?? null,
+      rating_score: accepterProfile?.rating_score ?? null,
+      total_ratings: accepterProfile?.total_ratings ?? null,
+      kyc_status: accepterProfile?.kyc_status ?? null,
+      documents: accepterDocuments
+    }
+  });
 });
 
 // POST /api/load-bids/:id/approve — poster-only via RLS (load_bids_update_poster).

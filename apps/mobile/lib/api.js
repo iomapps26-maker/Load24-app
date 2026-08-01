@@ -124,6 +124,7 @@ export const api = {
     mine: () => request('/api/load-bids/mine'),
     place: (body) => request('/api/load-bids', { method: 'POST', body }),
     forLoad: (loadId) => request(`/api/load-bids/load/${loadId}`),
+    tripDetails: (loadId) => request(`/api/load-bids/load/${loadId}/trip-details`),
     approve: (id) => request(`/api/load-bids/${id}/approve`, { method: 'POST' }),
     reject: (id) => request(`/api/load-bids/${id}/reject`, { method: 'POST' })
   },

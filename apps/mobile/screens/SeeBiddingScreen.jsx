@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { Icon } from 'react-native-paper';
-import { useRoute } from '@react-navigation/native';
+import { useRoute, useNavigation } from '@react-navigation/native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
@@ -71,6 +71,7 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
 // refetchInterval here is enough to reflect that without a client-side write.
 export default function SeeBiddingScreen() {
   const route = useRoute();
+  const navigation = useNavigation();
   const { loadId } = route.params;
   const { t } = useLanguage();
   const queryClient = useQueryClient();
@@ -94,10 +95,21 @@ export default function SeeBiddingScreen() {
   }
 
   const { load, bids = [] } = data || {};
+  const hasApprovedBid = bids.some((bid) => bid.status === 'approved');
 
   return (
     <ScrollView className="flex-1 bg-slate-50 px-4 pt-4">
       {!!load && <LoadCard load={load} hideActions />}
+
+      {hasApprovedBid && (
+        <TouchableOpacity
+          onPress={() => navigation.navigate('TripDetails', { loadId })}
+          className="mb-4 flex-row items-center justify-center gap-2 rounded-xl bg-brand py-3.5"
+        >
+          <Icon source="file-document-outline" size={18} color="#ffffff" />
+          <Text className="text-base font-bold text-white">{t('viewTripDetails')}</Text>
+        </TouchableOpacity>
+      )}
 
       <Text className="mb-3 text-lg font-bold text-slate-900">{t('allBids')}</Text>
       {bids.length === 0 ? (

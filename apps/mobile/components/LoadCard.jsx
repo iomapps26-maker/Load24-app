@@ -1,5 +1,6 @@
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Icon } from 'react-native-paper';
+import { useNavigation } from '@react-navigation/native';
 import { useLanguage } from '../lib/i18n';
 import { TRUCK_TYPE_LABELS, FUEL_LABELS } from '../lib/loadOptions';
 
@@ -12,6 +13,7 @@ function formatDate(dateStr, language) {
 
 export default function LoadCard({ load, liked, onToggleLike, bidStatus, onOpenBid, hideActions }) {
   const { language, t } = useLanguage();
+  const navigation = useNavigation();
 
   const truckTypeLabel = TRUCK_TYPE_LABELS[language]?.[load.required_truck_type] ?? load.required_truck_type;
   const fuelLabel = FUEL_LABELS[language]?.[load.fuel_type_required] ?? t('any');
@@ -125,15 +127,27 @@ export default function LoadCard({ load, liked, onToggleLike, bidStatus, onOpenB
                 {bidStatus === 'approved' ? t('bidApproved') : bidStatus === 'rejected' ? t('bidRejected') : t('bidPending')}
               </Text>
             </View>
-          ) : (
-            <TouchableOpacity
-              onPress={() => onOpenBid(load)}
-              className="mt-3 flex-row items-center justify-center gap-1.5 rounded-xl border-2 border-brand py-3"
-            >
-              <Icon source="gavel" size={18} color="#f97316" />
-              <Text className="text-base font-bold text-brand">{t('letsBidding')}</Text>
-            </TouchableOpacity>
-          )
+          ) : null
+        )}
+
+        {!hideActions && bidStatus === 'approved' && (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('TripDetails', { loadId: load.id })}
+            className="mt-3 flex-row items-center justify-center gap-1.5 rounded-xl bg-brand py-3"
+          >
+            <Icon source="file-document-outline" size={18} color="#ffffff" />
+            <Text className="text-base font-bold text-white">{t('viewTripDetails')}</Text>
+          </TouchableOpacity>
+        )}
+
+        {!hideActions && !!onOpenBid && !bidStatus && (
+          <TouchableOpacity
+            onPress={() => onOpenBid(load)}
+            className="mt-3 flex-row items-center justify-center gap-1.5 rounded-xl border-2 border-brand py-3"
+          >
+            <Icon source="gavel" size={18} color="#f97316" />
+            <Text className="text-base font-bold text-brand">{t('letsBidding')}</Text>
+          </TouchableOpacity>
         )}
       </View>
     </View>
