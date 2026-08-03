@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
+import { View, Text, Image, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
 import { Icon } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -128,7 +128,7 @@ export default function HomeScreen() {
         style={{ paddingTop: insets.top + 12 }}
       >
         <View className="flex-row items-center gap-2">
-          <Text className="text-2xl">🚚</Text>
+          <Image source={require('../assets/logo-mark.png')} style={{ width: 26, height: 26 }} resizeMode="contain" />
           <Text className="text-lg font-bold text-navy">
             LOAD<Text className="text-brand">24</Text>
           </Text>
@@ -377,7 +377,7 @@ export default function HomeScreen() {
       {/* Footer */}
       <View className="items-center bg-navy px-6 py-10">
         <View className="mb-2 flex-row items-center gap-2">
-          <Text className="text-xl">🚚</Text>
+          <Image source={require('../assets/logo-mark.png')} style={{ width: 24, height: 24 }} resizeMode="contain" />
           <Text className="text-lg font-bold text-white">LOAD24.in</Text>
         </View>
         <View className="mb-3 rounded-full bg-green-500/20 px-3 py-1">

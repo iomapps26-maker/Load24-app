@@ -1,6 +1,7 @@
 import './global.css';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, View } from 'react-native';
+import { SystemBars } from 'react-native-edge-to-edge';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
@@ -22,6 +23,7 @@ import SupportTicketsScreen from './screens/SupportTicketsScreen';
 import WalletScreen from './screens/WalletScreen';
 import TermsAcceptanceScreen from './screens/TermsAcceptanceScreen';
 import MpinSetupScreen from './screens/MpinSetupScreen';
+import LinkedAccountsScreen from './screens/LinkedAccountsScreen';
 import LockScreen from './screens/LockScreen';
 import SeeBiddingScreen from './screens/SeeBiddingScreen';
 import TripDetailsScreen from './screens/TripDetailsScreen';
@@ -79,6 +81,19 @@ function AuthGate() {
   // rather than treated as the user leaving.
   const [locked, setLocked] = useState(false);
   const backgroundedAtRef = useRef(null);
+  const hasCheckedStartupLockRef = useRef(false);
+
+  // Cold app starts never fire an AppState background->active transition,
+  // so the resume-based lock below never runs on launch. Lock as soon as we
+  // know the profile has an MPIN set, once per app session.
+  useEffect(() => {
+    if (!hasCheckedStartupLockRef.current && profile) {
+      hasCheckedStartupLockRef.current = true;
+      if (profile.has_mpin) {
+        setLocked(true);
+      }
+    }
+  }, [profile]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -122,6 +137,11 @@ function AuthGate() {
               <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
               <Stack.Screen name="MpinSetup" component={MpinSetupScreen} options={{ headerShown: true, title: t('mpinSettings') }} />
               <Stack.Screen
+                name="LinkedAccounts"
+                component={LinkedAccountsScreen}
+                options={{ headerShown: true, title: t('linkedAccounts') }}
+              />
+              <Stack.Screen
                 name="ProfitCalculator"
                 component={ProfitCalculatorScreen}
                 options={{ headerShown: true, title: t('profitCalculator') }}
@@ -162,6 +182,7 @@ function AuthGate() {
 export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <SystemBars style="dark" />
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <LanguageProvider>

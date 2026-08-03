@@ -48,3 +48,24 @@ export const whatsappVerifyOtpRateLimiter = rateLimit({
   keyGenerator: (req) => req.body?.phone || req.ip,
   message: { error: 'Too many attempts, please try again later.' }
 });
+
+// Authenticated "link a phone number to my account" flow (auth.js
+// /link-phone/*) — same shape as the WhatsApp limiters above but keyed by
+// the signed-in user, since there's always a req.user by the time these run.
+export const linkPhoneSendOtpRateLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { error: 'Too many OTP requests, please try again later.' }
+});
+
+export const linkPhoneVerifyOtpRateLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { error: 'Too many attempts, please try again later.' }
+});

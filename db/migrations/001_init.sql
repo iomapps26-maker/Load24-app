@@ -5,7 +5,7 @@
 create extension if not exists "pgcrypto";
 
 -- ============================================================
--- user_profiles  (mirrors base44/entities/UserProfile.jsonc)
+-- user_profiles
 -- ============================================================
 create table if not exists public.user_profiles (
   id uuid primary key default gen_random_uuid(),
@@ -42,7 +42,7 @@ create table if not exists public.user_profiles (
 );
 
 -- ============================================================
--- loads  (mirrors base44/entities/Load.jsonc)
+-- loads
 -- ============================================================
 create table if not exists public.loads (
   id uuid primary key default gen_random_uuid(),
@@ -96,7 +96,7 @@ create index if not exists loads_status_idx on public.loads (status);
 create index if not exists loads_created_idx on public.loads (created_at desc);
 
 -- ============================================================
--- load_likes  (mirrors base44/entities/LoadLike.jsonc)
+-- load_likes
 -- ============================================================
 create table if not exists public.load_likes (
   id uuid primary key default gen_random_uuid(),
@@ -136,7 +136,7 @@ after insert or delete on public.load_likes
 for each row execute function public.sync_load_likes_count();
 
 -- ============================================================
--- Row Level Security  (mirrors the rls blocks in base44/entities/*.jsonc)
+-- Row Level Security
 -- ============================================================
 alter table public.user_profiles enable row level security;
 alter table public.loads enable row level security;

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, Image, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity } from 'react-native';
 import { TextInput, Button, HelperText } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../lib/AuthContext';
@@ -66,7 +66,7 @@ export default function AuthChoiceScreen() {
       <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}>
         <View className="items-center">
           <View className="-mb-8 z-10 h-20 w-20 items-center justify-center rounded-full bg-white shadow">
-            <Text className="text-2xl">🚚</Text>
+            <Image source={require('../assets/logo-mark.png')} style={{ width: 44, height: 44 }} resizeMode="contain" />
           </View>
         </View>
 

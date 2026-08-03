@@ -1,4 +1,4 @@
-import { View, Text, ScrollView } from 'react-native';
+import { View, Text, Image, ScrollView } from 'react-native';
 import { Button } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,7 +25,7 @@ export default function LandingScreen() {
         style={{ paddingTop: insets.top + 12 }}
       >
         <View className="flex-row items-center gap-2">
-          <Text className="text-2xl">🚚</Text>
+          <Image source={require('../assets/logo-mark.png')} style={{ width: 28, height: 28 }} resizeMode="contain" />
           <Text className="text-xl font-bold text-white">
             LOAD<Text className="text-brand">24</Text>
           </Text>

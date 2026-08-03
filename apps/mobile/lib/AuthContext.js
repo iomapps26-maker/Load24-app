@@ -92,6 +92,23 @@ export function AuthProvider({ children }) {
 
   const signInWithGoogle = () => signInWithOAuth('google');
 
+  // Attaches a Google identity to the *current* session's account instead of
+  // signing into a (possibly different) one — the counterpart to
+  // signInWithGoogle for a user who's already authenticated (e.g. via phone
+  // OTP) and wants Google as an additional sign-in method on the same
+  // account. Requires "Allow manual linking" enabled in the Supabase
+  // dashboard (Authentication -> Providers -> Advanced); Supabase rejects
+  // linkIdentity calls without it.
+  const linkGoogleIdentity = async () => {
+    const { data, error } = await supabase.auth.linkIdentity({
+      provider: 'google',
+      options: { redirectTo: REDIRECT_URL, skipBrowserRedirect: true }
+    });
+    if (error) return { error };
+    if (data?.url) await Linking.openURL(data.url);
+    return { error: null };
+  };
+
   const signInWithPassword = (email, password) =>
     supabase.auth.signInWithPassword({ email, password });
 
@@ -134,6 +151,32 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut();
   };
 
+  // Attaches a phone number to the *current* account via a real WhatsApp
+  // OTP round-trip (Linked Accounts screen) — the counterpart to
+  // sendPhoneOtp/verifyPhoneOtp for a user who's already signed in (e.g. via
+  // Google) and wants phone login too. Unlike the sign-in flow, no session
+  // is minted here — the backend just attaches the verified phone to the
+  // caller's existing session (see /api/auth/link-phone/verify-otp).
+  const sendLinkPhoneOtp = async (phone) => {
+    try {
+      await api.auth.linkPhoneSendOtp(phone);
+      return { error: null };
+    } catch (err) {
+      return { error: err };
+    }
+  };
+
+  const verifyLinkPhoneOtp = async (phone, code) => {
+    try {
+      await api.auth.linkPhoneVerifyOtp(phone, code);
+      return { error: null };
+    } catch (err) {
+      return { error: err };
+    }
+  };
+
+  const getLinkedIdentities = () => api.auth.identities();
+
   const value = {
     session,
     user: session?.user ?? null,
@@ -144,13 +187,17 @@ export function AuthProvider({ children }) {
     verifySignupOtp,
     resendSignupOtp,
     signInWithGoogle,
+    linkGoogleIdentity,
     signInWithPassword,
     signUpWithPassword,
     resetPassword,
     signOut,
     signOutAllDevices,
     sendPhoneOtp,
-    verifyPhoneOtp
+    verifyPhoneOtp,
+    sendLinkPhoneOtp,
+    verifyLinkPhoneOtp,
+    getLinkedIdentities
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

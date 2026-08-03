@@ -30,7 +30,6 @@ dist-ssr
 *.sw?
 
 .env
-base44/.app.jsonc
 
 # React Native / Android / Expo build artifacts
 apps/mobile/android/.gradle/

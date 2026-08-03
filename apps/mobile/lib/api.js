@@ -102,7 +102,11 @@ export const api = {
     acceptTerms: () => request('/api/auth/accept-terms', { method: 'POST' }),
     whatsappSendOtp: (phone) => request('/api/auth/whatsapp/send-otp', { method: 'POST', body: { phone } }),
     whatsappVerifyOtp: (phone, code) =>
-      request('/api/auth/whatsapp/verify-otp', { method: 'POST', body: { phone, code } })
+      request('/api/auth/whatsapp/verify-otp', { method: 'POST', body: { phone, code } }),
+    identities: () => request('/api/auth/identities'),
+    linkPhoneSendOtp: (phone) => request('/api/auth/link-phone/send-otp', { method: 'POST', body: { phone } }),
+    linkPhoneVerifyOtp: (phone, code) =>
+      request('/api/auth/link-phone/verify-otp', { method: 'POST', body: { phone, code } })
   },
   loads: {
     list: (params = {}) => {

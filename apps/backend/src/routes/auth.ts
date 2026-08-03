@@ -1,20 +1,25 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
+import { z } from 'zod';
 import { supabaseAdmin } from '../lib/supabase.js';
-import { mpinLoginRateLimiter } from '../middleware/rateLimit.js';
+import { mpinLoginRateLimiter, linkPhoneSendOtpRateLimiter, linkPhoneVerifyOtpRateLimiter } from '../middleware/rateLimit.js';
 import { CONSENT_TYPES, REQUIRED_CONSENTS, missingRequiredConsents } from '../lib/consents.js';
+import { normalizeIndianPhone } from '../lib/phone.js';
+import { issueOtp, consumeOtp } from '../lib/otp.js';
+import {
+  findAccountOwningPhone,
+  hasRealActivity,
+  linkVerifiedPhoneToUser,
+  clearPhoneFromUser,
+  logAuthLinkEvent
+} from '../lib/identityLinking.js';
+import { clientIp } from '../lib/http.js';
 
 const SUSPICIOUS_WINDOW_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 const MPIN_PATTERN = /^\d{4,6}$/;
 const MPIN_MAX_ATTEMPTS = 5;
 const MPIN_LOCKOUT_MS = 15 * 60 * 1000;
 const BCRYPT_ROUNDS = 10;
-
-function clientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) return forwarded.split(',')[0].trim();
-  return req.socket.remoteAddress || null;
-}
 
 const router = Router();
 
@@ -202,12 +207,19 @@ router.get('/consents/status', async (req, res) => {
 // consents has no UPDATE RLS policy (acceptances are insert-only/versioned —
 // see db/README.md), so this checks for already-recorded rows itself instead
 // of upserting, making repeat calls with the same version a no-op.
+type ConsentEntry = { consent_type: string; version: string; granted?: boolean };
+
 router.post('/accept-terms', async (req, res) => {
-  const entries =
+  const entries: ConsentEntry[] =
     Array.isArray(req.body?.consents) && req.body.consents.length > 0 ? req.body.consents : REQUIRED_CONSENTS;
 
   for (const entry of entries) {
-    if (!CONSENT_TYPES.includes(entry?.consent_type) || typeof entry?.version !== 'string' || !entry.version) {
+    if (
+      typeof entry?.consent_type !== 'string' ||
+      !CONSENT_TYPES.includes(entry.consent_type) ||
+      typeof entry?.version !== 'string' ||
+      !entry.version
+    ) {
       return res.status(400).json({ error: `Invalid consent entry: ${JSON.stringify(entry)}` });
     }
   }
@@ -239,6 +251,94 @@ router.post('/accept-terms', async (req, res) => {
   const { data, error } = await req.supabase.from('consents').insert(toInsert).select();
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json({ consents: data });
+});
+
+const linkPhoneSendSchema = z.object({ phone: z.string() });
+const linkPhoneVerifySchema = z.object({ phone: z.string(), code: z.string().regex(/^\d{6}$/) });
+
+// POST /api/auth/link-phone/send-otp — authenticated. Sends a real WhatsApp
+// OTP to a phone number the caller wants to attach to their *current*
+// account (e.g. a Google-signed-in user who wants phone login too). Shares
+// the same OTP infra as the public sign-in flow (lib/otp.ts), just
+// rate-limited per-user instead of per-phone since there's already a session.
+router.post('/link-phone/send-otp', linkPhoneSendOtpRateLimiter, async (req, res) => {
+  const parsed = linkPhoneSendSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number' });
+
+  const phone = normalizeIndianPhone(parsed.data.phone);
+  if (!phone) return res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number' });
+
+  try {
+    const { expires_in } = await issueOtp(phone);
+    res.status(200).json({ ok: true, expires_in });
+  } catch (err: any) {
+    res.status(502).json({ error: err.message || 'Could not send WhatsApp message' });
+  }
+});
+
+// POST /api/auth/link-phone/verify-otp — authenticated. On a correct code,
+// attaches the phone to req.user's account:
+//   - unclaimed, or already on this account -> link directly.
+//   - claimed by a different account with NO profile (an empty shell, e.g.
+//     an abandoned phone-only signup that never finished onboarding) -> safe
+//     to re-home, since there's no real data to lose.
+//   - claimed by a different account that HAS a profile -> refuse. Never
+//     silently merge two accounts that both hold real data; the caller has
+//     to go through support.
+router.post('/link-phone/verify-otp', linkPhoneVerifyOtpRateLimiter, async (req, res) => {
+  const parsed = linkPhoneVerifySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'phone and 6-digit code are required' });
+
+  const phone = normalizeIndianPhone(parsed.data.phone);
+  if (!phone) return res.status(400).json({ error: 'phone and 6-digit code are required' });
+
+  const result = await consumeOtp(phone, parsed.data.code);
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error, attempts_remaining: result.attempts_remaining });
+  }
+
+  const owner = await findAccountOwningPhone(phone);
+
+  if (owner && owner.userId !== req.user.id) {
+    const ownerHasProfile = await hasRealActivity(owner.userId);
+    if (ownerHasProfile) {
+      await logAuthLinkEvent({
+        userId: req.user.id,
+        eventType: 'phone_link_blocked',
+        phone,
+        ipAddress: clientIp(req)
+      });
+      return res.status(409).json({
+        error: 'This number is linked to another account. Contact support to merge accounts.'
+      });
+    }
+    // Empty shell — safe to re-home: it holds no data, so nothing is lost.
+    await clearPhoneFromUser(owner.userId);
+  }
+
+  await linkVerifiedPhoneToUser(req.user.id, phone);
+  await logAuthLinkEvent({ userId: req.user.id, eventType: 'phone_manual_linked', phone, ipAddress: clientIp(req) });
+
+  res.status(200).json({ ok: true });
+});
+
+// GET /api/auth/identities — which sign-in methods are linked to the
+// caller's account, for a Settings/"Linked Accounts" screen.
+router.get('/identities', async (req, res) => {
+  const { data, error } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
+  if (error || !data?.user) return res.status(400).json({ error: error?.message || 'User not found' });
+
+  const providers = new Set((data.user.identities ?? []).map((identity) => identity.provider));
+  // Phone-only accounts carry a synthetic, never-delivered email (see
+  // whatsappAuth.ts syntheticEmailFor) — not a real linked email identity.
+  const isSyntheticEmail = data.user.email?.endsWith('@phone.load24.internal') ?? false;
+
+  res.json({
+    email: isSyntheticEmail ? null : (data.user.email ?? null),
+    google_linked: providers.has('google'),
+    phone: data.user.phone || null,
+    phone_linked: !!data.user.phone
+  });
 });
 
 export default router;
