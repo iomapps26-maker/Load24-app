@@ -149,4 +149,11 @@ dependencies {
     }
 }
 
+// This monorepo hoists react-native-vector-icons to the root node_modules,
+// but fonts.gradle's default iconFontsDir is relative to android/app and
+// only looks 2 levels up — override it to the actual 4-levels-up location,
+// otherwise the font copy task silently finds nothing and icons render blank.
+project.ext.vectoricons = [
+    iconFontsDir: "../../../../node_modules/react-native-vector-icons/Fonts"
+]
 apply from: file("../../../../node_modules/react-native-vector-icons/fonts.gradle")

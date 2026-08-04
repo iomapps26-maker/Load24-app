@@ -226,6 +226,16 @@ router.post('/:id/approve', async (req, res) => {
 
   if (error) return dbError(res, error, 'Could not approve this bid');
   if (!data) return res.status(409).json({ error: 'Bid is no longer pending (expired or already reviewed)' });
+
+  // Take the load out of the active pool now that it has a trip — otherwise
+  // it keeps showing up in Find Loads (which filters on status='active')
+  // even though it's already booked.
+  const { error: loadUpdateError } = await req.supabase
+    .from('loads')
+    .update({ status: 'matched' })
+    .eq('id', data.load_id);
+  if (loadUpdateError) console.error('[load-bids] failed to mark load matched', loadUpdateError);
+
   res.json(data);
 });
 
