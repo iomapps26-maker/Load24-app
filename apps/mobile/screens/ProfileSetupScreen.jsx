@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
 import { lookupPincode } from '../lib/pincodeLookup';
+import { peekPostLoginIntent } from '../lib/postLoginIntent';
 
 const ROLES = [
   { value: 'shipper', icon: 'package-variant-closed', titleKey: 'roleShipperTitle', descKey: 'roleShipperDesc' },
@@ -60,7 +61,12 @@ export default function ProfileSetupScreen() {
   const isVerifiedEmail = !!user?.email && !isSyntheticEmail(user.email);
 
   const [step, setStep] = useState(0); // 0: role, 1: basic info
-  const [selectedRoles, setSelectedRoles] = useState([]);
+  // Only relevant on first-time signup (profile doesn't exist yet, so
+  // App.jsx's post-login-intent redirect hasn't fired/consumed it yet) —
+  // editing an existing profile always starts with an empty pending intent.
+  const [selectedRoles, setSelectedRoles] = useState(() =>
+    peekPostLoginIntent() === 'truck' ? ['vehicle_owner'] : []
+  );
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState(() => (isSyntheticEmail(user?.email) ? '' : user?.email ?? ''));
   const [mobile, setMobile] = useState('');

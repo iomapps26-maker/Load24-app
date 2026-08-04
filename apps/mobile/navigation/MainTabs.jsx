@@ -1,4 +1,5 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import HomeScreen from '../screens/HomeScreen';
 import FindLoadsScreen from '../screens/FindLoadsScreen';
@@ -18,6 +19,11 @@ const TAB_ICONS = {
 };
 
 export default function MainTabs() {
+  // Fixed height/paddingBottom would clip the tab bar under the gesture
+  // nav bar / home indicator on devices with a bottom inset — add it back
+  // on top of the base size instead of letting the fixed values swallow it.
+  const insets = useSafeAreaInsets();
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -25,7 +31,12 @@ export default function MainTabs() {
         tabBarActiveTintColor: '#f97316',
         tabBarInactiveTintColor: '#94a3b8',
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-        tabBarStyle: { borderTopColor: '#e2e8f0', paddingBottom: 4, height: 58 },
+        tabBarStyle: {
+          borderTopColor: '#e2e8f0',
+          height: 58 + insets.bottom,
+          paddingTop: 4,
+          paddingBottom: Math.max(insets.bottom, 4)
+        },
         tabBarIcon: ({ focused, color, size }) => {
           const [outline, filled] = TAB_ICONS[route.name];
           return <Icon name={focused ? filled : outline} color={color} size={size} />;

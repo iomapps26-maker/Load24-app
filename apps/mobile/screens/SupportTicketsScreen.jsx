@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Linking } from 'react-native';
 import { Icon, TextInput, Button } from 'react-native-paper';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
+import { SALES_PHONE } from '../lib/contact';
 
 const STATUS_STYLE = {
   open: { bg: 'bg-blue-100', text: 'text-blue-700' },
@@ -33,6 +34,14 @@ export default function SupportTicketsScreen() {
 
   return (
     <ScrollView className="flex-1 bg-slate-50" contentContainerStyle={{ padding: 16 }}>
+      <TouchableOpacity
+        className="mb-4 flex-row items-center justify-center rounded-xl bg-green-600 py-3.5"
+        onPress={() => Linking.openURL(`tel:${SALES_PHONE}`)}
+      >
+        <Icon source="phone" size={18} color="white" />
+        <Text className="ml-2 text-base font-bold text-white">{t('callSalesTeam')}</Text>
+      </TouchableOpacity>
+
       {showForm ? (
         <View className="mb-4 rounded-2xl border border-slate-200 bg-white p-5">
           <TextInput mode="outlined" label={t('subject')} value={subject} onChangeText={setSubject} className="mb-3" />

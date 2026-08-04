@@ -3,6 +3,7 @@ import { Button } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../lib/i18n';
+import { setPostLoginIntent } from '../lib/postLoginIntent';
 
 const STEPS = [
   { icon: '📦', titleKey: 'step1Title', descKey: 'step1Desc' },
@@ -60,7 +61,18 @@ export default function LandingScreen() {
         <Button mode="contained" buttonColor="#f97316" className="mb-3" onPress={() => navigation.navigate('AuthChoice')}>
           {t('ctaShipper')}
         </Button>
-        <Button mode="outlined" textColor="#f97316" onPress={() => navigation.navigate('AuthChoice')}>
+        <Button
+          mode="outlined"
+          textColor="#f97316"
+          onPress={() => {
+            // Not signed in here by construction (AuthGate only renders
+            // Landing/AuthChoice for a signed-out session) — sign in first,
+            // then AuthGate forwards straight to the Truck section once the
+            // authenticated tree is up (see App.jsx's postLoginIntent effect).
+            setPostLoginIntent('truck');
+            navigation.navigate('AuthChoice');
+          }}
+        >
           {t('ctaTruckOwner')}
         </Button>
 

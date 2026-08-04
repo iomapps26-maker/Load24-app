@@ -8,11 +8,13 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { PaperProvider, MD3LightTheme } from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { LanguageProvider, useLanguage } from './lib/i18n';
 import { queryClient } from './lib/queryClient';
 import { api } from './lib/api';
+import { navigationRef, navigate } from './lib/navigationRef';
+import { consumePostLoginIntent } from './lib/postLoginIntent';
 import LandingScreen from './screens/LandingScreen';
 import AuthChoiceScreen from './screens/AuthChoiceScreen';
 import ProfileSetupScreen from './screens/ProfileSetupScreen';
@@ -57,6 +59,7 @@ const paperTheme = {
 function AuthGate() {
   const { isAuthenticated, isLoadingAuth } = useAuth();
   const { t } = useLanguage();
+  const queryClient = useQueryClient();
   const { data: profile, isLoading: isLoadingProfile } = useQuery({
     queryKey: ['profile'],
     queryFn: api.profile.me,
@@ -84,6 +87,21 @@ function AuthGate() {
   const backgroundedAtRef = useRef(null);
   const hasCheckedStartupLockRef = useRef(false);
 
+  // hasCheckedStartupLockRef only ever flips true->stays true for the life
+  // of this component, but AuthGate itself stays mounted across sign-out ->
+  // sign-in (no remount) — without this, signing out and back into an
+  // account that *does* have an MPIN set skips the startup lock entirely,
+  // landing straight in the app as if MPIN had never been set. Stale
+  // cross-account query cache (profile, loads, ...) is the same class of
+  // bug, so clear it here too rather than only resetting the lock ref.
+  useEffect(() => {
+    if (!isAuthenticated) {
+      hasCheckedStartupLockRef.current = false;
+      setLocked(false);
+      queryClient.clear();
+    }
+  }, [isAuthenticated, queryClient]);
+
   // Cold app starts never fire an AppState background->active transition,
   // so the resume-based lock below never runs on launch. Lock as soon as we
   // know the profile has an MPIN set, once per app session.
@@ -110,6 +128,25 @@ function AuthGate() {
     });
     return () => subscription.remove();
   }, [profile]);
+
+  // Consumes an intent set by a signed-out entry point (LandingScreen's "I am
+  // a vehicle owner" button) once the authenticated app tree is actually
+  // reachable — before that (still loading, mid profile-setup, terms not yet
+  // accepted) TruckDetails isn't mounted in this Stack.Navigator yet.
+  // consumePostLoginIntent() is a pop, so re-running this on every render is
+  // harmless — it's a no-op once the intent has already been consumed.
+  // Only driver/vehicle_owner accounts can actually register a truck (see
+  // TRUCK_ROLES in apps/backend/src/routes/trucks.js) — someone who signed
+  // in or set up their profile with a different role lands on the normal
+  // home screen instead, same as if they'd never tapped the CTA.
+  useEffect(() => {
+    if (isAuthenticated && profile && !needsTerms) {
+      const intent = consumePostLoginIntent();
+      if (intent === 'truck' && ['driver', 'vehicle_owner'].includes(profile.user_type)) {
+        navigate('TruckDetails');
+      }
+    }
+  }, [isAuthenticated, profile, needsTerms]);
 
   const isLoadingGate =
     isLoadingAuth || (isAuthenticated && isLoadingProfile) || (isAuthenticated && !!profile && isLoadingConsents);
@@ -194,7 +231,7 @@ export default function App() {
           <LanguageProvider>
             <AuthProvider>
               <PaperProvider theme={paperTheme} settings={{ icon: (props) => <Icon {...props} /> }}>
-                <NavigationContainer>
+                <NavigationContainer ref={navigationRef}>
                   <AuthGate />
                 </NavigationContainer>
               </PaperProvider>

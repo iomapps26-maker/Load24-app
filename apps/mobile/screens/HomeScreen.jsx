@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
+import { SALES_PHONE } from '../lib/contact';
 import MyLoadRow from '../components/MyLoadRow';
 
 const STEPS = [
@@ -32,6 +33,32 @@ function StatCard({ icon, iconBg, value, label }) {
       </View>
       <Text className="text-2xl font-bold text-slate-900">{value}</Text>
       <Text className="text-sm text-slate-500">{label}</Text>
+    </View>
+  );
+}
+
+// Mirrors MyLoadRow's card, but for the accepter side of a matched trip —
+// the bid, not the load, is theirs, and the load only comes along embedded
+// on it (see GET /api/load-bids/mine).
+function TripRow({ bid, t, navigation }) {
+  const load = bid.load;
+  return (
+    <View className="mb-3 flex-row items-center justify-between rounded-2xl border border-slate-200 bg-white p-4">
+      <View className="flex-1 pr-2">
+        <Text className="text-sm font-bold text-slate-900" numberOfLines={1}>
+          {load.loading_city || load.loading_pincode} → {load.unloading_city || load.unloading_pincode}
+        </Text>
+        <Text className="mt-1 text-xs text-slate-500">
+          {load.material_type} • ₹{Number(bid.amount).toLocaleString('en-IN')}
+        </Text>
+      </View>
+      <TouchableOpacity
+        className="flex-row items-center gap-1 rounded-lg bg-brand px-3 py-2"
+        onPress={() => navigation.navigate('TripDetails', { loadId: load.id })}
+      >
+        <Icon source="file-document-outline" size={14} color="white" />
+        <Text className="text-xs font-bold text-white">{t('viewTripDetails')}</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -90,11 +117,22 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
 
+  // Same ['profile'] cache AuthGate already populated on app start — reading
+  // it here is free, no extra request.
+  const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
+  const canAddTruck = ['driver', 'vehicle_owner'].includes(profile?.user_type);
+
   const { data: myLoads = [] } = useQuery({ queryKey: ['myLoads'], queryFn: api.loads.mine });
   const { data: recentLoads = [] } = useQuery({
     queryKey: ['recentLoads'],
     queryFn: () => api.loads.list({ limit: 5 })
   });
+  // A load drops out of GET /api/loads (and so out of Find Loads/recentLoads)
+  // the moment a bid on it is approved — that endpoint only lists
+  // status='active'. This is the accepter's only remaining way to see it,
+  // since they don't own the load and can't list it via loads.mine either.
+  const { data: myBids = [] } = useQuery({ queryKey: ['myBids'], queryFn: api.loadBids.mine });
+  const myTrips = myBids.filter((b) => b.status === 'approved' && b.load);
 
   // Bottom-tab screens stay mounted on tab switch, so React Query's
   // refetch-on-mount never fires again after the first visit — without this,
@@ -103,6 +141,7 @@ export default function HomeScreen() {
     useCallback(() => {
       queryClient.invalidateQueries({ queryKey: ['myLoads'] });
       queryClient.invalidateQueries({ queryKey: ['recentLoads'] });
+      queryClient.invalidateQueries({ queryKey: ['myBids'] });
     }, [queryClient])
   );
 
@@ -174,7 +213,7 @@ export default function HomeScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           className="flex-row items-center justify-center rounded-xl border-2 border-brand py-3.5"
-          onPress={() => navigation.navigate('Loads')}
+          onPress={() => navigation.navigate(canAddTruck ? 'TruckDetails' : 'Loads')}
         >
           <Text className="mr-2 text-base font-bold text-brand">{t('ctaTruckOwner')}</Text>
           <Icon source="arrow-right" size={18} color="#f97316" />
@@ -201,6 +240,15 @@ export default function HomeScreen() {
             <Text className="mb-3 text-base font-bold text-slate-900">{t('yourPostedLoads')}</Text>
             {myLoads.slice(0, 5).map((load) => (
               <MyLoadRow key={load.id} load={load} t={t} navigation={navigation} />
+            ))}
+          </View>
+        )}
+
+        {myTrips.length > 0 && (
+          <View className="mt-2">
+            <Text className="mb-3 text-base font-bold text-slate-900">{t('yourTrips')}</Text>
+            {myTrips.slice(0, 5).map((bid) => (
+              <TripRow key={bid.id} bid={bid} t={t} navigation={navigation} />
             ))}
           </View>
         )}
@@ -360,7 +408,7 @@ export default function HomeScreen() {
         <Text className="mb-5 text-center text-xl font-bold text-white">{t('needHelp')}</Text>
         <TouchableOpacity
           className="mb-3 w-full flex-row items-center justify-center rounded-xl bg-green-800 py-3.5"
-          onPress={() => Linking.openURL('tel:').catch(() => notImplemented(t))}
+          onPress={() => Linking.openURL(`tel:${SALES_PHONE}`).catch(() => notImplemented(t))}
         >
           <Icon source="phone" size={18} color="white" />
           <Text className="ml-2 text-base font-bold text-white">{t('callSalesTeam')}</Text>

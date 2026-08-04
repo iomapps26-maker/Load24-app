@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, Pressable } from 'react-native';
 import { TextInput, Button, Icon } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
@@ -24,6 +25,7 @@ function Field({ label, required, ...props }) {
 
 function TruckTypePicker({ value, onChange, t, language }) {
   const [visible, setVisible] = useState(false);
+  const insets = useSafeAreaInsets();
   const label = value ? TRUCK_TYPE_LABELS[language]?.[value] ?? value : t('selectTruckType');
 
   return (
@@ -39,7 +41,11 @@ function TruckTypePicker({ value, onChange, t, language }) {
 
       <Modal visible={visible} transparent animationType="slide" onRequestClose={() => setVisible(false)}>
         <Pressable className="flex-1 justify-end bg-black/40" onPress={() => setVisible(false)}>
-          <Pressable className="max-h-[70%] rounded-t-3xl bg-white p-5 pb-8" onPress={() => {}}>
+          <Pressable
+          className="max-h-[70%] rounded-t-3xl bg-white p-5"
+          style={{ paddingBottom: Math.max(insets.bottom, 20) + 12 }}
+          onPress={() => {}}
+        >
             <Text className="mb-4 text-center text-base font-bold text-slate-900">{t('selectTruckType')}</Text>
             <ScrollView>
               {TRUCK_TYPES.map((type) => (

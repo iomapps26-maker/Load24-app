@@ -60,11 +60,16 @@ async function documentsForUser(userId) {
   );
 }
 
-// GET /api/load-bids/mine — bids the current user has placed
+// GET /api/load-bids/mine — bids the current user has placed, with the load
+// embedded (via the load_id FK) so an approved bid can be rendered as a trip
+// card (route, material, price) on the home screen without a second
+// per-load fetch — the bidder loses the load from GET /api/loads the moment
+// it's matched (that endpoint only lists status='active'), so this is their
+// only remaining way to see it.
 router.get('/mine', async (req, res) => {
   const { data, error } = await req.supabase
     .from('load_bids')
-    .select('*')
+    .select('*, load:loads(*)')
     .eq('bid_by_email', req.user.email)
     .order('created_at', { ascending: false });
 

@@ -4,6 +4,7 @@ import { Icon, Button, TextInput } from 'react-native-paper';
 import Geolocation from '@react-native-community/geolocation';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { pick, types as documentTypes } from '@react-native-documents/picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { supabase } from '../lib/supabase';
@@ -40,10 +41,15 @@ async function uploadToSignedUrl(storagePath, token, file) {
 // (Cancel) silently disappears — so the source/Cancel choice is a real
 // bottom-sheet modal instead, with Cancel always visible as its own row.
 function PickerSheet({ visible, label, onTakePhoto, onChooseGallery, onAttachPdf, onCancel, t }) {
+  const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <Pressable className="flex-1 justify-end bg-black/40" onPress={onCancel}>
-        <Pressable className="rounded-t-3xl bg-white p-5 pb-8" onPress={() => {}}>
+        <Pressable
+          className="rounded-t-3xl bg-white p-5"
+          style={{ paddingBottom: Math.max(insets.bottom, 20) + 12 }}
+          onPress={() => {}}
+        >
           <Text className="mb-4 text-center text-base font-bold text-slate-900">{label}</Text>
           <Button mode="outlined" className="mb-3" onPress={onTakePhoto}>
             {t('takePhoto')}
