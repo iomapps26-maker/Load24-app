@@ -75,6 +75,13 @@ export const api = {
     me: () => request('/api/bank-details/me'),
     save: (body) => request('/api/bank-details', { method: 'POST', body })
   },
+  trucks: {
+    mine: () => request('/api/trucks'),
+    get: (id) => request(`/api/trucks/${id}`),
+    create: (body) => request('/api/trucks', { method: 'POST', body }),
+    update: (id, body) => request(`/api/trucks/${id}`, { method: 'PATCH', body }),
+    remove: (id) => request(`/api/trucks/${id}`, { method: 'DELETE' })
+  },
   reviews: {
     mine: () => request('/api/reviews/mine')
   },

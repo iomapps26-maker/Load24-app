@@ -19,6 +19,7 @@ import ProfileSetupScreen from './screens/ProfileSetupScreen';
 import ProfitCalculatorScreen from './screens/ProfitCalculatorScreen';
 import FinancialForecastScreen from './screens/FinancialForecastScreen';
 import KycVerificationScreen from './screens/KycVerificationScreen';
+import TruckDetailsScreen from './screens/TruckDetailsScreen';
 import SupportTicketsScreen from './screens/SupportTicketsScreen';
 import WalletScreen from './screens/WalletScreen';
 import TermsAcceptanceScreen from './screens/TermsAcceptanceScreen';
@@ -155,6 +156,11 @@ function AuthGate() {
                 name="KycVerification"
                 component={KycVerificationScreen}
                 options={{ headerShown: true, title: t('kycVerification') }}
+              />
+              <Stack.Screen
+                name="TruckDetails"
+                component={TruckDetailsScreen}
+                options={{ headerShown: true, title: t('myTrucks') }}
               />
               <Stack.Screen
                 name="SupportTickets"

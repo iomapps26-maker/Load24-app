@@ -357,6 +357,9 @@ export default function ProfileScreen() {
       <NavRow icon="chart-line" iconColor="#16a34a" label={t('profitCalculator')} onPress={() => navigation.navigate('ProfitCalculator')} />
       <NavRow icon="finance" iconColor="#2563eb" label={t('financialForecast')} onPress={() => navigation.navigate('FinancialForecast')} />
       <NavRow icon="shield-check-outline" iconColor="#2563eb" label={t('kycVerification')} onPress={() => navigation.navigate('KycVerification')} />
+      {['driver', 'vehicle_owner'].includes(profile.user_type) && (
+        <NavRow icon="truck-outline" iconColor="#16a34a" label={t('myTrucks')} onPress={() => navigation.navigate('TruckDetails')} />
+      )}
       <NavRow icon="file-document-outline" iconColor="#7c3aed" label={t('supportTickets')} onPress={() => navigation.navigate('SupportTickets')} />
       <NavRow icon="lock-outline" iconColor="#ea580c" label={t('mpinSettings')} onPress={() => navigation.navigate('MpinSetup')} />
       <NavRow icon="link-variant" iconColor="#0891b2" label={t('linkedAccounts')} onPress={() => navigation.navigate('LinkedAccounts')} />
