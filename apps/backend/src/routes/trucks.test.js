@@ -1,11 +1,34 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import trucksRouter from './trucks.js';
 
-// In-memory stand-in for req.supabase.from('user_profiles'|'trucks')...
-function createMockSupabase({ userType = 'vehicle_owner', seedTrucks = [] } = {}) {
+const mockAdminState = { removeCalls: [], signedUrlCalls: [] };
+
+vi.mock('../lib/supabase.js', () => ({
+  supabaseAdmin: {
+    storage: {
+      from(bucket) {
+        return {
+          remove: (paths) => {
+            mockAdminState.removeCalls.push({ bucket, paths });
+            return Promise.resolve({ data: null, error: null });
+          },
+          createSignedUploadUrl: (path) => {
+            mockAdminState.signedUrlCalls.push({ bucket, path });
+            return Promise.resolve({ data: { signedUrl: `https://example.com/${path}`, path, token: 'tok' }, error: null });
+          }
+        };
+      }
+    }
+  }
+}));
+
+const { default: trucksRouter } = await import('./trucks.js');
+
+// In-memory stand-in for req.supabase.from('user_profiles'|'trucks'|'truck_documents')...
+function createMockSupabase({ userType = 'vehicle_owner', seedTrucks = [], seedDocuments = [] } = {}) {
   let rows = [...seedTrucks];
+  let docRows = [...seedDocuments];
 
   function ownedRow(ownerField, ownerValue, idField, idValue) {
     return rows.find((r) => r[ownerField] === ownerValue && r[idField] === idValue) ?? null;
@@ -65,6 +88,16 @@ function createMockSupabase({ userType = 'vehicle_owner', seedTrucks = [] } = {}
                         }
                       })
                     };
+                  },
+                  // Real supabase-js query builders are themselves
+                  // thenable — a caller that only chains one .eq() and
+                  // awaits it directly (no .select()) still executes, same
+                  // as the "fire and forget" updates elsewhere in the app
+                  // (e.g. loadBids.js re-verification resets).
+                  then(resolve) {
+                    const matches = rows.filter((r) => r[field] === value);
+                    matches.forEach((r) => Object.assign(r, patch));
+                    resolve({ data: matches, error: null });
                   }
                 };
               }
@@ -89,6 +122,15 @@ function createMockSupabase({ userType = 'vehicle_owner', seedTrucks = [] } = {}
                 };
               }
             };
+          }
+        };
+      }
+      if (table === 'truck_documents') {
+        return {
+          upsert(row) {
+            docRows = docRows.filter((d) => !(d.truck_id === row.truck_id && d.document_type === row.document_type));
+            docRows.push(row);
+            return { select: () => ({ single: () => Promise.resolve({ data: row, error: null }) }) };
           }
         };
       }
@@ -150,6 +192,42 @@ describe('POST /api/trucks', () => {
     const res = await request(app).post('/api/trucks').send(validBody);
     expect(res.status).toBe(201);
   });
+
+  it('rejects an invalid body_type', async () => {
+    const app = buildApp(createMockSupabase());
+    const res = await request(app).post('/api/trucks').send({ ...validBody, body_type: 'convertible' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects an invalid fuel_type', async () => {
+    const app = buildApp(createMockSupabase());
+    const res = await request(app).post('/api/trucks').send({ ...validBody, fuel_type: 'petrol' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects an invalid axle_type', async () => {
+    const app = buildApp(createMockSupabase());
+    const res = await request(app).post('/api/trucks').send({ ...validBody, axle_type: 'triple_axle' });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts the full new field set', async () => {
+    const app = buildApp(createMockSupabase());
+    const res = await request(app).post('/api/trucks').send({
+      ...validBody,
+      tyre_count: 6,
+      body_type: 'open',
+      capacity_tons: 10,
+      length_ft: 20,
+      width_ft: 8,
+      owner_name: 'Sumit',
+      fuel_type: 'diesel',
+      axle_type: 'multi_axle'
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.tyre_count).toBe(6);
+    expect(res.body.fuel_type).toBe('diesel');
+  });
 });
 
 describe('GET /api/trucks', () => {
@@ -207,5 +285,57 @@ describe('DELETE /api/trucks/:id', () => {
     const app = buildApp(mockSupabase);
     const res = await request(app).delete('/api/trucks/t1');
     expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/trucks/:id/documents/upload-url', () => {
+  it('rejects an unknown document_type', async () => {
+    const mockSupabase = createMockSupabase({ seedTrucks: [{ id: 't1', owner_id: 'user-1', ...validBody }] });
+    const app = buildApp(mockSupabase);
+    const res = await request(app).post('/api/trucks/t1/documents/upload-url').send({ document_type: 'road_tax', file_name: 'x.pdf' });
+    expect(res.status).toBe(400);
+  });
+
+  it('404s for a truck the caller does not own', async () => {
+    const mockSupabase = createMockSupabase({ seedTrucks: [{ id: 't1', owner_id: 'other-user', ...validBody }] });
+    const app = buildApp(mockSupabase);
+    const res = await request(app).post('/api/trucks/t1/documents/upload-url').send({ document_type: 'rc', file_name: 'rc.pdf' });
+    expect(res.status).toBe(404);
+  });
+
+  it('mints a signed upload URL scoped to the caller and truck', async () => {
+    const mockSupabase = createMockSupabase({ seedTrucks: [{ id: 't1', owner_id: 'user-1', ...validBody }] });
+    const app = buildApp(mockSupabase);
+    const res = await request(app).post('/api/trucks/t1/documents/upload-url').send({ document_type: 'rc', file_name: 'rc.pdf' });
+    expect(res.status).toBe(200);
+    expect(res.body.storage_path).toBe('user-1/t1/rc.pdf');
+  });
+});
+
+describe('POST /api/trucks/:id/documents', () => {
+  it('records the document and re-locks verification', async () => {
+    const mockSupabase = createMockSupabase({
+      seedTrucks: [{ id: 't1', owner_id: 'user-1', verified: true, ...validBody }]
+    });
+    const app = buildApp(mockSupabase);
+    const res = await request(app).post('/api/trucks/t1/documents').send({
+      document_type: 'insurance',
+      storage_path: 'user-1/t1/insurance.pdf',
+      file_name: 'insurance.pdf',
+      mime_type: 'application/pdf'
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.document_type).toBe('insurance');
+    expect(mockSupabase._rows()[0].verified).toBe(false);
+  });
+
+  it('rejects a storage_path that does not belong to the caller', async () => {
+    const mockSupabase = createMockSupabase({ seedTrucks: [{ id: 't1', owner_id: 'user-1', ...validBody }] });
+    const app = buildApp(mockSupabase);
+    const res = await request(app).post('/api/trucks/t1/documents').send({
+      document_type: 'rc',
+      storage_path: 'someone-else/t1/rc.pdf'
+    });
+    expect(res.status).toBe(403);
   });
 });

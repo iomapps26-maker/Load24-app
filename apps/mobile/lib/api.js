@@ -80,7 +80,10 @@ export const api = {
     get: (id) => request(`/api/trucks/${id}`),
     create: (body) => request('/api/trucks', { method: 'POST', body }),
     update: (id, body) => request(`/api/trucks/${id}`, { method: 'PATCH', body }),
-    remove: (id) => request(`/api/trucks/${id}`, { method: 'DELETE' })
+    remove: (id) => request(`/api/trucks/${id}`, { method: 'DELETE' }),
+    uploadUrl: (id, document_type, file_name) =>
+      request(`/api/trucks/${id}/documents/upload-url`, { method: 'POST', body: { document_type, file_name } }),
+    confirmDocument: (id, body) => request(`/api/trucks/${id}/documents`, { method: 'POST', body })
   },
   reviews: {
     mine: () => request('/api/reviews/mine')
