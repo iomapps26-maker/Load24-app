@@ -56,7 +56,9 @@ alter table public.truck_availabilities enable row level security;
 -- Anyone authenticated can browse 'available' postings (this is the Find
 -- Trucks side, same "any signed-in user can browse open listings" model as
 -- `loads`) — the owner (or staff) can also see their own postings in every
--- other status.
+-- other status. drop-then-create (rather than a bare create) so this script
+-- is safe to re-run — Postgres has no `create policy if not exists`.
+drop policy if exists "truck_availabilities_select_available_or_own_or_staff" on public.truck_availabilities;
 create policy "truck_availabilities_select_available_or_own_or_staff" on public.truck_availabilities
   for select using (
     status = 'available'
@@ -64,17 +66,21 @@ create policy "truck_availabilities_select_available_or_own_or_staff" on public.
     or public.has_role(array['admin','support_executive','support_manager'])
   );
 
+drop policy if exists "truck_availabilities_insert_own" on public.truck_availabilities;
 create policy "truck_availabilities_insert_own" on public.truck_availabilities
   for insert with check (
     owner_id = auth.uid()
     and exists (select 1 from public.trucks t where t.id = truck_id and t.owner_id = auth.uid())
   );
 
+drop policy if exists "truck_availabilities_update_own" on public.truck_availabilities;
 create policy "truck_availabilities_update_own" on public.truck_availabilities
   for update using (owner_id = auth.uid());
 
+drop policy if exists "truck_availabilities_update_staff" on public.truck_availabilities;
 create policy "truck_availabilities_update_staff" on public.truck_availabilities
   for update using (public.has_role(array['admin','support_executive','support_manager']));
 
+drop policy if exists "truck_availabilities_delete_own" on public.truck_availabilities;
 create policy "truck_availabilities_delete_own" on public.truck_availabilities
   for delete using (owner_id = auth.uid());
