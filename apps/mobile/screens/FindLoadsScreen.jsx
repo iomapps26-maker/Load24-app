@@ -6,7 +6,6 @@ import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { TRUCK_TYPES as ALL_TRUCK_TYPES, TRUCK_TYPE_LABELS } from '../lib/loadOptions';
 import LoadCard from '../components/LoadCard';
-import BidModal from '../components/BidModal';
 
 // Same enum PostLoadScreen posts with, plus "all" — every filter here mirrors
 // a field collected on the Post Load form so shippers/vehicle owners can
@@ -64,20 +63,6 @@ export default function FindLoadsScreen() {
   const { data: myBids = [] } = useQuery({
     queryKey: ['myBids'],
     queryFn: api.loadBids.mine
-  });
-
-  const [bidLoad, setBidLoad] = useState(null);
-
-  const bidMutation = useMutation({
-    mutationFn: (amount) => api.loadBids.place({
-      load_id: bidLoad.id,
-      amount,
-      bid_by_type: profile?.user_type
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['myBids'] });
-      setBidLoad(null);
-    }
   });
 
   return (
@@ -144,7 +129,6 @@ export default function FindLoadsScreen() {
               liked={myLikes.some((l) => l.load_id === item.id)}
               onToggleLike={toggleLike}
               bidStatus={myBids.find((b) => b.load_id === item.id)?.status}
-              onOpenBid={setBidLoad}
             />
           )}
           ListEmptyComponent={
@@ -152,15 +136,6 @@ export default function FindLoadsScreen() {
           }
         />
       )}
-
-      <BidModal
-        visible={!!bidLoad}
-        load={bidLoad}
-        onClose={() => setBidLoad(null)}
-        onSubmit={(amount) => bidMutation.mutate(amount)}
-        loading={bidMutation.isPending}
-        error={bidMutation.error?.message}
-      />
     </View>
   );
 }

@@ -11,12 +11,18 @@ function formatDate(dateStr, language) {
   return d.toLocaleDateString(language === 'hi' ? 'hi-IN' : 'en-IN', { day: '2-digit', month: 'short' });
 }
 
-export default function LoadCard({ load, liked, onToggleLike, bidStatus, onOpenBid, hideActions }) {
+export default function LoadCard({ load, liked, onToggleLike, bidStatus, hideActions }) {
   const { language, t } = useLanguage();
   const navigation = useNavigation();
 
-  const truckTypeLabel = TRUCK_TYPE_LABELS[language]?.[load.required_truck_type] ?? load.required_truck_type;
-  const fuelLabel = FUEL_LABELS[language]?.[load.fuel_type_required] ?? t('any');
+  const truckTypeLabel =
+    load.required_truck_type === 'other'
+      ? load.required_truck_type_other || t('other')
+      : TRUCK_TYPE_LABELS[language]?.[load.required_truck_type] ?? load.required_truck_type;
+  const fuelLabel =
+    load.fuel_type_required === 'other'
+      ? load.fuel_type_required_other || t('other')
+      : FUEL_LABELS[language]?.[load.fuel_type_required] ?? t('any');
 
   return (
     <View className="mb-4 overflow-hidden rounded-3xl border-l-4 border-brand bg-white shadow-md">
@@ -112,7 +118,7 @@ export default function LoadCard({ load, liked, onToggleLike, bidStatus, onOpenB
           )}
         </View>
 
-        {!hideActions && !!onOpenBid && (
+        {!hideActions && (
           bidStatus ? (
             <View
               className={`mt-3 items-center rounded-xl py-2.5 ${
@@ -140,9 +146,9 @@ export default function LoadCard({ load, liked, onToggleLike, bidStatus, onOpenB
           </TouchableOpacity>
         )}
 
-        {!hideActions && !!onOpenBid && !bidStatus && (
+        {!hideActions && !bidStatus && (
           <TouchableOpacity
-            onPress={() => onOpenBid(load)}
+            onPress={() => navigation.navigate('PlaceBid', { load })}
             className="mt-3 flex-row items-center justify-center gap-1.5 rounded-xl border-2 border-brand py-3"
           >
             <Icon source="gavel" size={18} color="#f97316" />

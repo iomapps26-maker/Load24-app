@@ -6,13 +6,15 @@ const router = Router();
 
 const BUCKET = 'truck-documents';
 
+// 'other' lets the caller escape the closed list — the free-text detail
+// goes in truck_type_other / body_type_other (see 022_add_truck_type_other.sql).
 const TRUCK_TYPES = [
   'mahindra_pickup', 'tata_407', 'tata_ace', 'chota_hathi', 'four_vehicle_loader',
-  'eicher_truck', 'ashok_leyland', 'lcv', 'lgv', 'open_body', 'closed_body',
-  'container', 'trailer', 'tanker', 'tipper', 'flatbed', 'car_carrier'
+  'eicher_truck', 'ashok_leyland', 'lcv', 'lgv',
+  'trailer', 'tanker', 'tipper', 'flatbed', 'car_carrier', 'other'
 ];
-const BODY_TYPES = ['open', 'closed', 'container'];
-const FUEL_TYPES = ['diesel', 'cng', 'electric'];
+const BODY_TYPES = ['open', 'closed', 'container', 'other'];
+const FUEL_TYPES = ['diesel', 'cng', 'electric', 'other'];
 const AXLE_TYPES = ['single_axle', 'multi_axle'];
 
 // Only the two roles a truck's papers actually belong to may register one —
@@ -45,14 +47,14 @@ function validateEnums(body) {
 // and deliberately excluded here.
 function pickWritableFields(body) {
   const {
-    registration_number, truck_type, tyre_count, body_type, capacity_tons,
-    length_ft, width_ft, owner_name, fuel_type, axle_type,
+    registration_number, truck_type, truck_type_other, tyre_count, body_type, body_type_other, capacity_tons,
+    length_ft, width_ft, owner_name, owner_mobile, fuel_type, fuel_type_other, axle_type,
     permit_expiry, puc_expiry, insurance_expiry,
     driver_name, driver_mobile, status
   } = body;
   return {
-    registration_number, truck_type, tyre_count, body_type, capacity_tons,
-    length_ft, width_ft, owner_name, fuel_type, axle_type,
+    registration_number, truck_type, truck_type_other, tyre_count, body_type, body_type_other, capacity_tons,
+    length_ft, width_ft, owner_name, owner_mobile, fuel_type, fuel_type_other, axle_type,
     permit_expiry, puc_expiry, insurance_expiry,
     driver_name, driver_mobile, status
   };

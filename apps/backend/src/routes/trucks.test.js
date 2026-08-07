@@ -211,6 +211,20 @@ describe('POST /api/trucks', () => {
     expect(res.status).toBe(400);
   });
 
+  it('accepts truck_type/body_type "other" with the free-text detail', async () => {
+    const app = buildApp(createMockSupabase());
+    const res = await request(app).post('/api/trucks').send({
+      ...validBody,
+      truck_type: 'other',
+      truck_type_other: 'Custom 12-wheeler',
+      body_type: 'other',
+      body_type_other: 'Half-open'
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.truck_type_other).toBe('Custom 12-wheeler');
+    expect(res.body.body_type_other).toBe('Half-open');
+  });
+
   it('accepts the full new field set', async () => {
     const app = buildApp(createMockSupabase());
     const res = await request(app).post('/api/trucks').send({

@@ -85,6 +85,18 @@ export const api = {
       request(`/api/trucks/${id}/documents/upload-url`, { method: 'POST', body: { document_type, file_name } }),
     confirmDocument: (id, body) => request(`/api/trucks/${id}/documents`, { method: 'POST', body })
   },
+  truckAvailability: {
+    mine: () => request('/api/truck-availability?mine=true'),
+    list: (params = {}) => {
+      const query = new URLSearchParams(
+        Object.entries(params).filter(([, v]) => v !== undefined && v !== '')
+      ).toString();
+      return request(`/api/truck-availability${query ? `?${query}` : ''}`);
+    },
+    create: (body) => request('/api/truck-availability', { method: 'POST', body }),
+    update: (id, body) => request(`/api/truck-availability/${id}`, { method: 'PATCH', body }),
+    remove: (id) => request(`/api/truck-availability/${id}`, { method: 'DELETE' })
+  },
   reviews: {
     mine: () => request('/api/reviews/mine')
   },

@@ -107,12 +107,16 @@ export default function TripDetailsScreen() {
     );
   }
 
-  const { load, poster, accepter, viewer_role } = data;
+  const { load, bid, poster, accepter, viewer_role } = data;
   const otherParty = viewer_role === 'poster' ? accepter : poster;
+  // The load's bhada_price is just the original asking price — once a bid is
+  // approved, the actual agreed price is what was bid, so that's what the
+  // trip (and everything derived from it) should show.
+  const agreedLoad = bid?.amount != null ? { ...load, bhada_price: bid.amount } : load;
 
   return (
     <ScrollView className="flex-1 bg-slate-50 px-4 pt-4">
-      <LoadCard load={load} hideActions />
+      <LoadCard load={agreedLoad} hideActions />
 
       <View className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
         <Text className="mb-2 text-base font-bold text-slate-900">{t('loadDetails')}</Text>
@@ -128,8 +132,16 @@ export default function TripDetailsScreen() {
           label={t('unloadingPoc')}
           value={[load.unloading_poc_name, load.unloading_poc_mobile].filter(Boolean).join(' · ')}
         />
-        <InfoRow icon="axis-arrow" label={t('axleType')} value={AXLE_LABELS[language]?.[load.axle_type]} />
-        <InfoRow icon="cube-outline" label={t('bodyType')} value={BODY_TYPE_LABELS[language]?.[load.body_type]} />
+        <InfoRow
+          icon="axis-arrow"
+          label={t('axleType')}
+          value={load.axle_type === 'other' ? load.axle_type_other || t('other') : AXLE_LABELS[language]?.[load.axle_type]}
+        />
+        <InfoRow
+          icon="cube-outline"
+          label={t('bodyType')}
+          value={load.body_type === 'other' ? load.body_type_other || t('other') : BODY_TYPE_LABELS[language]?.[load.body_type]}
+        />
         <InfoRow icon="ruler" label={t('truckLength')} value={load.truck_length_ft ? `${load.truck_length_ft} ft` : null} />
         <InfoRow icon="map-marker-distance" label={t('distance')} value={load.distance_km ? `${load.distance_km} km` : null} />
         {!!load.special_conditions?.length && (

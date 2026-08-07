@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
+import { confirmSubmit } from '../lib/confirmSubmit';
 import MyLoadRow from '../components/MyLoadRow';
 
 const ROLE_LABEL_KEYS = {
@@ -142,7 +143,7 @@ function BankDetailsCard({ t }) {
               className="flex-1"
               loading={saveBank.isPending}
               disabled={!canSave || saveBank.isPending}
-              onPress={() => saveBank.mutate()}
+              onPress={() => confirmSubmit(t, () => saveBank.mutate())}
             >
               {t('save')}
             </Button>

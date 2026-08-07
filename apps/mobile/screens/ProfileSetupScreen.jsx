@@ -8,6 +8,7 @@ import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
 import { lookupPincode } from '../lib/pincodeLookup';
 import { peekPostLoginIntent } from '../lib/postLoginIntent';
+import { confirmSubmit } from '../lib/confirmSubmit';
 
 const ROLES = [
   { value: 'shipper', icon: 'package-variant-closed', titleKey: 'roleShipperTitle', descKey: 'roleShipperDesc' },
@@ -129,7 +130,7 @@ export default function ProfileSetupScreen() {
   const handleSubmit = () => {
     setError('');
     if (!fullName.trim() || !mobile.trim()) return setError(t('fullName'));
-    saveProfile.mutate();
+    confirmSubmit(t, () => saveProfile.mutate());
   };
 
   return (

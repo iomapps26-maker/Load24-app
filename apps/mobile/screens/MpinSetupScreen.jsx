@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
+import { confirmSubmit } from '../lib/confirmSubmit';
 
 const MPIN_PATTERN = /^\d{4,6}$/;
 
@@ -47,7 +48,7 @@ export default function MpinSetupScreen({ onDone, onSkip }) {
   const handleConfirm = () => {
     setError('');
     if (confirmMpin !== mpin) return setError(t('mpinMismatch'));
-    setMpinMutation.mutate();
+    confirmSubmit(t, () => setMpinMutation.mutate());
   };
 
   return (

@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { KYC_DOCUMENT_META } from '../lib/kycDocuments';
+import { confirmSubmit } from '../lib/confirmSubmit';
 import DocumentUploadRow from '../components/DocumentUploadRow';
 
 const KYC_BUCKET = 'kyc-documents';
@@ -61,8 +62,7 @@ function LocationRow({ location, t, onSaved }) {
     }
   };
 
-  const handleSave = async () => {
-    if (!address.trim() || !coords) return;
+  const doSave = async () => {
     setSaving(true);
     try {
       await api.kyc.saveLocation({ address: address.trim(), lat: coords.lat, lng: coords.lng });
@@ -72,6 +72,11 @@ function LocationRow({ location, t, onSaved }) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSave = () => {
+    if (!address.trim() || !coords) return;
+    confirmSubmit(t, doSave);
   };
 
   return (

@@ -22,6 +22,7 @@ import ProfitCalculatorScreen from './screens/ProfitCalculatorScreen';
 import FinancialForecastScreen from './screens/FinancialForecastScreen';
 import KycVerificationScreen from './screens/KycVerificationScreen';
 import TruckDetailsScreen from './screens/TruckDetailsScreen';
+import PostTruckScreen from './screens/PostTruckScreen';
 import SupportTicketsScreen from './screens/SupportTicketsScreen';
 import WalletScreen from './screens/WalletScreen';
 import TermsAcceptanceScreen from './screens/TermsAcceptanceScreen';
@@ -30,6 +31,7 @@ import LinkedAccountsScreen from './screens/LinkedAccountsScreen';
 import LockScreen from './screens/LockScreen';
 import SeeBiddingScreen from './screens/SeeBiddingScreen';
 import TripDetailsScreen from './screens/TripDetailsScreen';
+import PlaceBidScreen from './screens/PlaceBidScreen';
 import MainTabs from './navigation/MainTabs';
 import { isExternalPickerActive } from './lib/pickerGuard';
 
@@ -200,6 +202,11 @@ function AuthGate() {
                 options={{ headerShown: true, title: t('myTrucks') }}
               />
               <Stack.Screen
+                name="PostTruck"
+                component={PostTruckScreen}
+                options={{ headerShown: true, title: 'Post Truck Availability' }}
+              />
+              <Stack.Screen
                 name="SupportTickets"
                 component={SupportTicketsScreen}
                 options={{ headerShown: true, title: t('supportTickets') }}
@@ -207,6 +214,7 @@ function AuthGate() {
               <Stack.Screen name="Wallet" component={WalletScreen} options={{ headerShown: true, title: t('walletBalance') }} />
               <Stack.Screen name="SeeBidding" component={SeeBiddingScreen} options={{ headerShown: true, title: t('seeBidding') }} />
               <Stack.Screen name="TripDetails" component={TripDetailsScreen} options={{ headerShown: true, title: t('tripDetails') }} />
+              <Stack.Screen name="PlaceBid" component={PlaceBidScreen} options={{ headerShown: true, title: t('placeBid') }} />
             </>
           )
         ) : (

@@ -5,7 +5,7 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
-import LoadCard from '../components/LoadCard';
+import LoadRouteSummary from '../components/LoadRouteSummary';
 
 function msRemaining(bid) {
   return new Date(bid.expires_at).getTime() - Date.now();
@@ -99,7 +99,17 @@ export default function SeeBiddingScreen() {
 
   return (
     <ScrollView className="flex-1 bg-slate-50 px-4 pt-4">
-      {!!load && <LoadCard load={load} hideActions />}
+      {!!load && (
+        <View className="mb-4 rounded-3xl border border-slate-200 bg-white p-5">
+          <View className="mb-3 flex-row items-center justify-between">
+            <Text className="text-xs text-slate-400">{load.material_type}</Text>
+            <Text className="text-lg font-extrabold text-green-600">
+              ₹{Number(load.bhada_price).toLocaleString('en-IN')}
+            </Text>
+          </View>
+          <LoadRouteSummary load={load} />
+        </View>
+      )}
 
       {hasApprovedBid && (
         <TouchableOpacity

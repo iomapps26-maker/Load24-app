@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { SALES_PHONE } from '../lib/contact';
+import { confirmSubmit } from '../lib/confirmSubmit';
 
 const STATUS_STYLE = {
   open: { bg: 'bg-blue-100', text: 'text-blue-700' },
@@ -64,7 +65,7 @@ export default function SupportTicketsScreen() {
               className="flex-1"
               loading={createTicket.isPending}
               disabled={!subject.trim() || !message.trim() || createTicket.isPending}
-              onPress={() => createTicket.mutate()}
+              onPress={() => confirmSubmit(t, () => createTicket.mutate())}
             >
               {t('submit')}
             </Button>

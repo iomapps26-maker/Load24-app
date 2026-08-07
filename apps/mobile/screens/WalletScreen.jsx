@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
+import { confirmSubmit } from '../lib/confirmSubmit';
 
 const TXN_META = {
   add_money: { labelKey: 'walletTxnAddMoney', icon: 'plus-circle-outline', positive: true },
@@ -103,7 +104,7 @@ function AmountModal({ visible, title, onClose, onSubmit, loading, error }) {
             buttonColor="#f97316"
             loading={loading}
             disabled={!amount || Number(amount) <= 0 || loading}
-            onPress={() => onSubmit(Number(amount))}
+            onPress={() => confirmSubmit(t, () => onSubmit(Number(amount)))}
             className="mb-3"
           >
             {title}

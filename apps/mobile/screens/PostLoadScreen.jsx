@@ -10,6 +10,7 @@ import {
   SPECIAL_CONDITIONS, SPECIAL_CONDITION_LABELS
 } from '../lib/loadOptions';
 import { useLanguage } from '../lib/i18n';
+import { confirmSubmit } from '../lib/confirmSubmit';
 
 const REQUIRED = [
   'loading_pincode', 'loading_address', 'loading_landmark', 'loading_city', 'loading_state',
@@ -31,7 +32,7 @@ function Field({ label, value, onChangeText, required, ...props }) {
 export default function PostLoadScreen() {
   const navigation = useNavigation();
   const queryClient = useQueryClient();
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
 
   const [form, setForm] = useState({
@@ -39,13 +40,16 @@ export default function PostLoadScreen() {
     unloading_pincode: '', unloading_address: '', unloading_landmark: '', unloading_city: '', unloading_state: '',
     material_type: '', weight_tons: '', bhada_price: '', truck_length_ft: '',
     loading_poc_name: '', loading_poc_mobile: '', unloading_poc_name: '', unloading_poc_mobile: '',
-    loading_date: '', loading_time: '', special_demand_comment: '', custom_requirement: ''
+    loading_date: '', loading_time: '', unloading_date: '', special_demand_comment: '', custom_requirement: '',
+    required_truck_type_other: '', fuel_type_required_other: '', axle_type_other: '', body_type_other: ''
   });
   const [truckType, setTruckType] = useState('tata_407');
   const [fuelType, setFuelType] = useState('any');
   const [axleType, setAxleType] = useState('any');
   const [bodyType, setBodyType] = useState('any');
   const [specialConditions, setSpecialConditions] = useState([]);
+  const [otherConditionSelected, setOtherConditionSelected] = useState(false);
+  const [otherConditionText, setOtherConditionText] = useState('');
   const [error, setError] = useState('');
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
@@ -63,10 +67,17 @@ export default function PostLoadScreen() {
         bhada_price: Number(form.bhada_price),
         truck_length_ft: Number(form.truck_length_ft),
         required_truck_type: truckType,
+        required_truck_type_other: truckType === 'other' ? form.required_truck_type_other.trim() : undefined,
         fuel_type_required: fuelType,
+        fuel_type_required_other: fuelType === 'other' ? form.fuel_type_required_other.trim() : undefined,
         axle_type: axleType,
+        axle_type_other: axleType === 'other' ? form.axle_type_other.trim() : undefined,
         body_type: bodyType,
-        special_conditions: specialConditions,
+        body_type_other: bodyType === 'other' ? form.body_type_other.trim() : undefined,
+        special_conditions:
+          otherConditionSelected && otherConditionText.trim()
+            ? [...specialConditions, otherConditionText.trim()]
+            : specialConditions,
         poster_type: posterType,
         company_name: profile?.company_name || undefined
       }),
@@ -83,12 +94,17 @@ export default function PostLoadScreen() {
     REQUIRED.every((k) => String(form[k]).trim().length > 0) &&
     !isNaN(Number(form.weight_tons)) &&
     !isNaN(Number(form.bhada_price)) &&
-    !isNaN(Number(form.truck_length_ft));
+    !isNaN(Number(form.truck_length_ft)) &&
+    (truckType !== 'other' || form.required_truck_type_other.trim().length > 0) &&
+    (fuelType !== 'other' || form.fuel_type_required_other.trim().length > 0) &&
+    (axleType !== 'other' || form.axle_type_other.trim().length > 0) &&
+    (bodyType !== 'other' || form.body_type_other.trim().length > 0) &&
+    (!otherConditionSelected || otherConditionText.trim().length > 0);
 
   const handleSubmit = () => {
     setError('');
     if (!isValid) return setError('Please fill all required fields');
-    createLoad.mutate();
+    confirmSubmit(t, () => createLoad.mutate());
   };
 
   return (
@@ -119,6 +135,7 @@ export default function PostLoadScreen() {
         </View>
         <Field label="Contact name" required value={form.unloading_poc_name} onChangeText={set('unloading_poc_name')} />
         <Field label="Contact mobile" required keyboardType="phone-pad" value={form.unloading_poc_mobile} onChangeText={set('unloading_poc_mobile')} />
+        <Field label="Unloading date" placeholder="YYYY-MM-DD" value={form.unloading_date} onChangeText={set('unloading_date')} />
 
         <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Load details</Text>
         <Field label="Material type" required value={form.material_type} onChangeText={set('material_type')} placeholder="e.g. Cement, Steel, Cotton" />
@@ -136,6 +153,15 @@ export default function PostLoadScreen() {
             </Chip>
           ))}
         </View>
+        {truckType === 'other' && (
+          <Field
+            label="Specify truck type"
+            required
+            placeholder="e.g. Bolero Pickup"
+            value={form.required_truck_type_other}
+            onChangeText={set('required_truck_type_other')}
+          />
+        )}
 
         <Text className="mb-2 text-sm text-slate-600">Fuel type required *</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
@@ -145,6 +171,15 @@ export default function PostLoadScreen() {
             </Chip>
           ))}
         </View>
+        {fuelType === 'other' && (
+          <Field
+            label="Specify fuel type"
+            required
+            placeholder="e.g. Petrol"
+            value={form.fuel_type_required_other}
+            onChangeText={set('fuel_type_required_other')}
+          />
+        )}
 
         <Text className="mb-2 text-sm text-slate-600">Axle type *</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
@@ -154,6 +189,15 @@ export default function PostLoadScreen() {
             </Chip>
           ))}
         </View>
+        {axleType === 'other' && (
+          <Field
+            label="Specify axle type"
+            required
+            placeholder="e.g. Triple Axle"
+            value={form.axle_type_other}
+            onChangeText={set('axle_type_other')}
+          />
+        )}
 
         <Text className="mb-2 text-sm text-slate-600">Body type *</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
@@ -163,6 +207,15 @@ export default function PostLoadScreen() {
             </Chip>
           ))}
         </View>
+        {bodyType === 'other' && (
+          <Field
+            label="Specify body type"
+            required
+            placeholder="e.g. Curtain-sided"
+            value={form.body_type_other}
+            onChangeText={set('body_type_other')}
+          />
+        )}
 
         <Text className="mb-2 text-sm text-slate-600">Special conditions</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
@@ -171,7 +224,19 @@ export default function PostLoadScreen() {
               {SPECIAL_CONDITION_LABELS[language]?.[condition] ?? condition}
             </Chip>
           ))}
+          <Chip selected={otherConditionSelected} onPress={() => setOtherConditionSelected((v) => !v)} compact>
+            {language === 'hi' ? 'अन्य' : 'Other'}
+          </Chip>
         </View>
+        {otherConditionSelected && (
+          <Field
+            label="Specify special condition"
+            required
+            placeholder="e.g. Live animals"
+            value={otherConditionText}
+            onChangeText={setOtherConditionText}
+          />
+        )}
 
         <Field label="Special demand comment" value={form.special_demand_comment} onChangeText={set('special_demand_comment')} placeholder="Any additional handling instructions" />
         <Field label="Custom requirement" value={form.custom_requirement} onChangeText={set('custom_requirement')} placeholder="Anything else the transporter should know" />
