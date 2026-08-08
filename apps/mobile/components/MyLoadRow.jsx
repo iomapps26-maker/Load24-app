@@ -15,6 +15,7 @@ export default function MyLoadRow({ load, t, navigation }) {
         </Text>
         <Text className="mt-1 text-xs text-slate-500">
           {load.material_type} • ₹{Number(load.bhada_price).toLocaleString('en-IN')}
+          {!!load.distance_km && ` • ${load.distance_km} km`}
         </Text>
       </View>
       {isMatched ? (

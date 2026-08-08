@@ -10,7 +10,7 @@ import {
   SPECIAL_CONDITIONS, SPECIAL_CONDITION_LABELS
 } from '../lib/loadOptions';
 import { useLanguage } from '../lib/i18n';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
 const REQUIRED = [
   'loading_pincode', 'loading_address', 'loading_landmark', 'loading_city', 'loading_state',
@@ -19,6 +19,21 @@ const REQUIRED = [
   'loading_poc_name', 'loading_poc_mobile', 'unloading_poc_name', 'unloading_poc_mobile',
   'loading_date', 'loading_time'
 ];
+
+// Human-readable name for each REQUIRED key, so a failed submit can name
+// exactly what's missing instead of a blanket "fill all required fields" —
+// on a form this long (six sections, most of them off-screen at once) that
+// generic message leaves no way to tell which field is the problem.
+const REQUIRED_LABELS = {
+  loading_pincode: 'Loading pincode', loading_address: 'Loading address', loading_landmark: 'Loading landmark',
+  loading_city: 'Loading city', loading_state: 'Loading state',
+  unloading_pincode: 'Unloading pincode', unloading_address: 'Unloading address', unloading_landmark: 'Unloading landmark',
+  unloading_city: 'Unloading city', unloading_state: 'Unloading state',
+  material_type: 'Material type', weight_tons: 'Weight (tons)', bhada_price: 'Bhada price (₹)', truck_length_ft: 'Truck length (ft)',
+  loading_poc_name: 'Loading contact name', loading_poc_mobile: 'Loading contact mobile',
+  unloading_poc_name: 'Unloading contact name', unloading_poc_mobile: 'Unloading contact mobile',
+  loading_date: 'Loading date', loading_time: 'Loading time'
+};
 
 function Field({ label, value, onChangeText, required, ...props }) {
   return (
@@ -51,6 +66,7 @@ export default function PostLoadScreen() {
   const [otherConditionSelected, setOtherConditionSelected] = useState(false);
   const [otherConditionText, setOtherConditionText] = useState('');
   const [error, setError] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -90,21 +106,29 @@ export default function PostLoadScreen() {
     onError: (err) => setError(err.message)
   });
 
-  const isValid =
-    REQUIRED.every((k) => String(form[k]).trim().length > 0) &&
-    !isNaN(Number(form.weight_tons)) &&
-    !isNaN(Number(form.bhada_price)) &&
-    !isNaN(Number(form.truck_length_ft)) &&
-    (truckType !== 'other' || form.required_truck_type_other.trim().length > 0) &&
-    (fuelType !== 'other' || form.fuel_type_required_other.trim().length > 0) &&
-    (axleType !== 'other' || form.axle_type_other.trim().length > 0) &&
-    (bodyType !== 'other' || form.body_type_other.trim().length > 0) &&
-    (!otherConditionSelected || otherConditionText.trim().length > 0);
+  // Every reason handleSubmit could reject, named — rather than just a
+  // boolean, so the error message can say exactly what's wrong instead of
+  // a blanket "fill all required fields".
+  const getValidationErrors = () => {
+    const errors = REQUIRED.filter((k) => !String(form[k]).trim()).map((k) => REQUIRED_LABELS[k]);
+    if (form.weight_tons.trim() && isNaN(Number(form.weight_tons))) errors.push('Weight (tons) must be a number');
+    if (form.bhada_price.trim() && isNaN(Number(form.bhada_price))) errors.push('Bhada price (₹) must be a number');
+    if (form.truck_length_ft.trim() && isNaN(Number(form.truck_length_ft))) errors.push('Truck length (ft) must be a number');
+    if (truckType === 'other' && !form.required_truck_type_other.trim()) errors.push('Specify truck type');
+    if (fuelType === 'other' && !form.fuel_type_required_other.trim()) errors.push('Specify fuel type');
+    if (axleType === 'other' && !form.axle_type_other.trim()) errors.push('Specify axle type');
+    if (bodyType === 'other' && !form.body_type_other.trim()) errors.push('Specify body type');
+    if (otherConditionSelected && !otherConditionText.trim()) errors.push('Specify special condition');
+    return errors;
+  };
+
+  const isValid = getValidationErrors().length === 0;
 
   const handleSubmit = () => {
     setError('');
-    if (!isValid) return setError('Please fill all required fields');
-    confirmSubmit(t, () => createLoad.mutate());
+    const errors = getValidationErrors();
+    if (errors.length > 0) return setError(`Missing or invalid: ${errors.join(', ')}`);
+    createLoad.mutate();
   };
 
   return (
@@ -243,11 +267,13 @@ export default function PostLoadScreen() {
 
         <HelperText type="error" visible={!!error}>{error}</HelperText>
 
+        <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
         <Button
           mode="contained"
           buttonColor="#f97316"
           loading={createLoad.isPending}
-          disabled={createLoad.isPending}
+          disabled={createLoad.isPending || !confirmed}
           onPress={handleSubmit}
         >
           Post Load

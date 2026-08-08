@@ -83,4 +83,3 @@ create policy "truck_availabilities_update_staff" on public.truck_availabilities
 
 drop policy if exists "truck_availabilities_delete_own" on public.truck_availabilities;
 create policy "truck_availabilities_delete_own" on public.truck_availabilities
-  for delete using (owner_id = auth.uid());

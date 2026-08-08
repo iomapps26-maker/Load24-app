@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { TRUCK_TYPE_LABELS } from '../lib/loadOptions';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
 // Bids move in ₹500 steps off the asking price rather than free typing — a
 // faster, thumb-friendly way to counter-offer than the keyboard.
@@ -66,6 +66,7 @@ export default function PlaceBidScreen() {
   const basePrice = Math.round((Number(load.bhada_price) || 0) / BID_STEP) * BID_STEP;
   const [amount, setAmount] = useState(basePrice || BID_STEP);
   const [error, setError] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
 
   const bidMutation = useMutation({
     mutationFn: () => api.loadBids.place({ load_id: load.id, amount, bid_by_type: profile?.user_type }),
@@ -160,11 +161,13 @@ export default function PlaceBidScreen() {
 
         {!!error && <Text className="mb-3 text-center text-sm text-red-600">{error}</Text>}
 
+        <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
         <TouchableOpacity
-          onPress={() => confirmSubmit(t, () => bidMutation.mutate())}
-          disabled={bidMutation.isPending || amount <= 0}
+          onPress={() => bidMutation.mutate()}
+          disabled={bidMutation.isPending || amount <= 0 || !confirmed}
           className="items-center rounded-2xl bg-green-600 py-4"
-          style={bidMutation.isPending ? { opacity: 0.6 } : undefined}
+          style={bidMutation.isPending || !confirmed ? { opacity: 0.6 } : undefined}
         >
           <Text className="text-base font-bold text-white">{t('confirmThisRate')}</Text>
         </TouchableOpacity>

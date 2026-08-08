@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { SALES_PHONE } from '../lib/contact';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
 const STATUS_STYLE = {
   open: { bg: 'bg-blue-100', text: 'text-blue-700' },
@@ -22,6 +22,8 @@ export default function SupportTicketsScreen() {
   const [showForm, setShowForm] = useState(false);
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
 
   const createTicket = useMutation({
     mutationFn: () => api.supportTickets.create({ subject: subject.trim(), message: message.trim() }),
@@ -30,8 +32,18 @@ export default function SupportTicketsScreen() {
       setSubject('');
       setMessage('');
       setShowForm(false);
-    }
+    },
+    onError: (err) => setError(err.message)
   });
+
+  const handleSubmit = () => {
+    setError('');
+    const missing = [];
+    if (!subject.trim()) missing.push(t('subject'));
+    if (!message.trim()) missing.push(t('message'));
+    if (missing.length > 0) return setError(`${t('missingLabel')}: ${missing.join(', ')}`);
+    createTicket.mutate();
+  };
 
   return (
     <ScrollView className="flex-1 bg-slate-50" contentContainerStyle={{ padding: 16 }}>
@@ -55,6 +67,10 @@ export default function SupportTicketsScreen() {
             numberOfLines={4}
             className="mb-4"
           />
+          {!!error && <Text className="mb-3 text-xs text-red-600">{error}</Text>}
+
+          <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
           <View className="flex-row gap-3">
             <Button mode="outlined" className="flex-1" onPress={() => setShowForm(false)}>
               {t('cancel')}
@@ -64,8 +80,8 @@ export default function SupportTicketsScreen() {
               buttonColor="#f97316"
               className="flex-1"
               loading={createTicket.isPending}
-              disabled={!subject.trim() || !message.trim() || createTicket.isPending}
-              onPress={() => confirmSubmit(t, () => createTicket.mutate())}
+              disabled={createTicket.isPending || !confirmed}
+              onPress={handleSubmit}
             >
               {t('submit')}
             </Button>

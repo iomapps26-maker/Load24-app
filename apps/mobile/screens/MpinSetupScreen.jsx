@@ -5,7 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
 const MPIN_PATTERN = /^\d{4,6}$/;
 
@@ -21,6 +21,7 @@ export default function MpinSetupScreen({ onDone, onSkip }) {
   const [mpin, setMpin] = useState('');
   const [confirmMpin, setConfirmMpin] = useState('');
   const [error, setError] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
 
   const finish = () => {
     queryClient.invalidateQueries({ queryKey: ['profile'] });
@@ -48,7 +49,7 @@ export default function MpinSetupScreen({ onDone, onSkip }) {
   const handleConfirm = () => {
     setError('');
     if (confirmMpin !== mpin) return setError(t('mpinMismatch'));
-    confirmSubmit(t, () => setMpinMutation.mutate());
+    setMpinMutation.mutate();
   };
 
   return (
@@ -92,12 +93,14 @@ export default function MpinSetupScreen({ onDone, onSkip }) {
           {error}
         </HelperText>
 
+        {step === 1 && <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />}
+
         <Button
           mode="contained"
           buttonColor="#f97316"
           className="mt-2"
           loading={setMpinMutation.isPending}
-          disabled={setMpinMutation.isPending}
+          disabled={setMpinMutation.isPending || (step === 1 && !confirmed)}
           onPress={step === 0 ? handleNext : handleConfirm}
         >
           {step === 0 ? t('next') : t('confirmMpinButton')}

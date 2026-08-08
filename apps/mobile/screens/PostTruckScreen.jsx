@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 import DateField from '../components/DateField';
 
 // "Post Truck Availability" — the reverse of PostLoadScreen: instead of a
@@ -24,6 +24,7 @@ const RECURRING_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const RECURRING_DAY_LABELS = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
 
 const REQUIRED = ['current_pincode', 'current_city', 'current_state'];
+const REQUIRED_LABELS = { current_pincode: 'Pincode', current_city: 'City', current_state: 'State' };
 
 function Field({ label, required, ...props }) {
   return (
@@ -91,6 +92,7 @@ export default function PostTruckScreen() {
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurringDays, setRecurringDays] = useState([]);
   const [error, setError] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -122,16 +124,25 @@ export default function PostTruckScreen() {
     onError: (err) => setError(err.message)
   });
 
-  const isValid =
-    !!truckId &&
-    REQUIRED.every((k) => String(form[k]).trim().length > 0) &&
-    (availableNow || form.available_from.trim().length > 0) &&
-    (!isRecurring || recurringDays.length > 0);
+  // Named per-field, same reasoning as PostLoadScreen's getValidationErrors —
+  // a flat "fill all required fields" doesn't say which one on a form this
+  // long, so list exactly what's missing instead.
+  const getValidationErrors = () => {
+    const errors = [];
+    if (!truckId) errors.push('Which truck this posting is for');
+    errors.push(...REQUIRED.filter((k) => !String(form[k]).trim()).map((k) => REQUIRED_LABELS[k]));
+    if (!availableNow && !form.available_from.trim()) errors.push('Available from date');
+    if (isRecurring && recurringDays.length === 0) errors.push('At least one repeat day');
+    return errors;
+  };
+
+  const isValid = getValidationErrors().length === 0;
 
   const handleSubmit = () => {
     setError('');
-    if (!isValid) return setError('Please pick a truck and fill all required fields');
-    confirmSubmit(t, () => createAvailability.mutate());
+    const errors = getValidationErrors();
+    if (errors.length > 0) return setError(`Missing: ${errors.join(', ')}`);
+    createAvailability.mutate();
   };
 
   return (
@@ -197,11 +208,13 @@ export default function PostTruckScreen() {
 
         <HelperText type="error" visible={!!error}>{error}</HelperText>
 
+        <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
         <Button
           mode="contained"
           buttonColor="#f97316"
           loading={createAvailability.isPending}
-          disabled={createAvailability.isPending}
+          disabled={createAvailability.isPending || !confirmed}
           onPress={handleSubmit}
         >
           Post Availability

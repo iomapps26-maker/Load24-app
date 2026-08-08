@@ -41,7 +41,13 @@ export default function LoadCard({ load, liked, onToggleLike, bidStatus, hideAct
               <Text className="text-xs text-slate-400" numberOfLines={1}>{load.loading_landmark}</Text>
             )}
           </View>
-          <Icon source="arrow-right" size={20} color="#f97316" />
+          <View className="items-center">
+            <Icon source="arrow-right" size={20} color="#f97316" />
+            {/* distance_km is computed once server-side at posting time
+                (googleMaps.js) and stored on the load — reused here as-is,
+                never recalculated on the client. */}
+            {!!load.distance_km && <Text className="mt-0.5 text-[10px] text-slate-400">{load.distance_km} km</Text>}
+          </View>
           <View className="flex-1 items-end">
             <View className="flex-row items-center gap-1">
               <Text className="text-xs text-slate-500">{t('to')}</Text>

@@ -62,6 +62,15 @@ export default function LoadRouteSummary({ load }) {
 
       <View className="my-3 h-px bg-slate-100" />
 
+      {/* distance_km is computed once server-side at posting time
+          (googleMaps.js) and stored on the load — reused here as-is, never
+          recalculated on the client. */}
+      {!!load.distance_km && (
+        <View className="mb-2 flex-row items-center gap-2">
+          <Icon source="map-marker-distance" size={18} color="#f59e0b" />
+          <Text className="text-sm font-semibold text-slate-700">{t('tripDistance')} {load.distance_km} km</Text>
+        </View>
+      )}
       {!!detailParts.length && (
         <View className="mb-2 flex-row items-center gap-2">
           <Icon source="truck-outline" size={18} color="#f59e0b" />

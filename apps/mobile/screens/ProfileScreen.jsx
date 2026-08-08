@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 import MyLoadRow from '../components/MyLoadRow';
 
 const ROLE_LABEL_KEYS = {
@@ -64,6 +64,8 @@ function BankDetailsCard({ t }) {
   const { data: bank } = useQuery({ queryKey: ['bankDetails'], queryFn: api.bankDetails.me });
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ account_holder_name: '', account_number: '', ifsc_code: '', bank_name: '' });
+  const [error, setError] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
 
   const startEdit = () => {
     setForm({
@@ -72,6 +74,8 @@ function BankDetailsCard({ t }) {
       ifsc_code: bank?.ifsc_code ?? '',
       bank_name: bank?.bank_name ?? ''
     });
+    setError('');
+    setConfirmed(false);
     setEditing(true);
   };
 
@@ -80,11 +84,22 @@ function BankDetailsCard({ t }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bankDetails'] });
       setEditing(false);
-    }
+    },
+    onError: (err) => setError(err.message)
   });
 
-  const canSave =
-    form.account_holder_name.trim() && form.account_number.trim() && form.ifsc_code.trim() && form.bank_name.trim();
+  // Named per-field so a failed Save says exactly what's missing instead of
+  // just leaving the button greyed out.
+  const getValidationErrors = () => {
+    const errors = [];
+    if (!form.account_holder_name.trim()) errors.push(t('accountHolderName'));
+    if (!form.account_number.trim()) errors.push(t('accountNumber'));
+    if (!form.ifsc_code.trim()) errors.push(t('ifscCode'));
+    if (!form.bank_name.trim()) errors.push(t('bank'));
+    return errors;
+  };
+
+
 
   return (
     <SectionCard>
@@ -133,6 +148,10 @@ function BankDetailsCard({ t }) {
             onChangeText={(v) => setForm((f) => ({ ...f, bank_name: v }))}
             className="mb-4"
           />
+          {!!error && <Text className="mb-3 text-xs text-red-600">{error}</Text>}
+
+          <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
           <View className="flex-row gap-3">
             <Button mode="outlined" className="flex-1" onPress={() => setEditing(false)}>
               {t('cancel')}
@@ -142,8 +161,13 @@ function BankDetailsCard({ t }) {
               buttonColor="#f97316"
               className="flex-1"
               loading={saveBank.isPending}
-              disabled={!canSave || saveBank.isPending}
-              onPress={() => confirmSubmit(t, () => saveBank.mutate())}
+              disabled={saveBank.isPending || !confirmed}
+              onPress={() => {
+                setError('');
+                const errors = getValidationErrors();
+                if (errors.length > 0) return setError(`${t('missingLabel')}: ${errors.join(', ')}`);
+                saveBank.mutate();
+              }}
             >
               {t('save')}
             </Button>
@@ -180,6 +204,10 @@ function BankDetailsCard({ t }) {
       )}
     </SectionCard>
   );
+}
+
+{
+  
 }
 
 function ReviewsCard({ profile, t }) {

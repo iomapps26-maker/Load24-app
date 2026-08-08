@@ -50,6 +50,7 @@ function TripRow({ bid, t, navigation }) {
         </Text>
         <Text className="mt-1 text-xs text-slate-500">
           {load.material_type} • ₹{Number(bid.amount).toLocaleString('en-IN')}
+          {!!load.distance_km && ` • ${load.distance_km} km`}
         </Text>
       </View>
       <TouchableOpacity
@@ -79,6 +80,7 @@ function RecentLoadCard({ load, t }) {
           </View>
           <Text className="mt-2 text-sm text-slate-500">
             {load.material_type} • {load.weight_tons} Ton • ₹{Number(load.bhada_price).toLocaleString('en-IN')}
+            {!!load.distance_km && ` • ${load.distance_km} km`}
           </Text>
         </View>
         <View className="items-end">

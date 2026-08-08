@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
 const TXN_META = {
   add_money: { labelKey: 'walletTxnAddMoney', icon: 'plus-circle-outline', positive: true },
@@ -76,12 +76,22 @@ function TransactionRow({ txn, t }) {
 
 function AmountModal({ visible, title, onClose, onSubmit, loading, error }) {
   const [amount, setAmount] = useState('');
+  const [localError, setLocalError] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
 
   const handleClose = () => {
     setAmount('');
+    setLocalError('');
+    setConfirmed(false);
     onClose();
+  };
+
+  const handleSubmit = () => {
+    setLocalError('');
+    if (!amount.trim() || Number(amount) <= 0) return setLocalError(t('enterAmount'));
+    onSubmit(Number(amount));
   };
 
   return (
@@ -98,13 +108,16 @@ function AmountModal({ visible, title, onClose, onSubmit, loading, error }) {
             left={<TextInput.Icon icon="currency-inr" />}
             className="mb-3"
           />
-          {!!error && <Text className="mb-3 text-sm text-red-600">{error}</Text>}
+          {!!(localError || error) && <Text className="mb-3 text-sm text-red-600">{localError || error}</Text>}
+
+          <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
           <Button
             mode="contained"
             buttonColor="#f97316"
             loading={loading}
-            disabled={!amount || Number(amount) <= 0 || loading}
-            onPress={() => confirmSubmit(t, () => onSubmit(Number(amount)))}
+            disabled={loading || !confirmed}
+            onPress={handleSubmit}
             className="mb-3"
           >
             {title}

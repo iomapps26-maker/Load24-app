@@ -3,7 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Mod
 import { TextInput, Button, Icon } from 'react-native-paper';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import {
@@ -130,6 +130,7 @@ function TruckForm({ initial, onCancel, onSaved, t, language }) {
   const [form, setForm] = useState({ ...EMPTY_FORM, ...initial });
   const [documentsByType, setDocumentsByType] = useState(indexDocuments(initial?.documents));
   const [error, setError] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
   const queryClient = useQueryClient();
   const set = (key) => (v) => setForm((f) => ({ ...f, [key]: v }));
 
@@ -169,19 +170,26 @@ function TruckForm({ initial, onCancel, onSaved, t, language }) {
   // Every vehicle-spec/owner field is required except Driver Name/Mobile —
   // a truck can be registered before a driver is assigned, so those two stay
   // optional. "other" picks additionally require their free-text detail.
-  const canSave = Boolean(
-    form.registration_number.trim() &&
-    form.truck_type && (form.truck_type !== 'other' || form.truck_type_other.trim()) &&
-    String(form.tyre_count).trim() &&
-    form.body_type && (form.body_type !== 'other' || form.body_type_other.trim()) &&
-    String(form.capacity_tons).trim() &&
-    String(form.length_ft).trim() &&
-    String(form.width_ft).trim() &&
-    form.fuel_type && (form.fuel_type !== 'other' || form.fuel_type_other.trim()) &&
-    form.axle_type &&
-    form.owner_name.trim() &&
-    form.owner_mobile.trim()
-  );
+  // Named per-field (not just a boolean) so a failed Save can say exactly
+  // what's missing instead of leaving the button silently greyed out.
+  const getValidationErrors = () => {
+    const errors = [];
+    if (!form.registration_number.trim()) errors.push(t('registrationNumber'));
+    if (!form.truck_type) errors.push(t('truckType'));
+    else if (form.truck_type === 'other' && !form.truck_type_other.trim()) errors.push(t('specifyTruckType'));
+    if (!String(form.tyre_count).trim()) errors.push(t('vehicleTyres'));
+    if (!form.body_type) errors.push(t('bodyType'));
+    else if (form.body_type === 'other' && !form.body_type_other.trim()) errors.push(t('specifyBodyType'));
+    if (!String(form.capacity_tons).trim()) errors.push(t('capacityTons'));
+    if (!String(form.length_ft).trim()) errors.push(t('length'));
+    if (!String(form.width_ft).trim()) errors.push(t('width'));
+    if (!form.fuel_type) errors.push(t('fuelType'));
+    else if (form.fuel_type === 'other' && !form.fuel_type_other.trim()) errors.push(t('specifyFuelType'));
+    if (!form.axle_type) errors.push(t('axleType'));
+    if (!form.owner_name.trim()) errors.push(t('ownerName'));
+    if (!form.owner_mobile.trim()) errors.push(t('ownerMobile'));
+    return errors;
+  };
 
   const requiredDocsUploaded = DOCUMENT_ROWS
     .filter((row) => row.required)
@@ -240,6 +248,8 @@ function TruckForm({ initial, onCancel, onSaved, t, language }) {
 
       {!!error && <Text className="mb-3 text-xs text-red-600">{error}</Text>}
 
+      <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
       <View className="mt-2 flex-row gap-3">
         <Button mode="outlined" className="flex-1" onPress={onCancel}>{t('cancel')}</Button>
         <Button
@@ -247,8 +257,13 @@ function TruckForm({ initial, onCancel, onSaved, t, language }) {
           buttonColor="#f97316"
           className="flex-1"
           loading={save.isPending}
-          disabled={!canSave || save.isPending}
-          onPress={() => { setError(''); confirmSubmit(t, () => save.mutate()); }}
+          disabled={save.isPending || !confirmed}
+          onPress={() => {
+            setError('');
+            const errors = getValidationErrors();
+            if (errors.length > 0) return setError(`${t('missingLabel')}: ${errors.join(', ')}`);
+            save.mutate();
+          }}
         >
           {truckId ? t('save') : t('saveAndContinue')}
         </Button>

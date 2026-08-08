@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { KYC_DOCUMENT_META } from '../lib/kycDocuments';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 import DocumentUploadRow from '../components/DocumentUploadRow';
 
 const KYC_BUCKET = 'kyc-documents';
@@ -36,6 +36,7 @@ function LocationRow({ location, t, onSaved }) {
   );
   const [locating, setLocating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
 
   const captureLocation = async () => {
     setLocating(true);
@@ -75,8 +76,11 @@ function LocationRow({ location, t, onSaved }) {
   };
 
   const handleSave = () => {
-    if (!address.trim() || !coords) return;
-    confirmSubmit(t, doSave);
+    const missing = [];
+    if (!address.trim()) missing.push(t('locationAddressPlaceholder'));
+    if (!coords) missing.push(t('locationCapture'));
+    if (missing.length > 0) return Alert.alert(t('missingLabel'), missing.join(', '));
+    doSave();
   };
 
   return (
@@ -109,13 +113,15 @@ function LocationRow({ location, t, onSaved }) {
         )}
       </View>
 
+      <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
       <Button
         mode="contained"
         buttonColor="#f97316"
         compact
         onPress={handleSave}
         loading={saving}
-        disabled={saving || !address.trim() || !coords}
+        disabled={saving || !confirmed}
       >
         {t('save')}
       </Button>

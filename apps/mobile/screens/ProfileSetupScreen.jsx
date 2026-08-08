@@ -8,7 +8,7 @@ import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
 import { lookupPincode } from '../lib/pincodeLookup';
 import { peekPostLoginIntent } from '../lib/postLoginIntent';
-import { confirmSubmit } from '../lib/confirmSubmit';
+import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
 const ROLES = [
   { value: 'shipper', icon: 'package-variant-closed', titleKey: 'roleShipperTitle', descKey: 'roleShipperDesc' },
@@ -77,6 +77,7 @@ export default function ProfileSetupScreen() {
   const [state, setState] = useState('');
   const [error, setError] = useState('');
   const [pincodeLoading, setPincodeLoading] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
 
   useEffect(() => {
     if (pincode.trim().length !== 6) return;
@@ -129,8 +130,11 @@ export default function ProfileSetupScreen() {
 
   const handleSubmit = () => {
     setError('');
-    if (!fullName.trim() || !mobile.trim()) return setError(t('fullName'));
-    confirmSubmit(t, () => saveProfile.mutate());
+    const missing = [];
+    if (!fullName.trim()) missing.push(t('fullName'));
+    if (!mobile.trim()) missing.push(t('mobileNumber'));
+    if (missing.length > 0) return setError(`${t('missingLabel')}: ${missing.join(', ')}`);
+    saveProfile.mutate();
   };
 
   return (
@@ -225,6 +229,8 @@ export default function ProfileSetupScreen() {
 
             <HelperText type="error" visible={!!error}>{error}</HelperText>
 
+            <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
             <View className="mt-2 flex-row gap-3">
               <Button mode="outlined" className="flex-1" onPress={() => setStep(0)}>
                 {t('back')}
@@ -234,7 +240,7 @@ export default function ProfileSetupScreen() {
                 buttonColor="#f97316"
                 className="flex-1"
                 loading={saveProfile.isPending}
-                disabled={saveProfile.isPending || !fullName.trim() || !mobile.trim()}
+                disabled={saveProfile.isPending || !confirmed}
                 onPress={handleSubmit}
               >
                 {t('saveAndContinue')}
