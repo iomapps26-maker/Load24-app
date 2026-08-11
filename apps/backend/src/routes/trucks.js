@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { TRUCK_DOCUMENT_TYPES } from '../lib/truckDocumentTypes.js';
+import { requireRole } from '../middleware/requireRole.js';
+import { notifyUser } from '../lib/notify.js';
 
 const router = Router();
+const STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
 
 const BUCKET = 'truck-documents';
 
@@ -242,6 +245,29 @@ router.post('/:id/documents', async (req, res) => {
   await req.supabase.from('trucks').update({ verified: false, verified_at: null }).eq('id', truck.id);
 
   res.status(200).json(document);
+});
+
+// POST /api/trucks/:id/verify — staff-only. trucks_update_staff RLS
+// (020_add_trucks.sql) already lets any of STAFF_ROLES update any truck row
+// via req.supabase, so this doesn't need the service-role client.
+router.post('/:id/verify', requireRole(STAFF_ROLES), async (req, res) => {
+  const { data, error } = await req.supabase
+    .from('trucks')
+    .update({ verified: true, verified_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select()
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Truck not found' });
+
+  await notifyUser(data.owner_id, {
+    type: 'truck_verified',
+    title: 'Truck verified',
+    body: `${data.registration_number} has been verified`,
+    data: { truck_id: data.id }
+  });
+
+  res.json(data);
 });
 
 export default router;

@@ -32,6 +32,7 @@ import LockScreen from './screens/LockScreen';
 import SeeBiddingScreen from './screens/SeeBiddingScreen';
 import TripDetailsScreen from './screens/TripDetailsScreen';
 import PlaceBidScreen from './screens/PlaceBidScreen';
+import NotificationsScreen from './screens/NotificationsScreen';
 import MainTabs from './navigation/MainTabs';
 import { isExternalPickerActive } from './lib/pickerGuard';
 
@@ -215,6 +216,11 @@ function AuthGate() {
               <Stack.Screen name="SeeBidding" component={SeeBiddingScreen} options={{ headerShown: true, title: t('seeBidding') }} />
               <Stack.Screen name="TripDetails" component={TripDetailsScreen} options={{ headerShown: true, title: t('tripDetails') }} />
               <Stack.Screen name="PlaceBid" component={PlaceBidScreen} options={{ headerShown: true, title: t('placeBid') }} />
+              <Stack.Screen
+                name="Notifications"
+                component={NotificationsScreen}
+                options={{ headerShown: true, title: t('notifications') }}
+              />
             </>
           )
         ) : (

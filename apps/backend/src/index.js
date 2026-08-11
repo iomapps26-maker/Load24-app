@@ -18,6 +18,7 @@ import truckAvailabilityRouter from './routes/truckAvailability.js';
 import reviewsRouter from './routes/reviews.js';
 import supportTicketsRouter from './routes/supportTickets.js';
 import walletRouter, { razorpayWebhookHandler } from './routes/wallet.js';
+import notificationsRouter from './routes/notifications.js';
 
 const app = express();
 app.use(cors());
@@ -59,6 +60,7 @@ app.use('/api/truck-availability', requireAuth, requireConsents, truckAvailabili
 app.use('/api/reviews', requireAuth, requireConsents, reviewsRouter);
 app.use('/api/support-tickets', requireAuth, requireConsents, supportTicketsRouter);
 app.use('/api/wallet', requireAuth, requireConsents, walletRouter);
+app.use('/api/notifications', requireAuth, requireConsents, notificationsRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);

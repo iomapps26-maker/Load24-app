@@ -9,7 +9,11 @@ import crypto from 'crypto';
 // that's the real source of truth for wallets.balance, since these tests
 // never touch a real Postgres instance.
 function createStore() {
-  return { wallets: [], wallet_transactions: [], withdrawal_requests: [], bank_details: [], user_roles: [] };
+  // notifications: routes now fire-and-forget a notify*() call (see
+  // lib/notify.js) on withdrawal approve/reject/pay and the Razorpay
+  // webhook — it writes through this same mocked supabaseAdmin, so the
+  // table needs a backing array or that insert throws on `store[table].length`.
+  return { wallets: [], wallet_transactions: [], withdrawal_requests: [], bank_details: [], user_roles: [], notifications: [] };
 }
 
 let store = createStore();

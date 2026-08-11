@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { KYC_REQUIRED_DOCUMENTS, KYC_OPTIONAL_DOCUMENTS, KYC_REQUIRES_LOCATION } from '../lib/kycRequiredDocs.js';
+import { requireRole } from '../middleware/requireRole.js';
+import { notifyUser } from '../lib/notify.js';
 
 const BUCKET = 'kyc-documents';
+const STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
 const router = Router();
 
 // Lazily creates the caller's kyc_cases row on first touch, freezing
@@ -284,6 +287,65 @@ router.post('/submit', async (req, res) => {
   await req.supabase.from('user_profiles').update({ kyc_status: 'submitted' }).eq('user_id', req.user.id);
 
   res.status(200).json({ case: updatedCase });
+});
+
+// -- Staff-only review endpoints -------------------------------------------
+// Both use the service-role client for every write, including
+// user_profiles.kyc_status: kyc_cases_update_staff (008_add_kyc_documents.sql)
+// lets all of STAFF_ROLES update a case via req.supabase, but
+// user_profiles_update_own_or_admin (001_init.sql) only grants admin and
+// support_manager write access to that table — supabaseAdmin keeps this one
+// code path working for support_executive too.
+
+// POST /api/profile/kyc/:userId/verify — only ever moves a case out of
+// 'submitted', mirroring the pending-only guard on withdrawal approve/reject
+// in wallet.js so a stale review can't land twice.
+router.post('/:userId/verify', requireRole(STAFF_ROLES), async (req, res) => {
+  const { data: kycCase, error } = await supabaseAdmin
+    .from('kyc_cases')
+    .update({ status: 'verified', rejection_reason: null, reviewed_by: req.user.id, reviewed_at: new Date().toISOString() })
+    .eq('user_id', req.params.userId)
+    .eq('status', 'submitted')
+    .select()
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!kycCase) return res.status(409).json({ error: 'No submitted KYC case awaiting review for this user' });
+
+  await supabaseAdmin.from('user_profiles').update({ kyc_status: 'verified' }).eq('user_id', req.params.userId);
+
+  await notifyUser(req.params.userId, {
+    type: 'kyc_verified',
+    title: 'KYC Verified',
+    body: 'Your KYC has been verified',
+    data: {}
+  });
+
+  res.json({ case: kycCase });
+});
+
+// POST /api/profile/kyc/:userId/reject { reason }
+router.post('/:userId/reject', requireRole(STAFF_ROLES), async (req, res) => {
+  const { reason } = req.body;
+  const { data: kycCase, error } = await supabaseAdmin
+    .from('kyc_cases')
+    .update({ status: 'rejected', rejection_reason: reason || null, reviewed_by: req.user.id, reviewed_at: new Date().toISOString() })
+    .eq('user_id', req.params.userId)
+    .eq('status', 'submitted')
+    .select()
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!kycCase) return res.status(409).json({ error: 'No submitted KYC case awaiting review for this user' });
+
+  await supabaseAdmin.from('user_profiles').update({ kyc_status: 'rejected' }).eq('user_id', req.params.userId);
+
+  await notifyUser(req.params.userId, {
+    type: 'kyc_rejected',
+    title: 'KYC Rejected',
+    body: reason || 'Your KYC submission was rejected — please review and resubmit',
+    data: {}
+  });
+
+  res.json({ case: kycCase });
 });
 
 export default router;

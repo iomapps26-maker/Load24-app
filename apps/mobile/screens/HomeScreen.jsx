@@ -135,6 +135,11 @@ export default function HomeScreen() {
   // since they don't own the load and can't list it via loads.mine either.
   const { data: myBids = [] } = useQuery({ queryKey: ['myBids'], queryFn: api.loadBids.mine });
   const myTrips = myBids.filter((b) => b.status === 'approved' && b.load);
+  const { data: unreadNotifications } = useQuery({
+    queryKey: ['notifications', 'unread-count'],
+    queryFn: api.notifications.unreadCount
+  });
+  const hasUnreadNotifications = (unreadNotifications?.count ?? 0) > 0;
 
   // Bottom-tab screens stay mounted on tab switch, so React Query's
   // refetch-on-mount never fires again after the first visit — without this,
@@ -144,6 +149,7 @@ export default function HomeScreen() {
       queryClient.invalidateQueries({ queryKey: ['myLoads'] });
       queryClient.invalidateQueries({ queryKey: ['recentLoads'] });
       queryClient.invalidateQueries({ queryKey: ['myBids'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
     }, [queryClient])
   );
 
@@ -181,8 +187,14 @@ export default function HomeScreen() {
           <TouchableOpacity className="h-9 w-9 items-center justify-center rounded-lg bg-slate-100" onPress={handleSignOut}>
             <Icon source="account-outline" size={18} color="#334155" />
           </TouchableOpacity>
-          <TouchableOpacity className="h-9 w-9 items-center justify-center rounded-lg bg-slate-100" onPress={() => notImplemented(t)}>
+          <TouchableOpacity
+            className="h-9 w-9 items-center justify-center rounded-lg bg-slate-100"
+            onPress={() => navigation.navigate('Notifications')}
+          >
             <Icon source="bell-outline" size={18} color="#334155" />
+            {hasUnreadNotifications && (
+              <View className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" />
+            )}
           </TouchableOpacity>
           <TouchableOpacity
             className="rounded-full bg-slate-100 px-3 py-2"

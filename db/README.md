@@ -32,6 +32,12 @@ SQL Editor (no migration runner wired up yet).
   `apps/backend/src/routes/wallet.js` so business rules (balance checks,
   Razorpay webhook idempotency) live in one place instead of being
   duplicated into RLS.
+- `migrations/030_add_pincode_centroids.sql` — `pincode_centroids` reference
+  table (~19k Indian pincodes with lat/lng, sourced from GeoNames.org) plus a
+  `pincodes_within_radius()` SQL function, used by
+  `POST /api/truck-availability` to notify nearby shippers/transporters/
+  brokers when a truck is posted as available. Large file (~800KB) — it's
+  almost entirely the bulk `insert` of centroid rows.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.

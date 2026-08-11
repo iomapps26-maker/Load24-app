@@ -154,6 +154,13 @@ export const api = {
     approve: (id) => request(`/api/load-bids/${id}/approve`, { method: 'POST' }),
     reject: (id) => request(`/api/load-bids/${id}/reject`, { method: 'POST' })
   },
+  notifications: {
+    mine: () => request('/api/notifications'),
+    unreadCount: () => request('/api/notifications/unread-count'),
+    markRead: (id) => request(`/api/notifications/${id}/read`, { method: 'POST' }),
+    markAllRead: () => request('/api/notifications/read-all', { method: 'POST' }),
+    remove: (id) => request(`/api/notifications/${id}`, { method: 'DELETE' })
+  },
   wallet: {
     balance: () => request('/api/wallet'),
     transactions: (params = {}) => {

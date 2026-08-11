@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../lib/supabase.js';
 import { createRazorpayOrder, verifySignature } from '../lib/razorpay.js';
 import { generateTransactionId, getOrCreateWallet, getAvailableBalance } from '../lib/wallet.js';
 import { requireRole } from '../middleware/requireRole.js';
+import { notifyUser } from '../lib/notify.js';
 
 const STAFF_ROLES = ['admin', 'support_executive', 'support_manager', 'accounts_executive', 'accounts_manager'];
 const ADJUSTABLE_TYPES = ['credit', 'debit', 'refund', 'commission', 'service_charge', 'security_hold', 'security_release'];
@@ -172,6 +173,14 @@ router.post('/withdrawals/:id/approve', requireRole(STAFF_ROLES), async (req, re
     .single();
   if (error) return res.status(400).json({ error: error.message });
   if (!data) return res.status(400).json({ error: 'Request is not pending' });
+
+  await notifyUser(data.user_id, {
+    type: 'withdrawal_approved',
+    title: 'Withdrawal approved',
+    body: `₹${Number(data.amount).toLocaleString('en-IN')} withdrawal approved — payout is next`,
+    data: { withdrawal_id: data.id }
+  });
+
   res.json(data);
 });
 
@@ -191,6 +200,14 @@ router.post('/withdrawals/:id/reject', requireRole(STAFF_ROLES), async (req, res
     .single();
   if (error) return res.status(400).json({ error: error.message });
   if (!data) return res.status(400).json({ error: 'Request cannot be rejected from its current status' });
+
+  await notifyUser(data.user_id, {
+    type: 'withdrawal_rejected',
+    title: 'Withdrawal rejected',
+    body: reason || `₹${Number(data.amount).toLocaleString('en-IN')} withdrawal was rejected`,
+    data: { withdrawal_id: data.id }
+  });
+
   res.json(data);
 });
 
@@ -231,6 +248,13 @@ router.post('/withdrawals/:id/pay', requireRole(STAFF_ROLES), async (req, res) =
     .select()
     .single();
   if (payError) return res.status(400).json({ error: payError.message });
+
+  await notifyUser(paid.user_id, {
+    type: 'withdrawal_paid',
+    title: 'Withdrawal paid',
+    body: `₹${Number(paid.amount).toLocaleString('en-IN')} has been sent to your bank account`,
+    data: { withdrawal_id: paid.id }
+  });
 
   res.json(paid);
 });
@@ -303,6 +327,13 @@ export async function razorpayWebhookHandler(req, res) {
     .update({ status: 'completed', razorpay_payment_id: payment.id })
     .eq('id', tx.id);
   if (updateError) return res.status(400).json({ error: updateError.message });
+
+  await notifyUser(tx.user_id, {
+    type: 'wallet_credited',
+    title: 'Wallet credited',
+    body: `₹${Number(tx.amount).toLocaleString('en-IN')} added to your wallet`,
+    data: { transaction_id: tx.transaction_id }
+  });
 
   res.status(200).json({ ok: true });
 }

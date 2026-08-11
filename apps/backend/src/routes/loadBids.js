@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { notifyEmail } from '../lib/notify.js';
 
 const KYC_BUCKET = 'kyc-documents';
 const TRIP_DOC_URL_TTL_SECONDS = 300;
@@ -107,6 +108,14 @@ router.post('/', async (req, res) => {
     .single();
 
   if (error) return dbError(res, error, 'Could not place your bid');
+
+  await notifyEmail(load.posted_by, {
+    type: 'bid_placed',
+    title: 'New bid on your load',
+    body: `₹${Number(amount).toLocaleString('en-IN')} bid received`,
+    data: { load_id, bid_id: data.id }
+  });
+
   res.status(201).json(data);
 });
 
@@ -241,6 +250,13 @@ router.post('/:id/approve', async (req, res) => {
     .eq('id', data.load_id);
   if (loadUpdateError) console.error('[load-bids] failed to mark load matched', loadUpdateError);
 
+  await notifyEmail(data.bid_by_email, {
+    type: 'bid_approved',
+    title: 'Your bid was approved',
+    body: `₹${Number(data.amount).toLocaleString('en-IN')} — trip details are ready`,
+    data: { load_id: data.load_id, bid_id: data.id }
+  });
+
   res.json(data);
 });
 
@@ -256,6 +272,14 @@ router.post('/:id/reject', async (req, res) => {
 
   if (error) return dbError(res, error, 'Could not reject this bid');
   if (!data) return res.status(409).json({ error: 'Bid is no longer pending' });
+
+  await notifyEmail(data.bid_by_email, {
+    type: 'bid_rejected',
+    title: 'Your bid was rejected',
+    body: `₹${Number(data.amount).toLocaleString('en-IN')} bid on a load was declined`,
+    data: { load_id: data.load_id, bid_id: data.id }
+  });
+
   res.json(data);
 });
 

@@ -206,10 +206,6 @@ function BankDetailsCard({ t }) {
   );
 }
 
-{
-  
-}
-
 function ReviewsCard({ profile, t }) {
   const { data: reviews = [] } = useQuery({ queryKey: ['reviews'], queryFn: api.reviews.mine });
 

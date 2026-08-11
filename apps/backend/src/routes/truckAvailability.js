@@ -1,6 +1,56 @@
 import { Router } from 'express';
+import { supabaseAdmin } from '../lib/supabase.js';
+import { requireRole } from '../middleware/requireRole.js';
+import { notifyUser } from '../lib/notify.js';
 
 const router = Router();
+const STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
+
+// How far "nearby" reaches when fanning out a new-truck-available
+// notification, and which roles would plausibly want a truck (driver/
+// vehicle_owner post trucks themselves, so they're excluded).
+const NEARBY_RADIUS_KM = 50;
+const NOTIFY_ROLES = ['shipper', 'transporter', 'broker'];
+
+// Fire-and-forget: finds shippers/transporters/brokers within
+// NEARBY_RADIUS_KM of the posting's current_pincode (via the
+// pincodes_within_radius() SQL function, see
+// 030_add_pincode_centroids.sql) and notifies them a truck just became
+// available near them. Never throws — a lookup failure (missing pincode, a
+// pincode not in the centroid table, etc.) should never fail the posting
+// itself, just silently skip the fan-out.
+async function notifyNearbyUsers(req, posting) {
+  if (!posting.current_pincode) return;
+
+  const { data: nearby, error } = await req.supabase.rpc('pincodes_within_radius', {
+    origin_pincode: posting.current_pincode,
+    radius_km: NEARBY_RADIUS_KM
+  });
+  if (error) return console.error('[truck-availability] pincodes_within_radius failed', error);
+  if (!nearby?.length) return;
+
+  // user_profiles RLS only lets req.supabase see the caller's own row (or
+  // staff), so finding *other* users near this pincode needs the
+  // service-role client — same trust model as profileForEmail in loadBids.js.
+  const { data: users, error: usersError } = await supabaseAdmin
+    .from('user_profiles')
+    .select('user_id')
+    .in('pincode', nearby.map((r) => r.pincode))
+    .in('user_type', NOTIFY_ROLES)
+    .neq('user_id', posting.owner_id);
+  if (usersError) return console.error('[truck-availability] nearby user lookup failed', usersError);
+
+  await Promise.all(
+    (users || []).map((u) =>
+      notifyUser(u.user_id, {
+        type: 'truck_available_nearby',
+        title: 'Truck available near you',
+        body: `A truck just became available near ${posting.current_city || posting.current_pincode}`,
+        data: { truck_availability_id: posting.id }
+      })
+    )
+  );
+}
 
 const TRIP_PREFERENCES = ['single_trip', 'return_load', 'regular_lane'];
 const STATUSES = ['available', 'offered', 'held', 'booked', 'loading', 'trip_active', 'unavailable', 'maintenance'];
@@ -84,6 +134,11 @@ router.post('/', async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json(data);
+
+  // After the response, not before: the fan-out is a nice-to-have and can
+  // take a bit longer than the post itself (RPC scan + a user_profiles
+  // lookup + N inserts) — no reason to make the poster wait on it.
+  notifyNearbyUsers(req, data).catch((err) => console.error('[truck-availability] notifyNearbyUsers failed', err));
 });
 
 // PATCH /api/truck-availability/:id — update a posting owned by the caller
@@ -118,6 +173,32 @@ router.delete('/:id', async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Posting not found' });
   res.status(204).end();
+});
+
+// POST /api/truck-availability/:id/offer — staff-only: ops offers this
+// posting a load, taking it out of the open 'available' pool. There's no
+// direct shipper-to-truck offer flow yet (see 027_add_truck_availabilities.sql),
+// so for now this transition is staff-initiated only — same trust model as
+// trucks_update_staff/kyc_cases_update_staff.
+router.post('/:id/offer', requireRole(STAFF_ROLES), async (req, res) => {
+  const { data, error } = await req.supabase
+    .from('truck_availabilities')
+    .update({ status: 'offered', updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .eq('status', 'available')
+    .select()
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(409).json({ error: 'Posting is not currently available' });
+
+  await notifyUser(data.owner_id, {
+    type: 'truck_availability_offered',
+    title: 'New offer for your truck',
+    body: 'A load offer has come in for one of your posted trucks',
+    data: { truck_availability_id: data.id }
+  });
+
+  res.json(data);
 });
 
 export default router;
