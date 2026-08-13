@@ -8,6 +8,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
 import { SALES_PHONE } from '../lib/contact';
+import { downloadQr } from '../lib/downloadQr';
 import MyLoadRow from '../components/MyLoadRow';
 
 const STEPS = [
@@ -24,6 +25,7 @@ const STAGE_INDEX = { active: 0, matched: 1, in_transit: 2, completed: 3, cancel
 function notImplemented(t) {
   Alert.alert(t('comingSoon'));
 }
+
 
 function StatCard({ icon, iconBg, value, label }) {
   return (
@@ -374,8 +376,8 @@ export default function HomeScreen() {
               <Text className="text-sm font-semibold text-slate-800">INTERNATIONAL ONLINE MEDIA</Text>
             </View>
             <View className="items-center justify-center rounded-lg border border-slate-200 p-2">
-              <Icon source="qrcode" size={56} color="#334155" />
-              <TouchableOpacity onPress={() => notImplemented(t)}>
+              <Image source={require('../assets/IOM-upi-qr.jpeg')} style={{ width: 56, height: 56 }} resizeMode="contain" />
+              <TouchableOpacity onPress={() => downloadQr(require('../assets/IOM-upi-qr.jpeg'), 'IOM-upi-qr.jpeg', t)}>
                 <Text className="mt-1 text-xs font-semibold text-brand">↓ {t('download')}</Text>
               </TouchableOpacity>
             </View>
@@ -388,6 +390,30 @@ export default function HomeScreen() {
             <View className="rounded-full bg-brand px-4 py-2"><Text className="text-xs font-bold text-white">BHIM/UPI</Text></View>
           </View>
           <Text className="mt-3 text-xs text-green-700">✓ {t('allUpiAppsAccepted')}</Text>
+        </View>
+
+        {/* Alternate authorized UPI collection contact, alongside (not
+            replacing) the company account above. */}
+        <View className="mb-4 rounded-2xl border border-purple-200 bg-white p-5">
+          <View className="mb-3 flex-row items-center">
+            <View className="mr-2 h-8 w-8 items-center justify-center rounded-full bg-purple-100">
+              <Icon source="qrcode" size={18} color="#7c3aed" />
+            </View>
+            <Text className="text-base font-bold text-slate-900">Vivek Gupta</Text>
+          </View>
+
+          <View className="flex-row">
+            <View className="flex-1 pr-3">
+              <Text className="text-xs text-slate-400">UPI ID</Text>
+              <Text className="mb-2 text-sm font-semibold text-brand">vivek9555921555@oksbi</Text>
+            </View>
+            <View className="items-center justify-center rounded-lg border border-slate-200 p-2">
+              <Image source={require('../assets/vivek-upi-qr.jpeg')} style={{ width: 56, height: 56 }} resizeMode="contain" />
+              <TouchableOpacity onPress={() => downloadQr(require('../assets/vivek-upi-qr.jpeg'), 'vivek-upi-qr.jpeg', t)}>
+                <Text className="mt-1 text-xs font-semibold text-brand">↓ {t('download')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
 
         <View className="rounded-2xl border border-slate-200 bg-white p-5">

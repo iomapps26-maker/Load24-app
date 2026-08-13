@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, Modal, Alert, Share, ActivityIndicator } from 'react-native';
+import { View, Text, Image, ScrollView, Modal, Alert, Share, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { Icon, TextInput, Button } from 'react-native-paper';
 import { WebView } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
+import { downloadQr } from '../lib/downloadQr';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
 const TXN_META = {
@@ -225,6 +226,90 @@ export default function WalletScreen() {
           <Button mode="outlined" textColor="white" style={{ borderColor: 'white' }} className="flex-1" onPress={() => setWithdrawVisible(true)}>
             {t('withdraw')}
           </Button>
+        </View>
+      </View>
+
+      {/* LOAD24's own payment details — same static info shown on Home, kept
+          here too since Wallet is the more natural place to look them up
+          when actually paying/settling. */}
+      <Text className="mb-3 text-lg font-bold text-slate-900">{t('paymentDetails')}</Text>
+
+      <View className="mb-4 rounded-2xl border border-orange-200 bg-white p-5">
+        <View className="mb-3 flex-row items-center">
+          <View className="mr-2 h-8 w-8 items-center justify-center rounded-full bg-orange-100">
+            <Icon source="qrcode" size={18} color="#f97316" />
+          </View>
+          <Text className="text-base font-bold text-slate-900">{t('upiPayment')}</Text>
+        </View>
+
+        <View className="flex-row">
+          <View className="flex-1 pr-3">
+            <Text className="text-xs text-slate-400">UPI ID</Text>
+            <Text className="mb-2 text-sm font-semibold text-brand">internationalonlinemedia@icici</Text>
+            <Text className="text-xs text-slate-400">{t('merchantName')}</Text>
+            <Text className="text-sm font-semibold text-slate-800">INTERNATIONAL ONLINE MEDIA</Text>
+          </View>
+          <View className="items-center justify-center rounded-lg border border-slate-200 p-2">
+            <Image source={require('../assets/IOM-upi-qr.jpeg')} style={{ width: 56, height: 56 }} resizeMode="contain" />
+            <TouchableOpacity onPress={() => downloadQr(require('../assets/IOM-upi-qr.jpeg'), 'IOM-upi-qr.jpeg', t)}>
+              <Text className="mt-1 text-xs font-semibold text-brand">↓ {t('download')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View className="mt-4 flex-row flex-wrap gap-2">
+          <View className="rounded-full bg-purple-600 px-4 py-2"><Text className="text-xs font-bold text-white">PhonePe</Text></View>
+          <View className="rounded-full border border-slate-300 px-4 py-2"><Text className="text-xs font-bold text-slate-700">GPay</Text></View>
+          <View className="rounded-full bg-blue-600 px-4 py-2"><Text className="text-xs font-bold text-white">Paytm</Text></View>
+          <View className="rounded-full bg-brand px-4 py-2"><Text className="text-xs font-bold text-white">BHIM/UPI</Text></View>
+        </View>
+        <Text className="mt-3 text-xs text-green-700">✓ {t('allUpiAppsAccepted')}</Text>
+      </View>
+
+      {/* Alternate authorized UPI collection contact, alongside (not
+          replacing) the company account above. */}
+      <View className="mb-4 rounded-2xl border border-purple-200 bg-white p-5">
+        <View className="mb-3 flex-row items-center">
+          <View className="mr-2 h-8 w-8 items-center justify-center rounded-full bg-purple-100">
+            <Icon source="qrcode" size={18} color="#7c3aed" />
+          </View>
+          <Text className="text-base font-bold text-slate-900">Vivek Gupta</Text>
+        </View>
+
+        <View className="flex-row">
+          <View className="flex-1 pr-3">
+            <Text className="text-xs text-slate-400">UPI ID</Text>
+            <Text className="mb-2 text-sm font-semibold text-brand">vivek9555921555@oksbi</Text>
+          </View>
+          <View className="items-center justify-center rounded-lg border border-slate-200 p-2">
+            <Image source={require('../assets/vivek-upi-qr.jpeg')} style={{ width: 56, height: 56 }} resizeMode="contain" />
+            <TouchableOpacity onPress={() => downloadQr(require('../assets/vivek-upi-qr.jpeg'), 'vivek-upi-qr.jpeg', t)}>
+              <Text className="mt-1 text-xs font-semibold text-brand">↓ {t('download')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      <View className="mb-4 rounded-2xl border border-slate-200 bg-white p-5">
+        <View className="mb-3 flex-row items-center">
+          <View className="mr-2 h-8 w-8 items-center justify-center rounded-full bg-blue-100">
+            <Icon source="bank-outline" size={18} color="#2563eb" />
+          </View>
+          <Text className="text-base font-bold text-slate-900">{t('bankAccount')}</Text>
+        </View>
+        <Text className="text-xs text-slate-400">{t('accountName')}</Text>
+        <Text className="mb-2 text-sm font-semibold text-slate-800">INTERNATIONAL ONLINE MEDIA</Text>
+        <Text className="text-xs text-slate-400">{t('accountNumber')}</Text>
+        <Text className="mb-2 text-sm font-semibold text-blue-600">003105501891</Text>
+        <View className="flex-row justify-between">
+          <View>
+            <Text className="text-xs text-slate-400">{t('ifscCode')}</Text>
+            <Text className="text-sm font-semibold text-slate-800">ICIC0000031</Text>
+          </View>
+          <View>
+            <Text className="text-xs text-slate-400">{t('bank')}</Text>
+            <Text className="text-sm font-semibold text-slate-800">ICICI BANK</Text>
+          </View>
         </View>
       </View>
 
