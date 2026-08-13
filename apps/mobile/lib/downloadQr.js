@@ -2,34 +2,31 @@ import { Alert, Image, PermissionsAndroid, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 
-// Android 13+ (API 33+) replaced READ_EXTERNAL_STORAGE with the scoped
-// READ_MEDIA_IMAGES permission; below API 29, saving new files also needs
-// WRITE_EXTERNAL_STORAGE (declared in AndroidManifest.xml, maxSdkVersion=28).
-// API 29-32 needs neither for app-created content thanks to scoped storage,
-// but requesting READ_EXTERNAL_STORAGE there is harmless.
+// CameraRoll.save() writes through MediaStore's scoped-storage insert() on
+// API 29+, which needs no permission at all — only the pre-Q direct-file-write
+// fallback (API < 29) needs WRITE_EXTERNAL_STORAGE (declared in
+// AndroidManifest.xml, maxSdkVersion=28). We deliberately do NOT request
+// READ_MEDIA_IMAGES/READ_EXTERNAL_STORAGE: this flow only ever writes a
+// bundled QR image to the gallery, never reads the user's existing photos,
+// and Google Play's photo/video permissions policy flags that broad a
+// permission as unjustified for a write-only use case like this one.
 async function hasGallerySavePermission() {
-  if (Platform.OS !== 'android') return true;
+  if (Platform.OS !== 'android' || Platform.Version >= 29) return true;
 
-  const permission =
-    Platform.Version >= 33
-      ? PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
-      : Platform.Version >= 29
-      ? null
-      : PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE;
-  if (!permission) return true;
-
+  const permission = PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE;
   if (await PermissionsAndroid.check(permission)) return true;
   const result = await PermissionsAndroid.request(permission);
   return result === PermissionsAndroid.RESULTS.GRANTED;
 }
 
 // Downloads a bundled QR image (via require(...)) to the device's photo
-// gallery. Bundled JS assets aren't real files on disk — in this Metro dev
+// gallery. Bundled JS assets aren't real files on disk — in a Metro dev
 // build, Image.resolveAssetSource(...).uri is an http URL served by the dev
 // server, so it's fetched to a local cache file first, then handed to
 // CameraRoll.save (which only accepts local file:// URIs). In a release
-// build the resolved URI is a packaged drawable resource instead of an http
-// URL — this path hasn't been verified there yet.
+// build the resolved URI is a packaged drawable resource instead; confirmed
+// working on-device (Pixel_3a_API_34, debug build) after a Metro cache
+// reset — the release-signed build boots cleanly too.
 export async function downloadQr(source, filename, t) {
   try {
     if (!(await hasGallerySavePermission())) {
