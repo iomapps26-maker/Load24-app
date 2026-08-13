@@ -219,14 +219,6 @@ export default function WalletScreen() {
         <Text className="mt-2 text-xs text-slate-400">
           {t('availableBalance')}: ₹{Number(wallet?.available_balance ?? 0).toLocaleString('en-IN')}
         </Text>
-        <View className="mt-4 flex-row gap-3">
-          <Button mode="contained" buttonColor="#f97316" className="flex-1" onPress={() => setAddMoneyVisible(true)}>
-            {t('addMoney')}
-          </Button>
-          <Button mode="outlined" textColor="white" style={{ borderColor: 'white' }} className="flex-1" onPress={() => setWithdrawVisible(true)}>
-            {t('withdraw')}
-          </Button>
-        </View>
       </View>
 
       {/* LOAD24's own payment details — same static info shown on Home, kept
