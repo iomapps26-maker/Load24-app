@@ -1,7 +1,7 @@
-import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, Linking, Alert } from 'react-native';
 import { Icon } from 'react-native-paper';
 import { useRoute } from '@react-navigation/native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { AXLE_LABELS, BODY_TYPE_LABELS, SPECIAL_CONDITION_LABELS } from '../lib/loadOptions';
@@ -78,12 +78,31 @@ export default function TripDetailsScreen() {
   const route = useRoute();
   const { loadId } = route.params;
   const { language, t } = useLanguage();
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['tripDetails', loadId],
     queryFn: () => api.loadBids.tripDetails(loadId),
     retry: false
   });
+
+  const deliverMutation = useMutation({
+    mutationFn: () => api.loadBids.deliver(loadId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tripDetails', loadId] });
+      queryClient.invalidateQueries({ queryKey: ['myLoads'] });
+      queryClient.invalidateQueries({ queryKey: ['myBids'] });
+      Alert.alert(t('markDelivered'), t('tripDelivered'));
+    },
+    onError: (err) => Alert.alert(t('markDelivered'), err.message)
+  });
+
+  const confirmDeliver = () => {
+    Alert.alert(t('markDelivered'), t('markDeliveredConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('markDelivered'), style: 'destructive', onPress: () => deliverMutation.mutate() }
+    ]);
+  };
 
   if (isLoading) {
     return (
@@ -114,9 +133,27 @@ export default function TripDetailsScreen() {
   // trip (and everything derived from it) should show.
   const agreedLoad = bid?.amount != null ? { ...load, bhada_price: bid.amount } : load;
 
+  const canDeliver = ['matched', 'in_transit'].includes(load.status);
+
   return (
     <ScrollView className="flex-1 bg-slate-50 px-4 pt-4">
       <LoadCard load={agreedLoad} hideActions />
+
+      {canDeliver ? (
+        <TouchableOpacity
+          onPress={confirmDeliver}
+          disabled={deliverMutation.isPending}
+          className="mb-4 flex-row items-center justify-center gap-2 rounded-xl bg-green-600 py-3.5"
+        >
+          <Icon source="check-circle-outline" size={18} color="#ffffff" />
+          <Text className="text-base font-bold text-white">{t('markDelivered')}</Text>
+        </TouchableOpacity>
+      ) : load.status === 'completed' ? (
+        <View className="mb-4 flex-row items-center justify-center gap-2 rounded-xl bg-slate-100 py-3.5">
+          <Icon source="check-circle" size={18} color="#16a34a" />
+          <Text className="text-sm font-bold text-slate-600">{t('tripAlreadyDelivered')}</Text>
+        </View>
+      ) : null}
 
       <View className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
         <Text className="mb-2 text-base font-bold text-slate-900">{t('loadDetails')}</Text>

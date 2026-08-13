@@ -225,6 +225,60 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
   });
 });
 
+// POST /api/load-bids/load/:load_id/deliver — either trip party (the poster or
+// the approved bidder) can mark a trip delivered. Authorized in JS the same
+// way trip-details is above: the load must have an approved bid, and the
+// caller must be one of its two parties. Writes via supabaseAdmin — RLS
+// (loads_update_own_or_staff) only lets the poster write to a loads row, but
+// the accepter needs to be able to close out the trip too.
+router.post('/load/:load_id/deliver', async (req, res) => {
+  const { data: load, error: loadError } = await req.supabase
+    .from('loads')
+    .select('*')
+    .eq('id', req.params.load_id)
+    .maybeSingle();
+  if (loadError) return dbError(res, loadError, 'Could not load this load');
+  if (!load) return res.status(404).json({ error: 'Load not found' });
+
+  const { data: bid, error: bidError } = await req.supabase
+    .from('load_bids')
+    .select('*')
+    .eq('load_id', req.params.load_id)
+    .eq('status', 'approved')
+    .maybeSingle();
+  if (bidError) return dbError(res, bidError, 'Could not load bidding details');
+  if (!bid) return res.status(404).json({ error: 'No accepted bid yet for this load' });
+
+  const callerEmail = req.user.email;
+  const isPoster = callerEmail === load.posted_by;
+  const isAccepter = callerEmail === bid.bid_by_email;
+  if (!isPoster && !isAccepter) {
+    return res.status(403).json({ error: 'Not authorized to mark this trip delivered' });
+  }
+
+  if (!['matched', 'in_transit'].includes(load.status)) {
+    return res.status(409).json({ error: 'This trip is not in a deliverable state' });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('loads')
+    .update({ status: 'completed' })
+    .eq('id', load.id)
+    .in('status', ['matched', 'in_transit'])
+    .select()
+    .single();
+  if (error) return dbError(res, error, 'Could not mark this trip delivered');
+
+  await notifyEmail(isPoster ? bid.bid_by_email : load.posted_by, {
+    type: 'trip_delivered',
+    title: 'Trip marked delivered',
+    body: `${load.material_type ? `${load.material_type} — ` : ''}trip marked as delivered by ${isPoster ? 'the poster' : 'the accepter'}`,
+    data: { load_id: load.id, bid_id: bid.id }
+  });
+
+  res.json(data);
+});
+
 // POST /api/load-bids/:id/approve — poster-only via RLS (load_bids_update_poster).
 // Guarded to still-pending, still-within-window bids so a stale approve can't
 // land after the 1-minute auto-reject window has already passed.
@@ -249,6 +303,21 @@ router.post('/:id/approve', async (req, res) => {
     .update({ status: 'matched' })
     .eq('id', data.load_id);
   if (loadUpdateError) console.error('[load-bids] failed to mark load matched', loadUpdateError);
+
+  // This truck now has a trip — take its posting out of the 'available' pool
+  // so it stops surfacing in notifyNearbyTruckOwners (loads.js) and
+  // notifyNearbyUsers (truckAvailability.js) fan-outs. req.supabase here is
+  // scoped to the load poster, not the truck owner, so truck_availabilities'
+  // "owner_id = auth.uid()" update policy would block this — service-role
+  // client needed, same trust model as profileForEmail above.
+  if (data.truck_id) {
+    const { error: truckStatusError } = await supabaseAdmin
+      .from('truck_availabilities')
+      .update({ status: 'booked', updated_at: new Date().toISOString() })
+      .eq('truck_id', data.truck_id)
+      .eq('status', 'available');
+    if (truckStatusError) console.error('[load-bids] failed to mark truck availability booked', truckStatusError);
+  }
 
   await notifyEmail(data.bid_by_email, {
     type: 'bid_approved',
