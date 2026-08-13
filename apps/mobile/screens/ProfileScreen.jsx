@@ -7,7 +7,6 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
-import MyLoadRow from '../components/MyLoadRow';
 
 const ROLE_LABEL_KEYS = {
   shipper: 'roleShipper',
@@ -252,7 +251,6 @@ export default function ProfileScreen() {
   const queryClient = useQueryClient();
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
-  const { data: myLoads = [] } = useQuery({ queryKey: ['myLoads'], queryFn: api.loads.mine });
 
   const deleteAccount = useMutation({
     mutationFn: api.profile.deleteAccount,
@@ -331,14 +329,12 @@ export default function ProfileScreen() {
         </View>
       </SectionCard>
 
-      {myLoads.length > 0 && (
-        <View className="mx-4 mb-4">
-          <Text className="mb-3 text-base font-bold text-slate-900">{t('yourPostedLoads')}</Text>
-          {myLoads.map((load) => (
-            <MyLoadRow key={load.id} load={load} t={t} navigation={navigation} />
-          ))}
-        </View>
-      )}
+      <NavRow
+        icon="package-variant-closed"
+        iconColor="#16a34a"
+        label={t('yourPostedLoads')}
+        onPress={() => navigation.navigate('PostedLoads')}
+      />
 
       <SectionCard>
         <View className="mb-3 flex-row items-center justify-between">

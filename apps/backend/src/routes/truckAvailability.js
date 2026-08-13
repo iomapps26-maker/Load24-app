@@ -2,32 +2,41 @@ import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { notifyUser } from '../lib/notify.js';
+import { sendWhatsAppLoadAlert } from '../lib/whatsapp.js';
+import { NEARBY_RADIUS_KM } from '../lib/notifyRadius.js';
 
 const router = Router();
 const STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
 
-// How far "nearby" reaches when fanning out a new-truck-available
-// notification, and which roles would plausibly want a truck (driver/
-// vehicle_owner post trucks themselves, so they're excluded).
-const NEARBY_RADIUS_KM = 50;
+// Which roles would plausibly want a truck (driver/vehicle_owner post
+// trucks themselves, so they're excluded).
 const NOTIFY_ROLES = ['shipper', 'transporter', 'broker'];
 
-// Fire-and-forget: finds shippers/transporters/brokers within
-// NEARBY_RADIUS_KM of the posting's current_pincode (via the
-// pincodes_within_radius() SQL function, see
-// 030_add_pincode_centroids.sql) and notifies them a truck just became
-// available near them. Never throws — a lookup failure (missing pincode, a
-// pincode not in the centroid table, etc.) should never fail the posting
-// itself, just silently skip the fan-out.
-async function notifyNearbyUsers(req, posting) {
-  if (!posting.current_pincode) return;
+// Looked up once per posting and shared by notifyNearbyUsers and
+// notifyNearbyLoads below — both fan-outs need the same
+// (posting.current_pincode, NEARBY_RADIUS_KM) pincode set, so this avoids
+// hitting pincodes_within_radius() twice for a single truck-availability post.
+async function nearbyPincodes(req, posting) {
+  if (!posting.current_pincode) return [];
 
-  const { data: nearby, error } = await req.supabase.rpc('pincodes_within_radius', {
+  const { data, error } = await req.supabase.rpc('pincodes_within_radius', {
     origin_pincode: posting.current_pincode,
     radius_km: NEARBY_RADIUS_KM
   });
-  if (error) return console.error('[truck-availability] pincodes_within_radius failed', error);
-  if (!nearby?.length) return;
+  if (error) {
+    console.error('[truck-availability] pincodes_within_radius failed', error);
+    return [];
+  }
+  return data || [];
+}
+
+// Fire-and-forget: notifies shippers/transporters/brokers within `nearby`
+// pincodes (via the pincodes_within_radius() SQL function, see
+// 030_add_pincode_centroids.sql) that a truck just became available near
+// them. Never throws — a lookup failure should never fail the posting
+// itself, just silently skip the fan-out.
+async function notifyNearbyUsers(posting, nearby) {
+  if (!nearby.length) return;
 
   // user_profiles RLS only lets req.supabase see the caller's own row (or
   // staff), so finding *other* users near this pincode needs the
@@ -50,6 +59,73 @@ async function notifyNearbyUsers(req, posting) {
       })
     )
   );
+}
+
+// How many of the matching loads' WhatsApp templates a single truck posting
+// can trigger. In-app notifications still go out for every match (they're
+// free and non-intrusive); WhatsApp is cost-per-message and each one is a
+// separate business-template send, so a busy hub with dozens of active
+// loads shouldn't turn into dozens of WhatsApp messages for one posting.
+const WHATSAPP_LOAD_ALERT_CAP = 3;
+
+// Fire-and-forget, the mirror of notifyNearbyUsers: tells the truck owner
+// about loads that are *already* posted and active within `nearby`
+// pincodes of where they just said their truck is. Matched on the load's
+// pickup point (loading_pincode) since that's what the truck would need to
+// reach.
+async function notifyNearbyLoads(req, posting, nearby) {
+  if (!nearby.length) return;
+
+  // Same trust model as notifyNearbyUsers — loads posted by other users
+  // aren't visible to this caller under RLS, so this needs the service-role
+  // client.
+  const { data: loads, error: loadsError } = await supabaseAdmin
+    .from('loads')
+    .select('id, material_type, loading_city, loading_pincode, posted_by')
+    .eq('status', 'active')
+    .in('loading_pincode', nearby.map((r) => r.pincode))
+    .neq('posted_by', req.user.email);
+  if (loadsError) return console.error('[truck-availability] nearby load lookup failed', loadsError);
+  if (!loads?.length) return;
+
+  await Promise.all(
+    loads.map((load) =>
+      notifyUser(posting.owner_id, {
+        type: 'load_available_nearby',
+        title: 'Load available near you',
+        body: `A load${load.material_type ? ` (${load.material_type})` : ''} is posted near ${load.loading_city || load.loading_pincode}`,
+        data: { load_id: load.id, truck_availability_id: posting.id }
+      })
+    )
+  );
+
+  // WhatsApp goes to the truck owner's own verified account number — same
+  // trust model as the OTP login flow, and avoids texting a number that was
+  // never confirmed to belong to this account.
+  const { data: ownerProfile, error: ownerError } = await supabaseAdmin
+    .from('user_profiles')
+    .select('mobile, mobile_verified')
+    .eq('user_id', posting.owner_id)
+    .maybeSingle();
+  if (ownerError) console.error('[truck-availability] owner profile lookup failed', ownerError);
+  const ownerPhone = ownerProfile?.mobile_verified ? ownerProfile.mobile : null;
+  if (!ownerPhone) return;
+
+  // Best-effort, capped, and settled independently — a WhatsApp send
+  // failure (missing template config, API hiccup, etc.) must never take
+  // down the in-app notifications above, or stop the other capped sends.
+  const capped = loads.slice(0, WHATSAPP_LOAD_ALERT_CAP);
+  const results = await Promise.allSettled(
+    capped.map((load) =>
+      sendWhatsAppLoadAlert(ownerPhone, {
+        material: load.material_type,
+        city: load.loading_city || load.loading_pincode
+      })
+    )
+  );
+  results.forEach((r) => {
+    if (r.status === 'rejected') console.error('[truck-availability] WhatsApp load alert failed', r.reason);
+  });
 }
 
 const TRIP_PREFERENCES = ['single_trip', 'return_load', 'regular_lane'];
@@ -137,8 +213,16 @@ router.post('/', async (req, res) => {
 
   // After the response, not before: the fan-out is a nice-to-have and can
   // take a bit longer than the post itself (RPC scan + a user_profiles
-  // lookup + N inserts) — no reason to make the poster wait on it.
-  notifyNearbyUsers(req, data).catch((err) => console.error('[truck-availability] notifyNearbyUsers failed', err));
+  // lookup + N inserts) — no reason to make the poster wait on it. Both
+  // fan-outs need the same nearby-pincode set, so it's resolved once here
+  // and shared instead of each function hitting pincodes_within_radius() on
+  // its own.
+  nearbyPincodes(req, data)
+    .then((nearby) => {
+      notifyNearbyUsers(data, nearby).catch((err) => console.error('[truck-availability] notifyNearbyUsers failed', err));
+      notifyNearbyLoads(req, data, nearby).catch((err) => console.error('[truck-availability] notifyNearbyLoads failed', err));
+    })
+    .catch((err) => console.error('[truck-availability] nearbyPincodes failed', err));
 });
 
 // PATCH /api/truck-availability/:id — update a posting owned by the caller

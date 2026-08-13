@@ -8,6 +8,37 @@ import { useLanguage } from '../lib/i18n';
 import { TRUCK_TYPE_LABELS } from '../lib/loadOptions';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
+// Bidding with a specific truck is optional (brokers/transporters often bid
+// without one), so this is a compact chip row rather than the full required
+// picker PostTruckScreen uses. Selecting one is what lets the backend flip
+// that truck's truck_availabilities posting to 'booked' once the bid is
+// approved (see loadBids.js's /:id/approve) — omitted here, that update
+// never fires and the truck keeps surfacing as available.
+function TruckChips({ trucks, selectedId, onSelect, t }) {
+  if (!trucks?.length) return null;
+  return (
+    <View className="mb-3">
+      <Text className="mb-2 text-xs text-slate-500">{t('bidWithTruck')}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View className="flex-row gap-2">
+          {trucks.map((truck) => (
+            <TouchableOpacity
+              key={truck.id}
+              onPress={() => onSelect(selectedId === truck.id ? null : truck.id)}
+              className={`flex-row items-center rounded-full border px-3 py-2 ${
+                selectedId === truck.id ? 'border-brand bg-orange-50' : 'border-slate-200 bg-white'
+              }`}
+            >
+              <Icon source="truck-outline" size={14} color={selectedId === truck.id ? '#f97316' : '#334155'} />
+              <Text className="ml-1.5 text-xs font-semibold text-slate-800">{truck.registration_number}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
 // Bids move in ₹500 steps off the asking price rather than free typing — a
 // faster, thumb-friendly way to counter-offer than the keyboard.
 const BID_STEP = 500;
@@ -62,14 +93,24 @@ export default function PlaceBidScreen() {
   const { load } = route.params;
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
+  const { data: trucks } = useQuery({ queryKey: ['trucks'], queryFn: api.trucks.mine });
 
   const basePrice = Math.round((Number(load.bhada_price) || 0) / BID_STEP) * BID_STEP;
   const [amount, setAmount] = useState(basePrice || BID_STEP);
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+  const [truckId, setTruckId] = useState(null);
+  const selectedTruck = trucks?.find((tr) => tr.id === truckId) ?? null;
 
   const bidMutation = useMutation({
-    mutationFn: () => api.loadBids.place({ load_id: load.id, amount, bid_by_type: profile?.user_type }),
+    mutationFn: () =>
+      api.loadBids.place({
+        load_id: load.id,
+        amount,
+        bid_by_type: profile?.user_type,
+        truck_id: selectedTruck?.id,
+        truck_number: selectedTruck?.registration_number
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['myBids'] });
       queryClient.invalidateQueries({ queryKey: ['loads'] });
@@ -160,6 +201,8 @@ export default function PlaceBidScreen() {
         )}
 
         {!!error && <Text className="mb-3 text-center text-sm text-red-600">{error}</Text>}
+
+        <TruckChips trucks={trucks} selectedId={truckId} onSelect={setTruckId} t={t} />
 
         <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
 

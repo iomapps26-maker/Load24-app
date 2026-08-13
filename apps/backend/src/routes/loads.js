@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import { drivingDistanceKm } from '../lib/googleMaps.js';
+import { supabaseAdmin } from '../lib/supabase.js';
+import { notifyUser } from '../lib/notify.js';
+import { NEARBY_RADIUS_KM } from '../lib/notifyRadius.js';
 
 const router = Router();
 
@@ -8,6 +11,46 @@ const router = Router();
 // handle typos/partial addresses rather than us pre-validating anything.
 function formatAddress(address, city, state, pincode) {
   return [address, city, state, pincode, 'India'].filter(Boolean).join(', ');
+}
+
+// Fire-and-forget: tells the owner of every *available* truck posting within
+// NEARBY_RADIUS_KM of this load's pickup point that a new load just showed
+// up near them. Only 'available' postings are eligible — once a truck is
+// booked on a trip (see loadBids.js's approve route), it drops out of this
+// fan-out until it's posted available again. Never throws — a lookup
+// failure here should never fail the load posting itself.
+async function notifyNearbyTruckOwners(req, load) {
+  if (!load.loading_pincode) return;
+
+  const { data: nearby, error } = await req.supabase.rpc('pincodes_within_radius', {
+    origin_pincode: load.loading_pincode,
+    radius_km: NEARBY_RADIUS_KM
+  });
+  if (error) return console.error('[loads] pincodes_within_radius failed', error);
+  if (!nearby?.length) return;
+
+  // truck_availabilities RLS only lets req.supabase see 'available' postings
+  // (which is exactly what we want here) or the caller's own — service-role
+  // client isn't strictly required, but used for consistency with the
+  // reverse fan-out and to avoid any RLS surprises on future policy changes.
+  const { data: postings, error: postingsError } = await supabaseAdmin
+    .from('truck_availabilities')
+    .select('id, owner_id')
+    .eq('status', 'available')
+    .in('current_pincode', nearby.map((r) => r.pincode))
+    .neq('owner_id', req.user.id);
+  if (postingsError) return console.error('[loads] nearby truck lookup failed', postingsError);
+
+  await Promise.all(
+    (postings || []).map((posting) =>
+      notifyUser(posting.owner_id, {
+        type: 'load_available_nearby',
+        title: 'New load near your available truck',
+        body: `A load${load.material_type ? ` (${load.material_type})` : ''} was posted near ${load.loading_city || load.loading_pincode}`,
+        data: { load_id: load.id, truck_availability_id: posting.id }
+      })
+    )
+  );
 }
 
 // GET /api/loads?truck_type=tata_407&pincode=110001&material_type=cement — mirrors
@@ -51,6 +94,10 @@ router.post('/', async (req, res) => {
   const { data, error } = await req.supabase.from('loads').insert(payload).select().single();
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json(data);
+
+  // After the response, not before — same reasoning as truckAvailability.js's
+  // notifyNearbyUsers: this fan-out shouldn't make the poster wait.
+  notifyNearbyTruckOwners(req, data).catch((err) => console.error('[loads] notifyNearbyTruckOwners failed', err));
 });
 
 export default router;
