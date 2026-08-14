@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { TextInput, Button, HelperText, Chip } from 'react-native-paper';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
@@ -10,6 +10,7 @@ import {
   SPECIAL_CONDITIONS, SPECIAL_CONDITION_LABELS
 } from '../lib/loadOptions';
 import { useLanguage } from '../lib/i18n';
+import { usePincodeAutofill } from '../lib/usePincodeAutofill';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
 const REQUIRED = [
@@ -69,6 +70,15 @@ export default function PostLoadScreen() {
   const [confirmed, setConfirmed] = useState(false);
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
+
+  // Same auto-fill as account creation — a valid pincode fills in its city
+  // and state instead of making the poster type them by hand.
+  const loadingPincodeLoading = usePincodeAutofill(form.loading_pincode, (city, state) => {
+    setForm((f) => ({ ...f, loading_city: city, loading_state: state }));
+  });
+  const unloadingPincodeLoading = usePincodeAutofill(form.unloading_pincode, (city, state) => {
+    setForm((f) => ({ ...f, unloading_city: city, unloading_state: state }));
+  });
 
   const toggleSpecialCondition = (condition) =>
     setSpecialConditions((prev) => (prev.includes(condition) ? prev.filter((c) => c !== condition) : [...prev, condition]));
@@ -135,7 +145,11 @@ export default function PostLoadScreen() {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1 bg-white">
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <Text className="mb-4 text-lg font-bold text-slate-900">Loading point</Text>
-        <Field label="Pincode" required keyboardType="number-pad" value={form.loading_pincode} onChangeText={set('loading_pincode')} />
+        <Field
+          label="Pincode" required keyboardType="number-pad" maxLength={6}
+          value={form.loading_pincode} onChangeText={set('loading_pincode')}
+          right={loadingPincodeLoading ? <TextInput.Icon icon={() => <ActivityIndicator size={16} color="#f97316" />} /> : undefined}
+        />
         <Field label="Address" required value={form.loading_address} onChangeText={set('loading_address')} />
         <Field label="Landmark" required value={form.loading_landmark} onChangeText={set('loading_landmark')} placeholder="e.g. Near XYZ warehouse" />
         <View className="flex-row gap-3">
@@ -150,7 +164,11 @@ export default function PostLoadScreen() {
         </View>
 
         <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Unloading point</Text>
-        <Field label="Pincode" required keyboardType="number-pad" value={form.unloading_pincode} onChangeText={set('unloading_pincode')} />
+        <Field
+          label="Pincode" required keyboardType="number-pad" maxLength={6}
+          value={form.unloading_pincode} onChangeText={set('unloading_pincode')}
+          right={unloadingPincodeLoading ? <TextInput.Icon icon={() => <ActivityIndicator size={16} color="#f97316" />} /> : undefined}
+        />
         <Field label="Address" required value={form.unloading_address} onChangeText={set('unloading_address')} />
         <Field label="Landmark" required value={form.unloading_landmark} onChangeText={set('unloading_landmark')} placeholder="e.g. Near XYZ warehouse" />
         <View className="flex-row gap-3">

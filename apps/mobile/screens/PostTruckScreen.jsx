@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
+import { usePincodeAutofill } from '../lib/usePincodeAutofill';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 import DateField from '../components/DateField';
 
@@ -96,6 +97,12 @@ export default function PostTruckScreen() {
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
 
+  // Same auto-fill as account creation — a valid pincode fills in its city
+  // and state instead of making the poster type them by hand.
+  const pincodeLoading = usePincodeAutofill(form.current_pincode, (city, state) => {
+    setForm((f) => ({ ...f, current_city: city, current_state: state }));
+  });
+
   const toggleRecurringDay = (day) =>
     setRecurringDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
 
@@ -166,7 +173,11 @@ export default function PostTruckScreen() {
         )}
 
         <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Current location</Text>
-        <Field label="Pincode" required keyboardType="number-pad" value={form.current_pincode} onChangeText={set('current_pincode')} />
+        <Field
+          label="Pincode" required keyboardType="number-pad" maxLength={6}
+          value={form.current_pincode} onChangeText={set('current_pincode')}
+          right={pincodeLoading ? <TextInput.Icon icon={() => <ActivityIndicator size={16} color="#f97316" />} /> : undefined}
+        />
         <View className="flex-row gap-3">
           <View className="flex-1"><Field label="City" required value={form.current_city} onChangeText={set('current_city')} /></View>
           <View className="flex-1"><Field label="State" required value={form.current_state} onChangeText={set('current_state')} /></View>

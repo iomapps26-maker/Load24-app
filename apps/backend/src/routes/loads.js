@@ -53,11 +53,11 @@ async function notifyNearbyTruckOwners(req, load) {
   );
 }
 
-// GET /api/loads?truck_type=tata_407&pincode=110001&material_type=cement — mirrors
+// GET /api/loads?truck_type=tata_407&location=110001&material_type=cement — mirrors
 // FindLoads.jsx's query, filtering on the same fields PostLoadScreen collects
 // GET /api/loads?mine=true — the caller's own posted loads, any status (for the home dashboard)
 router.get('/', async (req, res) => {
-  const { truck_type, pincode, material_type, mine, limit = 50 } = req.query;
+  const { truck_type, location, material_type, mine, limit = 50 } = req.query;
 
   let query = req.supabase
     .from('loads')
@@ -70,7 +70,24 @@ router.get('/', async (req, res) => {
   } else {
     query = query.eq('status', 'active');
     if (truck_type && truck_type !== 'all') query = query.eq('required_truck_type', truck_type);
-    if (pincode) query = query.or(`loading_pincode.eq.${pincode},unloading_pincode.eq.${pincode}`);
+    // Single box, two kinds of input: a pincode (matched anywhere in either
+    // pincode field) or a city name (matched anywhere in either city field,
+    // case-insensitive) — whichever the caller typed. There's no reference
+    // table mapping pincodes to city names (pincode_centroids only has
+    // lat/lng/state — see db/migrations/030_add_pincode_centroids.sql), so
+    // this only knows what each load's own poster typed into its city
+    // fields, not a canonical city grouping.
+    if (location) {
+      // Comma/parens are PostgREST's own or() filter syntax — strip them so
+      // a value containing one can't break or hijack the filter expression.
+      const safeLocation = location.replace(/[,()]/g, '');
+      if (safeLocation) {
+        query = query.or(
+          `loading_pincode.ilike.%${safeLocation}%,unloading_pincode.ilike.%${safeLocation}%,` +
+          `loading_city.ilike.%${safeLocation}%,unloading_city.ilike.%${safeLocation}%`
+        );
+      }
+    }
     if (material_type) query = query.ilike('material_type', `%${material_type}%`);
   }
 

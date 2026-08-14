@@ -9,6 +9,10 @@ import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
 import { SALES_PHONE } from '../lib/contact';
 import { downloadQr } from '../lib/downloadQr';
+import { DEFAULT_UPI_PAYEE, VIVEK_UPI_PAYEE } from '../lib/upi';
+import CopyableUpiId from '../components/CopyableUpiId';
+import UpiAppButtons from '../components/UpiAppButtons';
+import QrCodeModal from '../components/QrCodeModal';
 import MyLoadRow from '../components/MyLoadRow';
 
 const STEPS = [
@@ -118,6 +122,7 @@ export default function HomeScreen() {
   const { language, setLanguage, t } = useLanguage();
   const scrollRef = useRef(null);
   const [summaryY, setSummaryY] = useState(0);
+  const [qrModal, setQrModal] = useState(null); // 'iom' | 'vivek' | null
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
 
@@ -220,13 +225,15 @@ export default function HomeScreen() {
         <Text className="mb-3 text-center text-2xl font-bold text-slate-900">{t('tagline')}</Text>
         <Text className="mb-6 text-center text-sm text-slate-500">{t('heroSubtitle')}</Text>
 
-        <TouchableOpacity
-          className="mb-3 flex-row items-center justify-center rounded-xl bg-brand py-3.5"
-          onPress={() => navigation.navigate('Create')}
-        >
-          <Text className="mr-2 text-base font-bold text-white">{t('ctaShipper')}</Text>
-          <Icon source="arrow-right" size={18} color="white" />
-        </TouchableOpacity>
+        {!canAddTruck && (
+          <TouchableOpacity
+            className="mb-3 flex-row items-center justify-center rounded-xl bg-brand py-3.5"
+            onPress={() => navigation.navigate('Create')}
+          >
+            <Text className="mr-2 text-base font-bold text-white">{t('ctaShipper')}</Text>
+            <Icon source="arrow-right" size={18} color="white" />
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           className="flex-row items-center justify-center rounded-xl border-2 border-brand py-3.5"
           onPress={() => navigation.navigate(canAddTruck ? 'TruckDetails' : 'Loads')}
@@ -240,9 +247,11 @@ export default function HomeScreen() {
       <View className="px-4 pt-6" onLayout={(e) => setSummaryY(e.nativeEvent.layout.y)}>
         <View className="mb-4 flex-row items-center justify-between">
           <Text className="text-xl font-bold text-slate-900">{t('yourLoadsSummary')}</Text>
-          <TouchableOpacity className="rounded-lg bg-brand px-3 py-2" onPress={() => navigation.navigate('Create')}>
-            <Text className="text-xs font-bold text-white">+ {t('postNewLoad')}</Text>
-          </TouchableOpacity>
+          {!canAddTruck && (
+            <TouchableOpacity className="rounded-lg bg-brand px-3 py-2" onPress={() => navigation.navigate('Create')}>
+              <Text className="text-xs font-bold text-white">+ {t('postNewLoad')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
         <View className="flex-row flex-wrap justify-between">
           <StatCard icon="package-variant-closed" iconBg="bg-green-500" value={stats.active} label={t('statusActive')} />
@@ -370,25 +379,26 @@ export default function HomeScreen() {
 
           <View className="flex-row">
             <View className="flex-1 pr-3">
-              <Text className="text-xs text-slate-400">UPI ID</Text>
-              <Text className="mb-2 text-sm font-semibold text-brand">internationalonlinemedia@icici</Text>
+              <View className="flex-row items-center justify-between">
+                <Text className="text-xs text-slate-400">UPI ID</Text>
+                <TouchableOpacity className="flex-row items-center" onPress={() => setQrModal('iom')} hitSlop={8}>
+                  <Icon source="qrcode" size={12} color="#f97316" />
+                  <Text className="ml-1 text-xs font-semibold text-brand">{t('showQr')}</Text>
+                </TouchableOpacity>
+              </View>
+              <CopyableUpiId upiId={DEFAULT_UPI_PAYEE.pa} />
               <Text className="text-xs text-slate-400">{t('merchantName')}</Text>
               <Text className="text-sm font-semibold text-slate-800">INTERNATIONAL ONLINE MEDIA</Text>
             </View>
             <View className="items-center justify-center rounded-lg border border-slate-200 p-2">
               <Image source={require('../assets/IOM-upi-qr.jpeg')} style={{ width: 56, height: 56 }} resizeMode="contain" />
-              <TouchableOpacity onPress={() => downloadQr(require('../assets/IOM-upi-qr.jpeg'), 'IOM-upi-qr.jpeg', t)}>
+              <TouchableOpacity onPress={() => downloadQr('qr/IOM-upi-qr.jpeg', 'IOM-upi-qr.jpeg', t)}>
                 <Text className="mt-1 text-xs font-semibold text-brand">↓ {t('download')}</Text>
               </TouchableOpacity>
             </View>
           </View>
 
-          <View className="mt-4 flex-row flex-wrap gap-2">
-            <View className="rounded-full bg-purple-600 px-4 py-2"><Text className="text-xs font-bold text-white">PhonePe</Text></View>
-            <View className="rounded-full border border-slate-300 px-4 py-2"><Text className="text-xs font-bold text-slate-700">GPay</Text></View>
-            <View className="rounded-full bg-blue-600 px-4 py-2"><Text className="text-xs font-bold text-white">Paytm</Text></View>
-            <View className="rounded-full bg-brand px-4 py-2"><Text className="text-xs font-bold text-white">BHIM/UPI</Text></View>
-          </View>
+          <UpiAppButtons payee={DEFAULT_UPI_PAYEE} t={t} />
           <Text className="mt-3 text-xs text-green-700">✓ {t('allUpiAppsAccepted')}</Text>
         </View>
 
@@ -404,16 +414,25 @@ export default function HomeScreen() {
 
           <View className="flex-row">
             <View className="flex-1 pr-3">
-              <Text className="text-xs text-slate-400">UPI ID</Text>
-              <Text className="mb-2 text-sm font-semibold text-brand">vivek9555921555@oksbi</Text>
+              <View className="flex-row items-center justify-between">
+                <Text className="text-xs text-slate-400">UPI ID</Text>
+                <TouchableOpacity className="flex-row items-center" onPress={() => setQrModal('vivek')} hitSlop={8}>
+                  <Icon source="qrcode" size={12} color="#7c3aed" />
+                  <Text className="ml-1 text-xs font-semibold text-purple-700">{t('showQr')}</Text>
+                </TouchableOpacity>
+              </View>
+              <CopyableUpiId upiId={VIVEK_UPI_PAYEE.pa} />
             </View>
             <View className="items-center justify-center rounded-lg border border-slate-200 p-2">
               <Image source={require('../assets/vivek-upi-qr.jpeg')} style={{ width: 56, height: 56 }} resizeMode="contain" />
-              <TouchableOpacity onPress={() => downloadQr(require('../assets/vivek-upi-qr.jpeg'), 'vivek-upi-qr.jpeg', t)}>
+              <TouchableOpacity onPress={() => downloadQr('qr/vivek-upi-qr.jpeg', 'vivek-upi-qr.jpeg', t)}>
                 <Text className="mt-1 text-xs font-semibold text-brand">↓ {t('download')}</Text>
               </TouchableOpacity>
             </View>
           </View>
+
+          <UpiAppButtons payee={VIVEK_UPI_PAYEE} t={t} />
+          <Text className="mt-3 text-xs text-green-700">✓ {t('allUpiAppsAccepted')}</Text>
         </View>
 
         <View className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -489,6 +508,27 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      <QrCodeModal
+        visible={qrModal === 'iom'}
+        onClose={() => setQrModal(null)}
+        qrSource={require('../assets/IOM-upi-qr.jpeg')}
+        assetPath="qr/IOM-upi-qr.jpeg"
+        filename="IOM-upi-qr.jpeg"
+        title={t('upiPayment')}
+        upiId={DEFAULT_UPI_PAYEE.pa}
+        t={t}
+      />
+      <QrCodeModal
+        visible={qrModal === 'vivek'}
+        onClose={() => setQrModal(null)}
+        qrSource={require('../assets/vivek-upi-qr.jpeg')}
+        assetPath="qr/vivek-upi-qr.jpeg"
+        filename="vivek-upi-qr.jpeg"
+        title="Vivek Gupta"
+        upiId={VIVEK_UPI_PAYEE.pa}
+        t={t}
+      />
     </ScrollView>
   );
 }

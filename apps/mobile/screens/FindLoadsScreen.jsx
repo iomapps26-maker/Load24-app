@@ -18,7 +18,7 @@ export default function FindLoadsScreen() {
   const queryClient = useQueryClient();
   const { language, t } = useLanguage();
   const [truckType, setTruckType] = useState('all');
-  const [pincode, setPincode] = useState('');
+  const [location, setLocation] = useState('');
   const [materialType, setMaterialType] = useState('');
   const [filterMenuVisible, setFilterMenuVisible] = useState(false);
 
@@ -30,10 +30,10 @@ export default function FindLoadsScreen() {
     isRefetching,
     refetch
   } = useQuery({
-    queryKey: ['loads', truckType, pincode, materialType],
+    queryKey: ['loads', truckType, location, materialType],
     queryFn: () => api.loads.list({
       truck_type: truckType,
-      pincode: pincode || undefined,
+      location: location || undefined,
       material_type: materialType || undefined
     })
   });
@@ -70,9 +70,9 @@ export default function FindLoadsScreen() {
       <View className="mb-3 flex-row gap-2">
         <TextInput
           mode="outlined"
-          placeholder={t('searchByPincode')}
-          value={pincode}
-          onChangeText={setPincode}
+          placeholder={t('searchByPincodeOrCity')}
+          value={location}
+          onChangeText={setLocation}
           dense
           style={{ flex: 1 }}
         />

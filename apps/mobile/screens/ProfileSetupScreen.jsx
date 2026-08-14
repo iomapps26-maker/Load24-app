@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
 import { TextInput, Button, HelperText, Icon } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -6,7 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
-import { lookupPincode } from '../lib/pincodeLookup';
+import { usePincodeAutofill } from '../lib/usePincodeAutofill';
 import { peekPostLoginIntent } from '../lib/postLoginIntent';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 
@@ -76,23 +76,12 @@ export default function ProfileSetupScreen() {
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [error, setError] = useState('');
-  const [pincodeLoading, setPincodeLoading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
 
-  useEffect(() => {
-    if (pincode.trim().length !== 6) return;
-    let cancelled = false;
-    setPincodeLoading(true);
-    lookupPincode(pincode.trim())
-      .then((result) => {
-        if (cancelled || !result) return;
-        setCity(result.city);
-        setState(result.state);
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setPincodeLoading(false); });
-    return () => { cancelled = true; };
-  }, [pincode]);
+  const pincodeLoading = usePincodeAutofill(pincode, (foundCity, foundState) => {
+    setCity(foundCity);
+    setState(foundState);
+  });
 
   const saveProfile = useMutation({
     mutationFn: async () => {

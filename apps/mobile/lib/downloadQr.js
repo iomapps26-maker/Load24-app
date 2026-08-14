@@ -1,4 +1,4 @@
-import { Alert, Image, PermissionsAndroid, Platform } from 'react-native';
+import { Alert, PermissionsAndroid, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 
@@ -19,24 +19,27 @@ async function hasGallerySavePermission() {
   return result === PermissionsAndroid.RESULTS.GRANTED;
 }
 
-// Downloads a bundled QR image (via require(...)) to the device's photo
-// gallery. Bundled JS assets aren't real files on disk — in a Metro dev
-// build, Image.resolveAssetSource(...).uri is an http URL served by the dev
-// server, so it's fetched to a local cache file first, then handed to
-// CameraRoll.save (which only accepts local file:// URIs). In a release
-// build the resolved URI is a packaged drawable resource instead; confirmed
-// working on-device (Pixel_3a_API_34, debug build) after a Metro cache
-// reset — the release-signed build boots cleanly too.
-export async function downloadQr(source, filename, t) {
+// Downloads a QR image to the device's photo gallery.
+//
+// `assetPath` is a path *relative to android/app/src/main/assets*, not a
+// require(...) — bundled JS image assets (Image.resolveAssetSource) resolve
+// very differently between debug and release: in a Metro dev build the uri
+// is an http URL the dev server serves, but in a release build (no Metro
+// attached) it resolves to a bare Android drawable-resource identifier with
+// no scheme at all, which RNFS.downloadFile can't fetch — that mismatch is
+// exactly why this previously failed for release/production builds while
+// looking fine in dev. Reading straight out of the native assets/ folder
+// (bundled verbatim in both debug and release APKs) sidesteps all of that.
+export async function downloadQr(assetPath, filename, t) {
   try {
     if (!(await hasGallerySavePermission())) {
       Alert.alert(t('download'), t('galleryPermissionDenied'));
       return;
     }
 
-    const { uri } = Image.resolveAssetSource(source);
+    const base64 = await RNFS.readFileAssets(assetPath, 'base64');
     const localPath = `${RNFS.CachesDirectoryPath}/${filename}`;
-    await RNFS.downloadFile({ fromUrl: uri, toFile: localPath }).promise;
+    await RNFS.writeFile(localPath, base64, 'base64');
     await CameraRoll.save(`file://${localPath}`, { type: 'photo' });
 
     Alert.alert(t('download'), t('qrSavedToGallery'));
