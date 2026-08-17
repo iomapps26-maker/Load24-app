@@ -56,6 +56,10 @@ vi.mock('../lib/supabase.js', () => ({
           createSignedUploadUrl: (path) => {
             mockAdminState.signedUrlCalls.push({ bucket, path });
             return Promise.resolve({ data: { signedUrl: `https://example.com/${path}`, path, token: 'tok' }, error: null });
+          },
+          createSignedUrl: (path, ttl) => {
+            mockAdminState.signedUrlCalls.push({ bucket, path, ttl });
+            return Promise.resolve({ data: { signedUrl: `https://example.com/view/${path}?ttl=${ttl}` }, error: null });
           }
         };
       }
@@ -361,7 +365,8 @@ describe('GET /api/profile/kyc/queue', () => {
       document_type: 'aadhaar',
       file_name: 'aadhaar.pdf',
       mime_type: 'application/pdf',
-      uploaded_at: '2026-01-02T00:00:00.000Z'
+      uploaded_at: '2026-01-02T00:00:00.000Z',
+      storage_path: 'user-1/aadhaar.pdf'
     });
 
     const app = buildApp(createMockSupabase(), 'staff-1');
@@ -377,6 +382,8 @@ describe('GET /api/profile/kyc/queue', () => {
     expect(res.body[2].profile).toMatchObject({ full_name: 'Ravi Kumar' });
     expect(res.body[2].documents).toHaveLength(1);
     expect(res.body[2].documents[0].document_type).toBe('aadhaar');
+    expect(res.body[2].documents[0].url).toBe('https://example.com/view/user-1/aadhaar.pdf?ttl=300');
+    expect(res.body[2].documents[0].storage_path).toBeUndefined(); // never sent to the client
   });
 
   it('returns an empty array when every case is verified or rejected', async () => {

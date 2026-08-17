@@ -6,6 +6,9 @@ import { notifyUser } from '../lib/notify.js';
 
 const BUCKET = 'kyc-documents';
 const STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
+// Same TTL as loadBids.js's TRIP_DOC_URL_TTL_SECONDS — minted fresh on every
+// queue fetch rather than stored, so a leaked link stops working quickly.
+const DOC_VIEW_URL_TTL_SECONDS = 300;
 const router = Router();
 
 // Lazily creates the caller's kyc_cases row on first touch, freezing
@@ -325,14 +328,25 @@ router.get('/queue', requireRole(STAFF_ROLES), async (req, res) => {
 
   const [{ data: profiles, error: profilesError }, { data: documents, error: documentsError }] = await Promise.all([
     supabaseAdmin.from('user_profiles').select('user_id, full_name, mobile, city').in('user_id', userIds),
-    supabaseAdmin.from('kyc_documents').select('case_id, document_type, file_name, mime_type, uploaded_at').in('case_id', caseIds)
+    supabaseAdmin.from('kyc_documents').select('case_id, document_type, file_name, mime_type, uploaded_at, storage_path').in('case_id', caseIds)
   ]);
   if (profilesError) return res.status(400).json({ error: profilesError.message });
   if (documentsError) return res.status(400).json({ error: documentsError.message });
 
+  // Signed view URLs, same lib call loadBids.js's documentsForUser uses —
+  // storage_path itself is never sent to the client, only these short-lived
+  // URLs.
+  const documentsWithUrls = await Promise.all(
+    (documents || []).map(async (doc) => {
+      const { data } = await supabaseAdmin.storage.from(BUCKET).createSignedUrl(doc.storage_path, DOC_VIEW_URL_TTL_SECONDS);
+      const { storage_path, ...rest } = doc;
+      return { ...rest, url: data?.signedUrl ?? null };
+    })
+  );
+
   const profileByUserId = new Map((profiles || []).map((p) => [p.user_id, p]));
   const documentsByCaseId = new Map();
-  for (const doc of documents || []) {
+  for (const doc of documentsWithUrls) {
     if (!documentsByCaseId.has(doc.case_id)) documentsByCaseId.set(doc.case_id, []);
     documentsByCaseId.get(doc.case_id).push(doc);
   }

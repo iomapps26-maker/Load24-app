@@ -10,7 +10,7 @@ const mockAdminState = { removeCalls: [], signedUrlCalls: [] };
 // at every step so any chain order the real code uses resolves correctly
 // whether or not .order() is called — same approach as kyc.test.js's.
 function createAdminStore() {
-  return { user_roles: [], trucks: [], user_profiles: [], truck_documents: [] };
+  return { user_roles: [], trucks: [], user_profiles: [], truck_documents: [], notifications: [] };
 }
 let adminStore = createAdminStore();
 
@@ -30,6 +30,28 @@ function makeAdminQueryBuilder(table) {
     order: (field, { ascending = true } = {}) => {
       sort = { field, sign: ascending ? 1 : -1 };
       return builder;
+    },
+    insert(row) {
+      (adminStore[table] || (adminStore[table] = [])).push(row);
+      return Promise.resolve({ data: row, error: null });
+    },
+    update(patch) {
+      const updateFilters = [];
+      const updateBuilder = {
+        eq: (field, value) => {
+          updateFilters.push((r) => r[field] === value);
+          return updateBuilder;
+        },
+        select: () => ({
+          maybeSingle: () => {
+            const match = (adminStore[table] || []).find((r) => updateFilters.every((f) => f(r)));
+            if (!match) return Promise.resolve({ data: null, error: null });
+            Object.assign(match, patch);
+            return Promise.resolve({ data: match, error: null });
+          }
+        })
+      };
+      return updateBuilder;
     },
     then: (resolve) => {
       let data = (adminStore[table] || []).filter((r) => filters.every((f) => f(r)));
@@ -55,6 +77,10 @@ vi.mock('../lib/supabase.js', () => ({
           createSignedUploadUrl: (path) => {
             mockAdminState.signedUrlCalls.push({ bucket, path });
             return Promise.resolve({ data: { signedUrl: `https://example.com/${path}`, path, token: 'tok' }, error: null });
+          },
+          createSignedUrl: (path, ttl) => {
+            mockAdminState.signedUrlCalls.push({ bucket, path, ttl });
+            return Promise.resolve({ data: { signedUrl: `https://example.com/view/${path}?ttl=${ttl}` }, error: null });
           }
         };
       }
@@ -398,6 +424,38 @@ describe('POST /api/trucks/:id/documents', () => {
   });
 });
 
+describe('POST /api/trucks/:id/verify', () => {
+  it('rejects a non-staff caller with 403', async () => {
+    const app = buildApp(createMockSupabase(), 'user-1');
+    const res = await request(app).post('/api/trucks/t1/verify');
+    expect(res.status).toBe(403);
+  });
+
+  it('verifies via supabaseAdmin, not the RLS-scoped client', async () => {
+    // Regression test for the "infinite recursion detected in policy for
+    // relation 'user_roles'" bug: this must go through supabaseAdmin
+    // (adminStore), not req.supabase (mockSupabase's own trucks rows) —
+    // seeding the truck only in adminStore.trucks proves the handler never
+    // touches req.supabase.trucks for this write.
+    adminStore.user_roles.push({ user_id: 'staff-1', role: 'admin' });
+    adminStore.trucks.push({ id: 't1', owner_id: 'user-1', registration_number: 'MH12AB1234', status: 'active', verified: false });
+
+    const app = buildApp(createMockSupabase(), 'staff-1');
+    const res = await request(app).post('/api/trucks/t1/verify');
+
+    expect(res.status).toBe(200);
+    expect(res.body.verified).toBe(true);
+    expect(res.body.verified_at).toBeTruthy();
+  });
+
+  it('404s for a truck that does not exist', async () => {
+    adminStore.user_roles.push({ user_id: 'staff-1', role: 'admin' });
+    const app = buildApp(createMockSupabase(), 'staff-1');
+    const res = await request(app).post('/api/trucks/does-not-exist/verify');
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('GET /api/trucks/queue', () => {
   it('rejects a non-staff caller with 403', async () => {
     const app = buildApp(createMockSupabase(), 'user-1');
@@ -422,7 +480,8 @@ describe('GET /api/trucks/queue', () => {
       document_type: 'rc',
       file_name: 'rc.pdf',
       mime_type: 'application/pdf',
-      uploaded_at: '2026-01-02T00:00:00.000Z'
+      uploaded_at: '2026-01-02T00:00:00.000Z',
+      storage_path: 'user-1/t1/rc.pdf'
     });
 
     const app = buildApp(createMockSupabase(), 'staff-1');
@@ -437,6 +496,8 @@ describe('GET /api/trucks/queue', () => {
     expect(res.body[1].owner).toMatchObject({ full_name: 'Ravi Kumar' });
     expect(res.body[1].documents).toHaveLength(1);
     expect(res.body[1].documents[0].document_type).toBe('rc');
+    expect(res.body[1].documents[0].url).toBe('https://example.com/view/user-1/t1/rc.pdf?ttl=300');
+    expect(res.body[1].documents[0].storage_path).toBeUndefined(); // never sent to the client
   });
 
   it('returns an empty array when no trucks are pending', async () => {

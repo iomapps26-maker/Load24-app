@@ -8,6 +8,10 @@ const router = Router();
 const STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
 
 const BUCKET = 'truck-documents';
+// Same TTL as loadBids.js's TRIP_DOC_URL_TTL_SECONDS / kyc.js's — minted
+// fresh on every queue fetch rather than stored, so a leaked link stops
+// working quickly.
+const DOC_VIEW_URL_TTL_SECONDS = 300;
 
 // 'other' lets the caller escape the closed list — the free-text detail
 // goes in truck_type_other / body_type_other (see 022_add_truck_type_other.sql).
@@ -83,8 +87,11 @@ router.get('/', async (req, res) => {
 // not-yet-actionable. Registered here, before GET /:id below, because
 // Express would otherwise match "queue" as an :id value and 404 it as a
 // truck lookup. Uses supabaseAdmin for the same cross-owner-read reason
-// kyc.js's /queue does, even though trucks_select_own_or_staff RLS would
-// also allow this via req.supabase.
+// kyc.js's /queue does — req.supabase is not an option here even though
+// trucks_select_own_or_staff RLS looks like it should allow it: has_role(),
+// which that policy calls, recurses into user_roles' own RLS the moment
+// it's evaluated as anyone other than the service role (see the comment on
+// :id/verify below).
 router.get('/queue', requireRole(STAFF_ROLES), async (req, res) => {
   const { data: trucks, error } = await supabaseAdmin
     .from('trucks')
@@ -100,14 +107,25 @@ router.get('/queue', requireRole(STAFF_ROLES), async (req, res) => {
 
   const [{ data: owners, error: ownersError }, { data: documents, error: documentsError }] = await Promise.all([
     supabaseAdmin.from('user_profiles').select('user_id, full_name, mobile, city').in('user_id', ownerIds),
-    supabaseAdmin.from('truck_documents').select('truck_id, document_type, file_name, mime_type, uploaded_at').in('truck_id', truckIds)
+    supabaseAdmin.from('truck_documents').select('truck_id, document_type, file_name, mime_type, uploaded_at, storage_path').in('truck_id', truckIds)
   ]);
   if (ownersError) return res.status(400).json({ error: ownersError.message });
   if (documentsError) return res.status(400).json({ error: documentsError.message });
 
+  // Signed view URLs, same short-lived-mint-on-every-fetch pattern kyc.js's
+  // /queue and loadBids.js's documentsForUser use — storage_path itself is
+  // never sent to the client.
+  const documentsWithUrls = await Promise.all(
+    (documents || []).map(async (doc) => {
+      const { data } = await supabaseAdmin.storage.from(BUCKET).createSignedUrl(doc.storage_path, DOC_VIEW_URL_TTL_SECONDS);
+      const { storage_path, ...rest } = doc;
+      return { ...rest, url: data?.signedUrl ?? null };
+    })
+  );
+
   const ownerByUserId = new Map((owners || []).map((o) => [o.user_id, o]));
   const documentsByTruckId = new Map();
-  for (const doc of documents || []) {
+  for (const doc of documentsWithUrls) {
     if (!documentsByTruckId.has(doc.truck_id)) documentsByTruckId.set(doc.truck_id, []);
     documentsByTruckId.get(doc.truck_id).push(doc);
   }
@@ -294,10 +312,18 @@ router.post('/:id/documents', async (req, res) => {
 });
 
 // POST /api/trucks/:id/verify — staff-only. trucks_update_staff RLS
-// (020_add_trucks.sql) already lets any of STAFF_ROLES update any truck row
-// via req.supabase, so this doesn't need the service-role client.
+// (020_add_trucks.sql) would in principle let any of STAFF_ROLES update any
+// truck row via req.supabase, but has_role() — which that policy and
+// user_roles' own select policy both call — recurses into user_roles' own
+// RLS the moment it's evaluated as anyone other than the service role,
+// and user_roles_select_own_or_admin (003_add_roles_devices_consents.sql)
+// queries user_roles from inside its own policy, which Postgres can't
+// resolve ("infinite recursion detected in policy for relation
+// 'user_roles'"). kyc.js and wallet.js's staff writes already route around
+// this the same way — supabaseAdmin bypasses RLS (and therefore has_role())
+// entirely, so it never hits the recursion.
 router.post('/:id/verify', requireRole(STAFF_ROLES), async (req, res) => {
-  const { data, error } = await req.supabase
+  const { data, error } = await supabaseAdmin
     .from('trucks')
     .update({ verified: true, verified_at: new Date().toISOString() })
     .eq('id', req.params.id)
