@@ -330,12 +330,13 @@ describe('GET /api/profile/kyc/queue', () => {
     expect(res.status).toBe(403);
   });
 
-  it('returns pending cases newest-first with profile and documents attached', async () => {
+  it('returns submitted cases newest-first with profile and documents attached', async () => {
     adminStore.user_roles.push({ user_id: 'staff-1', role: 'admin' });
     adminStore.kyc_cases.push(
-      { id: 'case-1', user_id: 'user-1', kyc_type: 'driver', status: 'pending', created_at: '2026-01-01T00:00:00.000Z' },
-      { id: 'case-2', user_id: 'user-2', kyc_type: 'transporter', status: 'pending', created_at: '2026-02-01T00:00:00.000Z' },
-      { id: 'case-3', user_id: 'user-3', kyc_type: 'driver', status: 'submitted', created_at: '2026-03-01T00:00:00.000Z' }
+      { id: 'case-1', user_id: 'user-1', kyc_type: 'driver', status: 'submitted', created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'case-2', user_id: 'user-2', kyc_type: 'transporter', status: 'submitted', created_at: '2026-02-01T00:00:00.000Z' },
+      { id: 'case-3', user_id: 'user-3', kyc_type: 'driver', status: 'pending', created_at: '2026-03-01T00:00:00.000Z' },
+      { id: 'case-4', user_id: 'user-4', kyc_type: 'driver', status: 'partial', created_at: '2026-03-02T00:00:00.000Z' }
     );
     adminStore.user_profiles.push(
       { user_id: 'user-1', full_name: 'Ravi Kumar', mobile: '+919000000001', city: 'Pune' },
@@ -353,7 +354,7 @@ describe('GET /api/profile/kyc/queue', () => {
     const res = await request(app).get('/api/profile/kyc/queue');
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(2); // case-3 excluded — not 'pending'
+    expect(res.body).toHaveLength(2); // case-3 (pending) and case-4 (partial) excluded — not 'submitted'
     expect(res.body[0].case.id).toBe('case-2'); // newest first
     expect(res.body[0].profile).toMatchObject({ full_name: 'Asha Devi' });
     expect(res.body[0].documents).toEqual([]);
@@ -363,7 +364,7 @@ describe('GET /api/profile/kyc/queue', () => {
     expect(res.body[1].documents[0].document_type).toBe('aadhaar');
   });
 
-  it('returns an empty array when no cases are pending', async () => {
+  it('returns an empty array when no cases are submitted', async () => {
     adminStore.user_roles.push({ user_id: 'staff-1', role: 'support_manager' });
     const app = buildApp(createMockSupabase(), 'staff-1');
     const res = await request(app).get('/api/profile/kyc/queue');
