@@ -15,17 +15,29 @@ declare
   v_load_id uuid;
 begin
   -- ---- auth.users + auth.identities (email/password sign-in) ----
+  -- The token columns below (confirmation_token, recovery_token, etc.) must
+  -- be '' rather than left NULL/unset. GoTrue's Go structs scan them as
+  -- non-nullable strings; a NULL there makes every Admin API call that has
+  -- to load the row (GET/PUT/DELETE /admin/users/:id, listUsers if the row
+  -- falls in a fetched page, and even a normal password sign-in) fail with
+  -- an opaque "Database error ..." 500 — the row becomes unreadable and
+  -- unfixable through the API, only fixable via direct SQL. Learned this the
+  -- hard way after this script inserted two rows without them.
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, created_at, updated_at,
-    raw_app_meta_data, raw_user_meta_data
+    raw_app_meta_data, raw_user_meta_data,
+    confirmation_token, recovery_token, email_change_token_new, email_change,
+    email_change_token_current, phone_change, phone_change_token, reauthentication_token
   ) values
     (v_shipper_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      'shipper@load24.test', crypt('password123', gen_salt('bf')),
-     now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}'),
+     now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}',
+     '', '', '', '', '', '', '', ''),
     (v_trucker_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      'trucker@load24.test', crypt('password123', gen_salt('bf')),
-     now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}');
+     now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}',
+     '', '', '', '', '', '', '', '');
 
   insert into auth.identities (
     id, user_id, provider_id, identity_data, provider, created_at, updated_at
