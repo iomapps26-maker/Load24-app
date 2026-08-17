@@ -297,22 +297,25 @@ router.post('/submit', async (req, res) => {
 // support_manager write access to that table — supabaseAdmin keeps this one
 // code path working for support_executive too.
 
-// GET /api/profile/kyc/queue — staff review queue: every kyc_cases row at
-// 'submitted' (all required documents + location, if any, are in and the
-// case is actually awaiting a decision), with the submitting user's profile
-// and uploaded documents, newest case first. Deliberately 'submitted', not
-// 'pending'/'partial' — those are still mid-upload and aren't valid targets
-// for :userId/verify or :userId/reject below (both only ever move a case out
-// of 'submitted'), so a queue of anything else would list cases staff can't
-// act on yet. Uses supabaseAdmin for the same reason profileForEmail/
-// documentsForUser in loadBids.js do — the caller is authorized as staff,
-// not as the case owner, so reading across other users' profiles/documents
-// here is deliberate.
+// GET /api/profile/kyc/queue — staff review queue: every kyc_cases row not
+// yet resolved ('pending', 'partial', or 'submitted' — i.e. everything
+// except 'verified'/'rejected'), with the submitting user's profile and
+// uploaded documents, newest case first. Deliberately includes
+// 'pending'/'partial' rather than just 'submitted': hiding a case just
+// because the user hasn't finished uploading yet made the queue look empty
+// even when there was real, visible-in-the-app progress staff wanted to
+// see. The client is responsible for only offering Approve/Reject (which
+// :userId/verify and :userId/reject below only accept from 'submitted') once
+// a case's status is actually 'submitted' — see admin/kyc/ on the website.
+// Uses supabaseAdmin for the same reason profileForEmail/documentsForUser in
+// loadBids.js do — the caller is authorized as staff, not as the case
+// owner, so reading across other users' profiles/documents here is
+// deliberate.
 router.get('/queue', requireRole(STAFF_ROLES), async (req, res) => {
   const { data: cases, error } = await supabaseAdmin
     .from('kyc_cases')
     .select('*')
-    .eq('status', 'submitted')
+    .in('status', ['pending', 'partial', 'submitted'])
     .order('created_at', { ascending: false });
   if (error) return res.status(400).json({ error: error.message });
   if (!cases || cases.length === 0) return res.json([]);

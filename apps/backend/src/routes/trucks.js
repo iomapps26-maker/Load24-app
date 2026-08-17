@@ -75,6 +75,52 @@ router.get('/', async (req, res) => {
   res.json(data);
 });
 
+// GET /api/trucks/queue — staff review queue: every active, unverified
+// truck, with the owner's profile and uploaded documents, newest first.
+// Unlike kyc.js's /queue there's no status gate to mirror here — :id/verify
+// below has no "must be in a certain state first" check, it just sets
+// verified=true unconditionally — so nothing is excluded for being
+// not-yet-actionable. Registered here, before GET /:id below, because
+// Express would otherwise match "queue" as an :id value and 404 it as a
+// truck lookup. Uses supabaseAdmin for the same cross-owner-read reason
+// kyc.js's /queue does, even though trucks_select_own_or_staff RLS would
+// also allow this via req.supabase.
+router.get('/queue', requireRole(STAFF_ROLES), async (req, res) => {
+  const { data: trucks, error } = await supabaseAdmin
+    .from('trucks')
+    .select('*')
+    .eq('verified', false)
+    .eq('status', 'active')
+    .order('created_at', { ascending: false });
+  if (error) return res.status(400).json({ error: error.message });
+  if (!trucks || trucks.length === 0) return res.json([]);
+
+  const ownerIds = [...new Set(trucks.map((t) => t.owner_id))];
+  const truckIds = trucks.map((t) => t.id);
+
+  const [{ data: owners, error: ownersError }, { data: documents, error: documentsError }] = await Promise.all([
+    supabaseAdmin.from('user_profiles').select('user_id, full_name, mobile, city').in('user_id', ownerIds),
+    supabaseAdmin.from('truck_documents').select('truck_id, document_type, file_name, mime_type, uploaded_at').in('truck_id', truckIds)
+  ]);
+  if (ownersError) return res.status(400).json({ error: ownersError.message });
+  if (documentsError) return res.status(400).json({ error: documentsError.message });
+
+  const ownerByUserId = new Map((owners || []).map((o) => [o.user_id, o]));
+  const documentsByTruckId = new Map();
+  for (const doc of documents || []) {
+    if (!documentsByTruckId.has(doc.truck_id)) documentsByTruckId.set(doc.truck_id, []);
+    documentsByTruckId.get(doc.truck_id).push(doc);
+  }
+
+  res.json(
+    trucks.map((truck) => ({
+      truck,
+      owner: ownerByUserId.get(truck.owner_id) || null,
+      documents: documentsByTruckId.get(truck.id) || []
+    }))
+  );
+});
+
 // GET /api/trucks/:id — a single truck, must belong to the caller, with its
 // uploaded documents embedded so the edit form knows what's already there.
 router.get('/:id', async (req, res) => {

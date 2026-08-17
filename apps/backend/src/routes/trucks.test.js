@@ -1,8 +1,47 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
 const mockAdminState = { removeCalls: [], signedUrlCalls: [] };
+
+// Backing store + minimal query builder for the plain `.from(table)...` reads
+// supabaseAdmin does outside of storage — used by requireRole's user_roles
+// check and by GET /queue's trucks/owners/documents lookups below. Thenable
+// at every step so any chain order the real code uses resolves correctly
+// whether or not .order() is called — same approach as kyc.test.js's.
+function createAdminStore() {
+  return { user_roles: [], trucks: [], user_profiles: [], truck_documents: [] };
+}
+let adminStore = createAdminStore();
+
+function makeAdminQueryBuilder(table) {
+  const filters = [];
+  let sort = null;
+  const builder = {
+    select: () => builder,
+    eq: (field, value) => {
+      filters.push((r) => r[field] === value);
+      return builder;
+    },
+    in: (field, values) => {
+      filters.push((r) => values.includes(r[field]));
+      return builder;
+    },
+    order: (field, { ascending = true } = {}) => {
+      sort = { field, sign: ascending ? 1 : -1 };
+      return builder;
+    },
+    then: (resolve) => {
+      let data = (adminStore[table] || []).filter((r) => filters.every((f) => f(r)));
+      if (sort) {
+        const { field, sign } = sort;
+        data = [...data].sort((a, b) => (a[field] > b[field] ? sign : a[field] < b[field] ? -sign : 0));
+      }
+      resolve({ data, error: null });
+    }
+  };
+  return builder;
+}
 
 vi.mock('../lib/supabase.js', () => ({
   supabaseAdmin: {
@@ -19,11 +58,16 @@ vi.mock('../lib/supabase.js', () => ({
           }
         };
       }
-    }
+    },
+    from: (table) => makeAdminQueryBuilder(table)
   }
 }));
 
 const { default: trucksRouter } = await import('./trucks.js');
+
+beforeEach(() => {
+  adminStore = createAdminStore();
+});
 
 // In-memory stand-in for req.supabase.from('user_profiles'|'trucks'|'truck_documents')...
 function createMockSupabase({ userType = 'vehicle_owner', seedTrucks = [], seedDocuments = [] } = {}) {
@@ -351,5 +395,55 @@ describe('POST /api/trucks/:id/documents', () => {
       storage_path: 'someone-else/t1/rc.pdf'
     });
     expect(res.status).toBe(403);
+  });
+});
+
+describe('GET /api/trucks/queue', () => {
+  it('rejects a non-staff caller with 403', async () => {
+    const app = buildApp(createMockSupabase(), 'user-1');
+    const res = await request(app).get('/api/trucks/queue');
+    expect(res.status).toBe(403);
+  });
+
+  it('returns active, unverified trucks newest-first with owner and documents attached', async () => {
+    adminStore.user_roles.push({ user_id: 'staff-1', role: 'admin' });
+    adminStore.trucks.push(
+      { id: 't1', owner_id: 'user-1', registration_number: 'MH12AB1234', status: 'active', verified: false, created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 't2', owner_id: 'user-2', registration_number: 'DL1MQ8614', status: 'active', verified: false, created_at: '2026-02-01T00:00:00.000Z' },
+      { id: 't3', owner_id: 'user-3', registration_number: 'HR55AR0995', status: 'active', verified: true, created_at: '2026-03-01T00:00:00.000Z' },
+      { id: 't4', owner_id: 'user-4', registration_number: 'PB01XY9999', status: 'inactive', verified: false, created_at: '2026-03-02T00:00:00.000Z' }
+    );
+    adminStore.user_profiles.push(
+      { user_id: 'user-1', full_name: 'Ravi Kumar', mobile: '+919000000001', city: 'Pune' },
+      { user_id: 'user-2', full_name: 'Asha Devi', mobile: '+919000000002', city: 'Nashik' }
+    );
+    adminStore.truck_documents.push({
+      truck_id: 't1',
+      document_type: 'rc',
+      file_name: 'rc.pdf',
+      mime_type: 'application/pdf',
+      uploaded_at: '2026-01-02T00:00:00.000Z'
+    });
+
+    const app = buildApp(createMockSupabase(), 'staff-1');
+    const res = await request(app).get('/api/trucks/queue');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2); // t3 (verified) and t4 (inactive) excluded
+    expect(res.body[0].truck.id).toBe('t2'); // newest first
+    expect(res.body[0].owner).toMatchObject({ full_name: 'Asha Devi' });
+    expect(res.body[0].documents).toEqual([]);
+    expect(res.body[1].truck.id).toBe('t1');
+    expect(res.body[1].owner).toMatchObject({ full_name: 'Ravi Kumar' });
+    expect(res.body[1].documents).toHaveLength(1);
+    expect(res.body[1].documents[0].document_type).toBe('rc');
+  });
+
+  it('returns an empty array when no trucks are pending', async () => {
+    adminStore.user_roles.push({ user_id: 'staff-1', role: 'support_executive' });
+    const app = buildApp(createMockSupabase(), 'staff-1');
+    const res = await request(app).get('/api/trucks/queue');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
   });
 });

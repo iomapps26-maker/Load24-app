@@ -12,20 +12,33 @@ function createAdminStore() {
 }
 let adminStore = createAdminStore();
 
+// Thenable at every step (not just at one fixed "terminal" call) so any
+// chain order the real code uses — .eq().in(), .eq().order(),
+// .in().order() — resolves correctly whether or not .order() is called.
 function makeAdminQueryBuilder(table) {
   const filters = [];
-  const rows = () => (adminStore[table] || []).filter((r) => filters.every((f) => f(r)));
+  let sort = null;
   const builder = {
     select: () => builder,
     eq: (field, value) => {
       filters.push((r) => r[field] === value);
       return builder;
     },
-    in: (field, values) => Promise.resolve({ data: rows().filter((r) => values.includes(r[field])), error: null }),
+    in: (field, values) => {
+      filters.push((r) => values.includes(r[field]));
+      return builder;
+    },
     order: (field, { ascending = true } = {}) => {
-      const sign = ascending ? 1 : -1;
-      const data = [...rows()].sort((a, b) => (a[field] > b[field] ? sign : a[field] < b[field] ? -sign : 0));
-      return Promise.resolve({ data, error: null });
+      sort = { field, sign: ascending ? 1 : -1 };
+      return builder;
+    },
+    then: (resolve) => {
+      let data = (adminStore[table] || []).filter((r) => filters.every((f) => f(r)));
+      if (sort) {
+        const { field, sign } = sort;
+        data = [...data].sort((a, b) => (a[field] > b[field] ? sign : a[field] < b[field] ? -sign : 0));
+      }
+      resolve({ data, error: null });
     }
   };
   return builder;
@@ -330,17 +343,18 @@ describe('GET /api/profile/kyc/queue', () => {
     expect(res.status).toBe(403);
   });
 
-  it('returns submitted cases newest-first with profile and documents attached', async () => {
+  it('returns pending, partial and submitted cases newest-first, excluding verified/rejected', async () => {
     adminStore.user_roles.push({ user_id: 'staff-1', role: 'admin' });
     adminStore.kyc_cases.push(
-      { id: 'case-1', user_id: 'user-1', kyc_type: 'driver', status: 'submitted', created_at: '2026-01-01T00:00:00.000Z' },
-      { id: 'case-2', user_id: 'user-2', kyc_type: 'transporter', status: 'submitted', created_at: '2026-02-01T00:00:00.000Z' },
-      { id: 'case-3', user_id: 'user-3', kyc_type: 'driver', status: 'pending', created_at: '2026-03-01T00:00:00.000Z' },
-      { id: 'case-4', user_id: 'user-4', kyc_type: 'driver', status: 'partial', created_at: '2026-03-02T00:00:00.000Z' }
+      { id: 'case-1', user_id: 'user-1', kyc_type: 'driver', status: 'pending', created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'case-2', user_id: 'user-2', kyc_type: 'transporter', status: 'partial', created_at: '2026-02-01T00:00:00.000Z' },
+      { id: 'case-3', user_id: 'user-3', kyc_type: 'driver', status: 'submitted', created_at: '2026-03-01T00:00:00.000Z' },
+      { id: 'case-4', user_id: 'user-4', kyc_type: 'driver', status: 'verified', created_at: '2026-03-02T00:00:00.000Z' },
+      { id: 'case-5', user_id: 'user-5', kyc_type: 'driver', status: 'rejected', created_at: '2026-03-03T00:00:00.000Z' }
     );
     adminStore.user_profiles.push(
       { user_id: 'user-1', full_name: 'Ravi Kumar', mobile: '+919000000001', city: 'Pune' },
-      { user_id: 'user-2', full_name: 'Asha Devi', mobile: '+919000000002', city: 'Nashik' }
+      { user_id: 'user-3', full_name: 'Asha Devi', mobile: '+919000000002', city: 'Nashik' }
     );
     adminStore.kyc_documents.push({
       case_id: 'case-1',
@@ -354,18 +368,23 @@ describe('GET /api/profile/kyc/queue', () => {
     const res = await request(app).get('/api/profile/kyc/queue');
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(2); // case-3 (pending) and case-4 (partial) excluded — not 'submitted'
-    expect(res.body[0].case.id).toBe('case-2'); // newest first
+    expect(res.body).toHaveLength(3); // case-4 (verified) and case-5 (rejected) excluded
+    expect(res.body[0].case.id).toBe('case-3'); // newest first
     expect(res.body[0].profile).toMatchObject({ full_name: 'Asha Devi' });
-    expect(res.body[0].documents).toEqual([]);
-    expect(res.body[1].case.id).toBe('case-1');
-    expect(res.body[1].profile).toMatchObject({ full_name: 'Ravi Kumar' });
-    expect(res.body[1].documents).toHaveLength(1);
-    expect(res.body[1].documents[0].document_type).toBe('aadhaar');
+    expect(res.body[1].case.id).toBe('case-2');
+    expect(res.body[1].profile).toBeNull(); // no user_profiles row seeded for user-2
+    expect(res.body[2].case.id).toBe('case-1');
+    expect(res.body[2].profile).toMatchObject({ full_name: 'Ravi Kumar' });
+    expect(res.body[2].documents).toHaveLength(1);
+    expect(res.body[2].documents[0].document_type).toBe('aadhaar');
   });
 
-  it('returns an empty array when no cases are submitted', async () => {
+  it('returns an empty array when every case is verified or rejected', async () => {
     adminStore.user_roles.push({ user_id: 'staff-1', role: 'support_manager' });
+    adminStore.kyc_cases.push(
+      { id: 'case-1', user_id: 'user-1', kyc_type: 'driver', status: 'verified', created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'case-2', user_id: 'user-2', kyc_type: 'driver', status: 'rejected', created_at: '2026-01-02T00:00:00.000Z' }
+    );
     const app = buildApp(createMockSupabase(), 'staff-1');
     const res = await request(app).get('/api/profile/kyc/queue');
     expect(res.status).toBe(200);
