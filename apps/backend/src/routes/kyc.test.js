@@ -1,8 +1,35 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
 const mockAdminState = { removeCalls: [], signedUrlCalls: [] };
+
+// Backing store + minimal query builder for the plain `.from(table)...` reads
+// supabaseAdmin does outside of storage — used by requireRole's user_roles
+// check and by GET /queue's cases/profiles/documents lookups below.
+function createAdminStore() {
+  return { user_roles: [], kyc_cases: [], user_profiles: [], kyc_documents: [] };
+}
+let adminStore = createAdminStore();
+
+function makeAdminQueryBuilder(table) {
+  const filters = [];
+  const rows = () => (adminStore[table] || []).filter((r) => filters.every((f) => f(r)));
+  const builder = {
+    select: () => builder,
+    eq: (field, value) => {
+      filters.push((r) => r[field] === value);
+      return builder;
+    },
+    in: (field, values) => Promise.resolve({ data: rows().filter((r) => values.includes(r[field])), error: null }),
+    order: (field, { ascending = true } = {}) => {
+      const sign = ascending ? 1 : -1;
+      const data = [...rows()].sort((a, b) => (a[field] > b[field] ? sign : a[field] < b[field] ? -sign : 0));
+      return Promise.resolve({ data, error: null });
+    }
+  };
+  return builder;
+}
 
 vi.mock('../lib/supabase.js', () => ({
   supabaseAdmin: {
@@ -19,11 +46,16 @@ vi.mock('../lib/supabase.js', () => ({
           }
         };
       }
-    }
+    },
+    from: (table) => makeAdminQueryBuilder(table)
   }
 }));
 
 const { default: kycRouter } = await import('./kyc.js');
+
+beforeEach(() => {
+  adminStore = createAdminStore();
+});
 
 // In-memory stand-in covering the three tables kyc.js touches:
 // user_profiles (read-only here), kyc_cases, kyc_documents.
@@ -288,5 +320,54 @@ describe('POST /api/profile/kyc/submit', () => {
     const app = buildApp(mockSupabase);
     const res = await request(app).post('/api/profile/kyc/submit');
     expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/profile/kyc/queue', () => {
+  it('rejects a non-staff caller with 403', async () => {
+    const app = buildApp(createMockSupabase(), 'user-1');
+    const res = await request(app).get('/api/profile/kyc/queue');
+    expect(res.status).toBe(403);
+  });
+
+  it('returns pending cases newest-first with profile and documents attached', async () => {
+    adminStore.user_roles.push({ user_id: 'staff-1', role: 'admin' });
+    adminStore.kyc_cases.push(
+      { id: 'case-1', user_id: 'user-1', kyc_type: 'driver', status: 'pending', created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'case-2', user_id: 'user-2', kyc_type: 'transporter', status: 'pending', created_at: '2026-02-01T00:00:00.000Z' },
+      { id: 'case-3', user_id: 'user-3', kyc_type: 'driver', status: 'submitted', created_at: '2026-03-01T00:00:00.000Z' }
+    );
+    adminStore.user_profiles.push(
+      { user_id: 'user-1', full_name: 'Ravi Kumar', mobile: '+919000000001', city: 'Pune' },
+      { user_id: 'user-2', full_name: 'Asha Devi', mobile: '+919000000002', city: 'Nashik' }
+    );
+    adminStore.kyc_documents.push({
+      case_id: 'case-1',
+      document_type: 'aadhaar',
+      file_name: 'aadhaar.pdf',
+      mime_type: 'application/pdf',
+      uploaded_at: '2026-01-02T00:00:00.000Z'
+    });
+
+    const app = buildApp(createMockSupabase(), 'staff-1');
+    const res = await request(app).get('/api/profile/kyc/queue');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2); // case-3 excluded — not 'pending'
+    expect(res.body[0].case.id).toBe('case-2'); // newest first
+    expect(res.body[0].profile).toMatchObject({ full_name: 'Asha Devi' });
+    expect(res.body[0].documents).toEqual([]);
+    expect(res.body[1].case.id).toBe('case-1');
+    expect(res.body[1].profile).toMatchObject({ full_name: 'Ravi Kumar' });
+    expect(res.body[1].documents).toHaveLength(1);
+    expect(res.body[1].documents[0].document_type).toBe('aadhaar');
+  });
+
+  it('returns an empty array when no cases are pending', async () => {
+    adminStore.user_roles.push({ user_id: 'staff-1', role: 'support_manager' });
+    const app = buildApp(createMockSupabase(), 'staff-1');
+    const res = await request(app).get('/api/profile/kyc/queue');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
   });
 });

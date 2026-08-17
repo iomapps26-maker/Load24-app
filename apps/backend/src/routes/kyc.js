@@ -297,6 +297,47 @@ router.post('/submit', async (req, res) => {
 // support_manager write access to that table — supabaseAdmin keeps this one
 // code path working for support_executive too.
 
+// GET /api/profile/kyc/queue — staff review queue: every kyc_cases row still
+// at 'pending', with the submitting user's profile and any documents already
+// on file, newest case first. Uses supabaseAdmin for the same reason
+// profileForEmail/documentsForUser in loadBids.js do — the caller is
+// authorized as staff, not as the case owner, so reading across other users'
+// profiles/documents here is deliberate.
+router.get('/queue', requireRole(STAFF_ROLES), async (req, res) => {
+  const { data: cases, error } = await supabaseAdmin
+    .from('kyc_cases')
+    .select('*')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false });
+  if (error) return res.status(400).json({ error: error.message });
+  if (!cases || cases.length === 0) return res.json([]);
+
+  const userIds = cases.map((c) => c.user_id);
+  const caseIds = cases.map((c) => c.id);
+
+  const [{ data: profiles, error: profilesError }, { data: documents, error: documentsError }] = await Promise.all([
+    supabaseAdmin.from('user_profiles').select('user_id, full_name, mobile, city').in('user_id', userIds),
+    supabaseAdmin.from('kyc_documents').select('case_id, document_type, file_name, mime_type, uploaded_at').in('case_id', caseIds)
+  ]);
+  if (profilesError) return res.status(400).json({ error: profilesError.message });
+  if (documentsError) return res.status(400).json({ error: documentsError.message });
+
+  const profileByUserId = new Map((profiles || []).map((p) => [p.user_id, p]));
+  const documentsByCaseId = new Map();
+  for (const doc of documents || []) {
+    if (!documentsByCaseId.has(doc.case_id)) documentsByCaseId.set(doc.case_id, []);
+    documentsByCaseId.get(doc.case_id).push(doc);
+  }
+
+  res.json(
+    cases.map((kycCase) => ({
+      case: kycCase,
+      profile: profileByUserId.get(kycCase.user_id) || null,
+      documents: documentsByCaseId.get(kycCase.id) || []
+    }))
+  );
+});
+
 // POST /api/profile/kyc/:userId/verify — only ever moves a case out of
 // 'submitted', mirroring the pending-only guard on withdrawal approve/reject
 // in wallet.js so a stale review can't land twice.
