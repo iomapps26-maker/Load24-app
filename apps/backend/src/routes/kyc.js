@@ -64,6 +64,31 @@ function locationPayload(kycCase) {
   };
 }
 
+// Writes the recomputed status to both kyc_cases and user_profiles.
+// Deliberately supabaseAdmin, not req.supabase: this used to go through the
+// caller's own RLS-scoped client on the (correct, in theory) assumption that
+// kyc_cases_update_own lets an owner update their own case — but a bare
+// `.update().eq()` with no `.select()` doesn't surface a 0-rows-updated
+// outcome as an error at all, and at least one real case
+// (b55d0a7a-3947-43da-8fb8-1487722dae1b) ended up with user_profiles
+// .kyc_status flipped to 'submitted' while kyc_cases.status silently never
+// moved off 'pending' — the two writes below used to be sequential
+// fire-and-forgets with no error check, so the first one could fail
+// invisibly while the second still succeeded. Using supabaseAdmin removes
+// the ambiguity entirely (same as the staff verify/reject writes further
+// down already do), and checking .error on both means a real failure now
+// surfaces as a 400 instead of a case stuck in the wrong state forever.
+async function syncCaseStatus(caseId, userId, status) {
+  const { error: caseError } = await supabaseAdmin
+    .from('kyc_cases')
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq('id', caseId);
+  if (caseError) throw caseError;
+
+  const { error: profileError } = await supabaseAdmin.from('user_profiles').update({ kyc_status: status }).eq('user_id', userId);
+  if (profileError) throw profileError;
+}
+
 // GET /api/profile/kyc/case — the case, its uploaded documents, and which
 // required document types are still missing.
 router.get('/case', async (req, res) => {
@@ -187,8 +212,11 @@ router.post('/documents', async (req, res) => {
   }
 
   if (caseStatus !== kycCase.status) {
-    await req.supabase.from('kyc_cases').update({ status: caseStatus, updated_at: new Date().toISOString() }).eq('id', kycCase.id);
-    await req.supabase.from('user_profiles').update({ kyc_status: caseStatus }).eq('user_id', req.user.id);
+    try {
+      await syncCaseStatus(kycCase.id, req.user.id, caseStatus);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
   }
 
   res.status(200).json({ document, case_status: caseStatus, missing_documents: missing });
@@ -243,8 +271,11 @@ router.post('/location', async (req, res) => {
   }
 
   if (caseStatus !== updatedCase.status) {
-    await req.supabase.from('kyc_cases').update({ status: caseStatus, updated_at: new Date().toISOString() }).eq('id', kycCase.id);
-    await req.supabase.from('user_profiles').update({ kyc_status: caseStatus }).eq('user_id', req.user.id);
+    try {
+      await syncCaseStatus(kycCase.id, req.user.id, caseStatus);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
   }
 
   res.status(200).json({ location: locationPayload(updatedCase), case_status: caseStatus, missing_documents: missing });

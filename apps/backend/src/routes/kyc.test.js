@@ -32,6 +32,29 @@ function makeAdminQueryBuilder(table) {
       sort = { field, sign: ascending ? 1 : -1 };
       return builder;
     },
+    update(patch) {
+      const updateFilters = [];
+      const updateBuilder = {
+        eq: (field, value) => {
+          updateFilters.push((r) => r[field] === value);
+          return updateBuilder;
+        },
+        select: () => ({
+          maybeSingle: () => {
+            const match = (adminStore[table] || []).find((r) => updateFilters.every((f) => f(r)));
+            if (!match) return Promise.resolve({ data: null, error: null });
+            Object.assign(match, patch);
+            return Promise.resolve({ data: match, error: null });
+          }
+        }),
+        then: (resolve) => {
+          const match = (adminStore[table] || []).find((r) => updateFilters.every((f) => f(r)));
+          if (match) Object.assign(match, patch);
+          resolve({ data: match ? [match] : [], error: null });
+        }
+      };
+      return updateBuilder;
+    },
     then: (resolve) => {
       let data = (adminStore[table] || []).filter((r) => filters.every((f) => f(r)));
       if (sort) {
@@ -279,6 +302,12 @@ describe('POST /api/profile/kyc/documents', () => {
   });
 
   it('auto-submits once every required document is uploaded', async () => {
+    // The case lives in mockSupabase._state (getOrCreateCase reads/creates
+    // it via req.supabase), but the status-sync write goes through
+    // supabaseAdmin (adminStore) — see syncCaseStatus's comment for why.
+    // Seed a matching user_profiles row there so that write has something to
+    // land on, and assert against adminStore, not mockSupabase._state.
+    adminStore.user_profiles.push({ user_id: 'user-1', kyc_status: 'pending' });
     const mockSupabase = createMockSupabase({ profile: { user_id: 'user-1', user_type: 'driver' } });
     const app = buildApp(mockSupabase);
 
@@ -292,7 +321,7 @@ describe('POST /api/profile/kyc/documents', () => {
     expect(res.status).toBe(200);
     expect(res.body.case_status).toBe('submitted');
     expect(res.body.missing_documents).toEqual([]);
-    expect(mockSupabase._state.profile.kyc_status).toBe('submitted');
+    expect(adminStore.user_profiles.find((p) => p.user_id === 'user-1').kyc_status).toBe('submitted');
   });
 });
 
