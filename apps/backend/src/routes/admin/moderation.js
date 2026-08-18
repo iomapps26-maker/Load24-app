@@ -13,6 +13,68 @@ const router = Router();
 const LOAD_STATUSES = ['active', 'matched', 'in_transit', 'completed', 'cancelled', 'expired', 'flagged', 'removed'];
 const TRUCK_STATUSES = ['active', 'inactive', 'flagged', 'removed'];
 
+// GET /api/admin/moderation/loads?status=&page=&limit= — every load, any
+// owner, any status — unlike GET /api/loads (only status='active' or, with
+// ?mine=true, the caller's own), which can't back a moderation view of
+// other users' loads at all. Joined with the poster's profile so the table
+// doesn't just show a bare email.
+router.get('/loads', async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  let query = supabaseAdmin.from('loads').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(from, to);
+  if (req.query.status) query = query.eq('status', req.query.status);
+
+  const { data: loads, error, count } = await query;
+  if (error) return res.status(400).json({ error: error.message });
+
+  const emails = [...new Set((loads || []).map((l) => l.posted_by))];
+  const { data: profiles, error: profilesError } = emails.length
+    ? await supabaseAdmin.from('user_profiles').select('user_email, full_name, mobile').in('user_email', emails)
+    : { data: [], error: null };
+  if (profilesError) return res.status(400).json({ error: profilesError.message });
+
+  const profileByEmail = new Map((profiles || []).map((p) => [p.user_email, p]));
+  res.json({
+    loads: (loads || []).map((l) => ({ ...l, poster: profileByEmail.get(l.posted_by) || null })),
+    page,
+    limit,
+    total: count ?? 0
+  });
+});
+
+// GET /api/admin/moderation/trucks?status=&page=&limit= — every truck, any
+// owner, any status — unlike GET /api/trucks (hard-scoped to
+// eq('owner_id', req.user.id)), which is the caller's own trucks only.
+router.get('/trucks', async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  let query = supabaseAdmin.from('trucks').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(from, to);
+  if (req.query.status) query = query.eq('status', req.query.status);
+
+  const { data: trucks, error, count } = await query;
+  if (error) return res.status(400).json({ error: error.message });
+
+  const ownerIds = [...new Set((trucks || []).map((t) => t.owner_id))];
+  const { data: profiles, error: profilesError } = ownerIds.length
+    ? await supabaseAdmin.from('user_profiles').select('user_id, full_name, mobile').in('user_id', ownerIds)
+    : { data: [], error: null };
+  if (profilesError) return res.status(400).json({ error: profilesError.message });
+
+  const profileByUserId = new Map((profiles || []).map((p) => [p.user_id, p]));
+  res.json({
+    trucks: (trucks || []).map((t) => ({ ...t, owner: profileByUserId.get(t.owner_id) || null })),
+    page,
+    limit,
+    total: count ?? 0
+  });
+});
+
 // PATCH /api/admin/moderation/loads/:id { status }
 router.patch('/loads/:id', async (req, res) => {
   const { status } = req.body;
