@@ -32,6 +32,9 @@ import adminRiskRouter from './routes/admin/risk.js';
 import adminHierarchyRouter from './routes/admin/hierarchy.js';
 import adminCrmRouter from './routes/admin/crm.js';
 import adminIncentivesRouter from './routes/admin/incentives.js';
+import adminContentBlocksRouter, { appVersionsRouter as adminAppVersionsRouter, appConfigHandler } from './routes/admin/content.js';
+import adminMasterDataRouter, { publicMasterDataRouter } from './routes/admin/masterData.js';
+import adminAuditLogRouter from './routes/admin/auditLog.js';
 import tripLocationPingsRouter from './routes/tripLocationPings.js';
 import { generateMatchSuggestions } from './lib/matchSuggestions.js';
 import { evaluateIncentiveRules } from './lib/incentiveEvaluation.js';
@@ -66,6 +69,14 @@ app.use('/api/auth/whatsapp', whatsappAuthRouter);
 // Same reasoning as WhatsApp OTP above: Razorpay calls this directly with no
 // user session, authenticated only by its HMAC signature.
 app.post('/api/wallet/razorpay-webhook', razorpayWebhookHandler);
+
+// Public, no auth — both called by the mobile app before/without a session
+// (app-config on launch, master-data to populate form dropdowns like truck
+// registration) and, for master-data, by the admin site too. See content.js's
+// appConfigHandler / masterData.js's publicMasterDataRouter for why these go
+// through supabaseAdmin rather than req.supabase.
+app.get('/api/app-config', appConfigHandler);
+app.use('/api/master-data', publicMasterDataRouter);
 
 // Onboarding-safe routes: reachable with just a valid session, before the
 // user has recorded the consents requireConsents checks for below. Profile
@@ -113,6 +124,10 @@ app.use('/api/admin/risk', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminRis
 app.use('/api/admin/hierarchy', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminHierarchyRouter);
 app.use('/api/admin/crm', requireAuth, requireRole(CRM_STAFF_ROLES), adminCrmRouter);
 app.use('/api/admin/incentives', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminIncentivesRouter);
+app.use('/api/admin/content-blocks', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminContentBlocksRouter);
+app.use('/api/admin/app-versions', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminAppVersionsRouter);
+app.use('/api/admin/master-data', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminMasterDataRouter);
+app.use('/api/admin/audit-log', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminAuditLogRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);

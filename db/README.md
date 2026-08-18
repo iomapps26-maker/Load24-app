@@ -38,6 +38,23 @@ SQL Editor (no migration runner wired up yet).
   `POST /api/truck-availability` to notify nearby shippers/transporters/
   brokers when a truck is posted as available. Large file (~800KB) — it's
   almost entirely the bulk `insert` of centroid rows.
+- `migrations/039_add_audit_log.sql` — `audit_log`, written exclusively by
+  `logAction()` (`apps/backend/src/lib/auditLog.js`), called from inside
+  `requireRole()` (`apps/backend/src/middleware/requireRole.js`) on every
+  staff-gated mutation rather than from each route by hand. Listed via
+  `GET /api/admin/audit-log` (`routes/admin/auditLog.js`).
+- `migrations/040_add_content_blocks_and_app_versions.sql` — `content_blocks`
+  (staff-managed banners/FAQs/config, CRUD in `routes/admin/content.js`) and
+  `app_versions` (min/latest supported version per platform). Both are read
+  by the mobile app on launch via the single public
+  `GET /api/app-config` endpoint — no auth, same as the WhatsApp OTP routes.
+- `migrations/041_add_master_data.sql` — `master_data`: staff-managed values
+  for closed lists that used to be (or would otherwise become) hardcoded
+  arrays in route code — seeded with the `TRUCK_TYPES`/`BODY_TYPES` values
+  that were previously hardcoded in `trucks.js` (`fuel_type`/`axle_type`
+  stayed hardcoded; out of scope for this pass). CRUD under
+  `/api/admin/master-data`; public `GET /api/master-data/:category` is what
+  the mobile app and admin site both read instead of a constant.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.
