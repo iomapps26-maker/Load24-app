@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { requireAuth } from './middleware/auth.js';
 import { requireConsents } from './middleware/requireConsents.js';
+import { requireRole } from './middleware/requireRole.js';
 import { apiRateLimiter } from './middleware/rateLimit.js';
 import profileRouter from './routes/profile.js';
 import kycRouter from './routes/kyc.js';
@@ -19,6 +20,16 @@ import reviewsRouter from './routes/reviews.js';
 import supportTicketsRouter from './routes/supportTickets.js';
 import walletRouter, { razorpayWebhookHandler } from './routes/wallet.js';
 import notificationsRouter from './routes/notifications.js';
+import adminDashboardRouter from './routes/admin/dashboard.js';
+import adminUsersRouter from './routes/admin/users.js';
+import adminSupportTicketsRouter from './routes/admin/supportTickets.js';
+
+// Staff roles for the whole /api/admin/* namespace below — matches
+// kyc.js's/trucks.js's STAFF_ROLES (not wallet.js's, which also includes
+// accounts_executive/accounts_manager for withdrawal payouts specifically;
+// dashboard/user-management/support-ticket triage aren't an accounts
+// concern).
+const ADMIN_STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
 
 const app = express();
 app.use(cors());
@@ -61,6 +72,15 @@ app.use('/api/reviews', requireAuth, requireConsents, reviewsRouter);
 app.use('/api/support-tickets', requireAuth, requireConsents, supportTicketsRouter);
 app.use('/api/wallet', requireAuth, requireConsents, walletRouter);
 app.use('/api/notifications', requireAuth, requireConsents, notificationsRouter);
+
+// /api/admin/* — role-checked once at the router level, unlike kyc.js's/
+// wallet.js's per-route requireRole(STAFF_ROLES) calls, since every route
+// in these files is staff-only with no user-facing counterpart to carve out
+// (no requireConsents either — staff accounts have no reason to have
+// accepted the shipper/driver terms flow).
+app.use('/api/admin/dashboard', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminDashboardRouter);
+app.use('/api/admin/users', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminUsersRouter);
+app.use('/api/admin/support-tickets', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminSupportTicketsRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);
