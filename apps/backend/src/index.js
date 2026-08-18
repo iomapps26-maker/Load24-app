@@ -23,6 +23,10 @@ import notificationsRouter from './routes/notifications.js';
 import adminDashboardRouter from './routes/admin/dashboard.js';
 import adminUsersRouter from './routes/admin/users.js';
 import adminSupportTicketsRouter from './routes/admin/supportTickets.js';
+import adminModerationRouter from './routes/admin/moderation.js';
+import adminTripsRouter from './routes/admin/trips.js';
+import adminNotificationTemplatesRouter from './routes/admin/notificationTemplates.js';
+import tripLocationPingsRouter from './routes/tripLocationPings.js';
 
 // Staff roles for the whole /api/admin/* namespace below — matches
 // kyc.js's/trucks.js's STAFF_ROLES (not wallet.js's, which also includes
@@ -73,6 +77,14 @@ app.use('/api/support-tickets', requireAuth, requireConsents, supportTicketsRout
 app.use('/api/wallet', requireAuth, requireConsents, walletRouter);
 app.use('/api/notifications', requireAuth, requireConsents, notificationsRouter);
 
+// The mobile app posts here repeatedly during an active trip. requireAuth
+// only, deliberately — not requireConsents (a party already has an active
+// matched/in_transit trip by the time this is ever called, which itself
+// required consents to reach) and obviously not admin-gated. Authorization
+// (caller must be a party to the specific trip) is enforced in the route
+// itself — see routes/tripLocationPings.js for why that can't be RLS.
+app.use('/api/trip-location-pings', requireAuth, tripLocationPingsRouter);
+
 // /api/admin/* — role-checked once at the router level, unlike kyc.js's/
 // wallet.js's per-route requireRole(STAFF_ROLES) calls, since every route
 // in these files is staff-only with no user-facing counterpart to carve out
@@ -81,6 +93,9 @@ app.use('/api/notifications', requireAuth, requireConsents, notificationsRouter)
 app.use('/api/admin/dashboard', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminDashboardRouter);
 app.use('/api/admin/users', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminUsersRouter);
 app.use('/api/admin/support-tickets', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminSupportTicketsRouter);
+app.use('/api/admin/moderation', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminModerationRouter);
+app.use('/api/admin/trips', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminTripsRouter);
+app.use('/api/admin/notification-templates', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminNotificationTemplatesRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);
