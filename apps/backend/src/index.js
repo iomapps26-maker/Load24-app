@@ -31,8 +31,10 @@ import adminCommissionRulesRouter from './routes/admin/commissionRules.js';
 import adminRiskRouter from './routes/admin/risk.js';
 import adminHierarchyRouter from './routes/admin/hierarchy.js';
 import adminCrmRouter from './routes/admin/crm.js';
+import adminIncentivesRouter from './routes/admin/incentives.js';
 import tripLocationPingsRouter from './routes/tripLocationPings.js';
 import { generateMatchSuggestions } from './lib/matchSuggestions.js';
+import { evaluateIncentiveRules } from './lib/incentiveEvaluation.js';
 
 // Staff roles for the whole /api/admin/* namespace below — matches
 // kyc.js's/trucks.js's STAFF_ROLES (not wallet.js's, which also includes
@@ -110,6 +112,7 @@ app.use('/api/admin/commission-rules', requireAuth, requireRole(ADMIN_STAFF_ROLE
 app.use('/api/admin/risk', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminRiskRouter);
 app.use('/api/admin/hierarchy', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminHierarchyRouter);
 app.use('/api/admin/crm', requireAuth, requireRole(CRM_STAFF_ROLES), adminCrmRouter);
+app.use('/api/admin/incentives', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminIncentivesRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);
@@ -143,3 +146,17 @@ generateMatchSuggestions().catch((err) => console.error('[crm] generateMatchSugg
 setInterval(() => {
   generateMatchSuggestions().catch((err) => console.error('[crm] generateMatchSuggestions failed', err));
 }, 60 * 60 * 1000);
+
+// Same in-process-interval mechanism as generateMatchSuggestions above, but
+// deliberately no startup run: this one moves real money
+// (evaluateIncentiveRules pays out via applyWalletAdjustment), and while
+// its de-dup check (lib/incentiveEvaluation.js's payoutNotes) makes running
+// it redundantly harmless, "every deploy immediately triggers a payout
+// evaluation pass" isn't a surprise worth risking for a job that isn't
+// time-sensitive — trips_completed is a lifetime milestone, not something
+// that needs checking within seconds of a threshold being crossed. Every 6
+// hours; POST /api/admin/incentives/evaluate (incentives.js) runs it
+// on demand.
+setInterval(() => {
+  evaluateIncentiveRules().catch((err) => console.error('[incentives] evaluateIncentiveRules failed', err));
+}, 6 * 60 * 60 * 1000);
