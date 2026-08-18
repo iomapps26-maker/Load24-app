@@ -10,9 +10,27 @@ const mockAdminState = { removeCalls: [], signedUrlCalls: [] };
 // at every step so any chain order the real code uses resolves correctly
 // whether or not .order() is called — same approach as kyc.test.js's.
 function createAdminStore() {
-  return { user_roles: [], trucks: [], user_profiles: [], truck_documents: [], notifications: [] };
+  return { user_roles: [], trucks: [], user_profiles: [], truck_documents: [], notifications: [], master_data: [] };
 }
 let adminStore = createAdminStore();
+
+// truck_type/body_type validation now round-trips through master_data (see
+// trucks.js's isActiveMasterDataValue) instead of a hardcoded array — seed
+// the same values the old TRUCK_TYPES/BODY_TYPES arrays held so every
+// existing test below still exercises the same valid/invalid truck_type
+// and body_type values it always did.
+function seedMasterData() {
+  const truckTypes = [
+    'mahindra_pickup', 'tata_407', 'tata_ace', 'chota_hathi', 'four_vehicle_loader',
+    'eicher_truck', 'ashok_leyland', 'lcv', 'lgv',
+    'trailer', 'tanker', 'tipper', 'flatbed', 'car_carrier', 'other'
+  ];
+  const bodyTypes = ['open', 'closed', 'container', 'other'];
+  adminStore.master_data.push(
+    ...truckTypes.map((value) => ({ category: 'truck_type', value, label: value, is_active: true })),
+    ...bodyTypes.map((value) => ({ category: 'body_type', value, label: value, is_active: true }))
+  );
+}
 
 function makeAdminQueryBuilder(table) {
   const filters = [];
@@ -30,6 +48,13 @@ function makeAdminQueryBuilder(table) {
     order: (field, { ascending = true } = {}) => {
       sort = { field, sign: ascending ? 1 : -1 };
       return builder;
+    },
+    // Used by isActiveMasterDataValue's plain select().eq()...eq().maybeSingle()
+    // chain — everything else in this file's admin reads either goes through
+    // .then() directly or through update()'s own maybeSingle() below.
+    maybeSingle: () => {
+      const data = (adminStore[table] || []).filter((r) => filters.every((f) => f(r)));
+      return Promise.resolve({ data: data[0] ?? null, error: null });
     },
     insert(row) {
       (adminStore[table] || (adminStore[table] = [])).push(row);
@@ -93,6 +118,7 @@ const { default: trucksRouter } = await import('./trucks.js');
 
 beforeEach(() => {
   adminStore = createAdminStore();
+  seedMasterData();
 });
 
 // In-memory stand-in for req.supabase.from('user_profiles'|'trucks'|'truck_documents')...
@@ -237,8 +263,25 @@ describe('POST /api/trucks', () => {
   });
 
   it('rejects an invalid truck_type', async () => {
+    // Regression test for the TRUCK_TYPES-hardcoded-array -> master_data
+    // move (041_add_master_data.sql): validateEnums now round-trips through
+    // isActiveMasterDataValue instead of an Array#includes check, and
+    // 'spaceship' still isn't a seeded value (see seedMasterData above), so
+    // this must still 400 the same way it always did.
     const app = buildApp(createMockSupabase());
     const res = await request(app).post('/api/trucks').send({ ...validBody, truck_type: 'spaceship' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a truck_type that exists in master_data but has been deactivated', async () => {
+    // Behavior only possible now that this is DB-backed: staff deactivating
+    // a truck_type via PATCH /api/admin/master-data/:id (masterData.js)
+    // must make it stop validating on new trucks, same as if it had never
+    // been seeded at all.
+    adminStore.master_data = adminStore.master_data.filter((r) => !(r.category === 'truck_type' && r.value === 'tata_407'));
+    adminStore.master_data.push({ category: 'truck_type', value: 'tata_407', label: 'Tata 407', is_active: false });
+    const app = buildApp(createMockSupabase());
+    const res = await request(app).post('/api/trucks').send(validBody);
     expect(res.status).toBe(400);
   });
 

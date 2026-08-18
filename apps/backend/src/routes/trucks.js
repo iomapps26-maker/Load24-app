@@ -13,14 +13,13 @@ const BUCKET = 'truck-documents';
 // working quickly.
 const DOC_VIEW_URL_TTL_SECONDS = 300;
 
-// 'other' lets the caller escape the closed list — the free-text detail
+// truck_type/body_type used to be hardcoded here (TRUCK_TYPES/BODY_TYPES)
+// but now live in master_data (category 'truck_type'/'body_type' — see
+// 041_add_master_data.sql, seeded with exactly the values that used to be
+// in these arrays, and admin/masterData.js for the CRUD that manages them
+// going forward) so staff can add a new truck type without a code deploy.
+// 'other' lets the caller escape the list either way — the free-text detail
 // goes in truck_type_other / body_type_other (see 022_add_truck_type_other.sql).
-const TRUCK_TYPES = [
-  'mahindra_pickup', 'tata_407', 'tata_ace', 'chota_hathi', 'four_vehicle_loader',
-  'eicher_truck', 'ashok_leyland', 'lcv', 'lgv',
-  'trailer', 'tanker', 'tipper', 'flatbed', 'car_carrier', 'other'
-];
-const BODY_TYPES = ['open', 'closed', 'container', 'other'];
 const FUEL_TYPES = ['diesel', 'cng', 'electric', 'other'];
 const AXLE_TYPES = ['single_axle', 'multi_axle'];
 
@@ -39,12 +38,36 @@ async function callerHasTruckRole(req) {
   return !!data && TRUCK_ROLES.includes(data.user_type);
 }
 
+// True if `value` is an active master_data row under `category` — always
+// supabaseAdmin, not req.supabase, same as the rest of this file's
+// staff/cross-cutting reads: an inactive (deactivated by staff) row must
+// fail validation exactly like one that was never seeded, so a truck_type
+// retired via PATCH /api/admin/master-data/:id stops being acceptable on
+// new/edited trucks without a separate code path.
+async function isActiveMasterDataValue(category, value) {
+  const { data, error } = await supabaseAdmin
+    .from('master_data')
+    .select('value')
+    .eq('category', category)
+    .eq('value', value)
+    .eq('is_active', true)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
+}
+
 // Validates the fixed-choice fields when present — all are optional on
 // write (the form fills in stages) but must be one of the known values if
-// sent at all.
-function validateEnums(body) {
-  if (body.truck_type && !TRUCK_TYPES.includes(body.truck_type)) return `Invalid truck_type: ${body.truck_type}`;
-  if (body.body_type && !BODY_TYPES.includes(body.body_type)) return `Invalid body_type: ${body.body_type}`;
+// sent at all. truck_type/body_type round-trip through master_data (see the
+// comment above FUEL_TYPES); fuel_type/axle_type are still the small fixed
+// arrays above them since those weren't in scope for the master_data move.
+async function validateEnums(body) {
+  const [truckTypeOk, bodyTypeOk] = await Promise.all([
+    body.truck_type ? isActiveMasterDataValue('truck_type', body.truck_type) : true,
+    body.body_type ? isActiveMasterDataValue('body_type', body.body_type) : true
+  ]);
+  if (body.truck_type && !truckTypeOk) return `Invalid truck_type: ${body.truck_type}`;
+  if (body.body_type && !bodyTypeOk) return `Invalid body_type: ${body.body_type}`;
   if (body.fuel_type && !FUEL_TYPES.includes(body.fuel_type)) return `Invalid fuel_type: ${body.fuel_type}`;
   if (body.axle_type && !AXLE_TYPES.includes(body.axle_type)) return `Invalid axle_type: ${body.axle_type}`;
   return null;
@@ -170,7 +193,12 @@ router.post('/', async (req, res) => {
   if (!registration_number || !truck_type) {
     return res.status(400).json({ error: 'registration_number and truck_type are required' });
   }
-  const enumError = validateEnums(req.body);
+  let enumError;
+  try {
+    enumError = await validateEnums(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
   if (enumError) return res.status(400).json({ error: enumError });
 
   const { data, error } = await req.supabase
@@ -192,7 +220,12 @@ router.post('/', async (req, res) => {
 // resets `verified` to false — same "re-verify after any change" rule as
 // bank_details.verified.
 router.patch('/:id', async (req, res) => {
-  const enumError = validateEnums(req.body);
+  let enumError;
+  try {
+    enumError = await validateEnums(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
   if (enumError) return res.status(400).json({ error: enumError });
 
   const { data, error } = await req.supabase
