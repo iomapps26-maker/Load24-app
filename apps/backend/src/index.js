@@ -29,6 +29,7 @@ import adminNotificationTemplatesRouter from './routes/admin/notificationTemplat
 import adminNotificationsRouter from './routes/admin/notifications.js';
 import adminCommissionRulesRouter from './routes/admin/commissionRules.js';
 import adminRiskRouter from './routes/admin/risk.js';
+import adminHierarchyRouter from './routes/admin/hierarchy.js';
 import tripLocationPingsRouter from './routes/tripLocationPings.js';
 
 // Staff roles for the whole /api/admin/* namespace below — matches
@@ -102,6 +103,7 @@ app.use('/api/admin/notification-templates', requireAuth, requireRole(ADMIN_STAF
 app.use('/api/admin/notifications', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminNotificationsRouter);
 app.use('/api/admin/commission-rules', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminCommissionRulesRouter);
 app.use('/api/admin/risk', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminRiskRouter);
+app.use('/api/admin/hierarchy', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminHierarchyRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);
