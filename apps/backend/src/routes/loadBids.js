@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { notifyEmail } from '../lib/notify.js';
+import { applyWalletAdjustment } from '../lib/wallet.js';
 
 const KYC_BUCKET = 'kyc-documents';
 const TRIP_DOC_URL_TTL_SECONDS = 300;
@@ -59,6 +60,68 @@ async function documentsForUser(userId) {
       return { document_type, file_name, mime_type, url: data?.signedUrl ?? null };
     })
   );
+}
+
+// Picks the highest-specificity active commission_rules row matching this
+// trip's material_type/required_truck_type — both fields are nullable
+// wildcards on a rule, so one naming neither, either, or both dimensions
+// can all match the same trip; a rule with both set wins over one with
+// only one set, which wins over a fully generic rule, ties broken by
+// whichever matching rule was created most recently. Fetches the whole
+// table (small, staff-managed via admin/commissionRules.js) rather than
+// building a filter string — same reasoning loads.js's location search
+// strips commas/parens for: a user-typed material_type could contain
+// characters that break or hijack a PostgREST .or() filter expression, and
+// this table is tiny enough that filtering in JS just avoids the problem
+// outright instead of sanitizing around it.
+async function findMatchingCommissionRule(materialType, vehicleType) {
+  const { data: rules, error } = await supabaseAdmin.from('commission_rules').select('*').eq('is_active', true);
+  if (error) throw error;
+
+  const candidates = (rules || []).filter(
+    (r) => (r.material_type === null || r.material_type === materialType) && (r.vehicle_type === null || r.vehicle_type === vehicleType)
+  );
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => {
+    const specificity = (r) => (r.material_type !== null ? 1 : 0) + (r.vehicle_type !== null ? 1 : 0);
+    const diff = specificity(b) - specificity(a);
+    if (diff !== 0) return diff;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+  return candidates[0];
+}
+
+// Charges the accepter (the party who earns the trip's bid amount) a
+// commission on trip completion, if an active rule matches — reuses the
+// exact ledger-write POST /api/wallet/adjust uses for a staff-typed manual
+// adjustment (applyWalletAdjustment, lib/wallet.js) rather than duplicating
+// it. Never throws: a rule-lookup or ledger-write failure here shouldn't
+// stop a trip from being marked delivered, the same "best-effort side
+// effect" treatment loads.js's notifyNearbyTruckOwners gives its own
+// fan-out. A trip with no matching active rule is a normal, silent no-op —
+// not an error.
+async function applyCommissionForCompletedTrip(load, bid) {
+  try {
+    const rule = await findMatchingCommissionRule(load.material_type, load.required_truck_type);
+    if (!rule) return;
+
+    const accepterProfile = await profileForEmail(bid.bid_by_email);
+    if (!accepterProfile) return;
+
+    const amount = Number(bid.amount) * (Number(rule.rate_percent) / 100);
+    if (!(amount > 0)) return;
+
+    await applyWalletAdjustment({
+      user_id: accepterProfile.user_id,
+      type: 'commission',
+      amount,
+      reference_load_id: load.id,
+      notes: `Auto-applied ${rule.rate_percent}% commission rule (${rule.id}) on trip completion`
+    });
+  } catch (err) {
+    console.error('[load-bids] commission auto-apply failed', err);
+  }
 }
 
 // GET /api/load-bids/mine — bids the current user has placed, with the load
@@ -268,6 +331,8 @@ router.post('/load/:load_id/deliver', async (req, res) => {
     .select()
     .single();
   if (error) return dbError(res, error, 'Could not mark this trip delivered');
+
+  await applyCommissionForCompletedTrip(load, bid);
 
   await notifyEmail(isPoster ? bid.bid_by_email : load.posted_by, {
     type: 'trip_delivered',

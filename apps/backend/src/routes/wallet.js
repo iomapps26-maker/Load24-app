@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { createRazorpayOrder, verifySignature } from '../lib/razorpay.js';
-import { generateTransactionId, getOrCreateWallet, getAvailableBalance } from '../lib/wallet.js';
+import { generateTransactionId, getOrCreateWallet, getAvailableBalance, applyWalletAdjustment } from '../lib/wallet.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { notifyUser } from '../lib/notify.js';
 
@@ -260,9 +260,14 @@ router.post('/withdrawals/:id/pay', requireRole(STAFF_ROLES), async (req, res) =
 });
 
 // POST /api/wallet/adjust — staff-applied ledger entries that have no
-// automated trigger yet (commission, service charge, manual credit/debit,
-// refund, security hold/release). Loads has no accept/complete workflow in
-// this codebase today, so these stay manual until that exists.
+// automated trigger for most types (service charge, manual credit/debit,
+// refund, security hold/release — these stay manual). 'commission' is the
+// exception since loadBids.js's deliver route started auto-applying a
+// matching commission_rules row on trip completion — this endpoint is
+// still here as a manual override/backstop for cases with no matching rule
+// or an ad-hoc adjustment. Shares its ledger-write with that automatic path
+// via applyWalletAdjustment (lib/wallet.js) rather than each inserting its
+// own wallet_transactions row.
 router.post('/adjust', requireRole(STAFF_ROLES), async (req, res) => {
   const { user_id, type, amount, notes, reference_load_id } = req.body;
   const parsedAmount = Number(amount);
@@ -272,24 +277,7 @@ router.post('/adjust', requireRole(STAFF_ROLES), async (req, res) => {
   }
 
   try {
-    const wallet = await getOrCreateWallet(user_id);
-    const transaction_id = generateTransactionId();
-    const { data, error } = await supabaseAdmin
-      .from('wallet_transactions')
-      .insert({
-        transaction_id,
-        wallet_id: wallet.id,
-        user_id,
-        type,
-        amount: parsedAmount,
-        status: 'completed',
-        reference_load_id: reference_load_id || null,
-        notes: notes || null
-      })
-      .select()
-      .single();
-    if (error) throw error;
-
+    const data = await applyWalletAdjustment({ user_id, type, amount: parsedAmount, notes, reference_load_id });
     res.status(201).json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });

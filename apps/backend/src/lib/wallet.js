@@ -26,6 +26,33 @@ export async function getOrCreateWallet(userId) {
   return created;
 }
 
+// Shared ledger-write: one completed wallet_transactions row for a given
+// user/type/amount. Used by both routes/wallet.js's POST /adjust (a staff
+// member typing an amount in by hand) and automatic adjustments applied
+// elsewhere (loadBids.js auto-applies a matching commission_rules row on
+// trip completion) — one insert shape for "record a completed adjustment",
+// so neither call site duplicates the other's column list.
+export async function applyWalletAdjustment({ user_id, type, amount, notes, reference_load_id }) {
+  const wallet = await getOrCreateWallet(user_id);
+  const transaction_id = generateTransactionId();
+  const { data, error } = await supabaseAdmin
+    .from('wallet_transactions')
+    .insert({
+      transaction_id,
+      wallet_id: wallet.id,
+      user_id,
+      type,
+      amount,
+      status: 'completed',
+      reference_load_id: reference_load_id || null,
+      notes: notes || null
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 // Requested-but-not-yet-paid withdrawals are held out of the spendable
 // balance so a user can't request the same money twice while staff review
 // is still pending — wallets.balance itself only moves once a withdrawal
