@@ -30,7 +30,9 @@ import adminNotificationsRouter from './routes/admin/notifications.js';
 import adminCommissionRulesRouter from './routes/admin/commissionRules.js';
 import adminRiskRouter from './routes/admin/risk.js';
 import adminHierarchyRouter from './routes/admin/hierarchy.js';
+import adminCrmRouter from './routes/admin/crm.js';
 import tripLocationPingsRouter from './routes/tripLocationPings.js';
+import { generateMatchSuggestions } from './lib/matchSuggestions.js';
 
 // Staff roles for the whole /api/admin/* namespace below — matches
 // kyc.js's/trucks.js's STAFF_ROLES (not wallet.js's, which also includes
@@ -38,6 +40,9 @@ import tripLocationPingsRouter from './routes/tripLocationPings.js';
 // dashboard/user-management/support-ticket triage aren't an accounts
 // concern).
 const ADMIN_STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
+// crm.js's own role set — CRM leads are a sales concern, not the general
+// admin/support one above.
+const CRM_STAFF_ROLES = ['admin', 'sales_executive', 'sales_team_lead', 'sales_manager'];
 
 const app = express();
 app.use(cors());
@@ -104,6 +109,7 @@ app.use('/api/admin/notifications', requireAuth, requireRole(ADMIN_STAFF_ROLES),
 app.use('/api/admin/commission-rules', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminCommissionRulesRouter);
 app.use('/api/admin/risk', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminRiskRouter);
 app.use('/api/admin/hierarchy', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminHierarchyRouter);
+app.use('/api/admin/crm', requireAuth, requireRole(CRM_STAFF_ROLES), adminCrmRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);
@@ -123,3 +129,17 @@ if (selfPingUrl) {
     fetch(`${selfPingUrl}/health`).catch(() => {});
   }, 10 * 60 * 1000);
 }
+
+// "Simple scheduled job" per crm.js's spec: an in-process setInterval, same
+// mechanism as the self-ping above, rather than standing up separate
+// scheduler infrastructure (no cron/queue exists anywhere in this repo).
+// Runs once at startup so suggestions aren't empty for the first hour, then
+// hourly — POST /api/admin/crm/generate (crm.js) runs the same function on
+// demand. Known limitation of the in-process approach: if this service is
+// ever scaled to multiple instances, each would run this redundantly (the
+// upsert makes that harmless, just wasteful) — fine at this project's
+// current single-instance scale, not fine to leave unexamined if that changes.
+generateMatchSuggestions().catch((err) => console.error('[crm] generateMatchSuggestions failed (startup run)', err));
+setInterval(() => {
+  generateMatchSuggestions().catch((err) => console.error('[crm] generateMatchSuggestions failed', err));
+}, 60 * 60 * 1000);
