@@ -139,7 +139,12 @@ export const api = {
       return request(`/api/loads${qs ? `?${qs}` : ''}`);
     },
     mine: () => request('/api/loads?mine=true'),
-    create: (body) => request('/api/loads', { method: 'POST', body })
+    create: (body) => request('/api/loads', { method: 'POST', body }),
+    // Used by PlaceBidScreen when it's opened from a WhatsApp "View Load"/
+    // "Bid" link (loads/:loadId — see App.jsx's deep-link handling), which
+    // only carries an id, unlike LoadCard.jsx's in-app navigation that
+    // already has the whole load object on hand.
+    get: (id) => request(`/api/loads/${id}`)
   },
   loadLikes: {
     mine: () => request('/api/load-likes/mine'),

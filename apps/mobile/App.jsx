@@ -1,6 +1,6 @@
 import './global.css';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, View } from 'react-native';
+import { ActivityIndicator, AppState, Linking, View } from 'react-native';
 import { SystemBars } from 'react-native-edge-to-edge';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -15,6 +15,7 @@ import { queryClient } from './lib/queryClient';
 import { api } from './lib/api';
 import { navigationRef, navigate } from './lib/navigationRef';
 import { consumePostLoginIntent } from './lib/postLoginIntent';
+import { setPendingLoadLink, consumePendingLoadLink } from './lib/pendingLoadLink';
 import LandingScreen from './screens/LandingScreen';
 import AuthChoiceScreen from './screens/AuthChoiceScreen';
 import ProfileSetupScreen from './screens/ProfileSetupScreen';
@@ -149,6 +150,64 @@ function AuthGate() {
       if (intent === 'truck' && ['driver', 'vehicle_owner'].includes(profile.user_type)) {
         navigate('TruckDetails');
       }
+    }
+  }, [isAuthenticated, profile, needsTerms]);
+
+  // Deep-link entry point: WhatsApp's "View Load"/"Bid" buttons open
+  // https://load24.in/loads/:id (an Android App Link — see
+  // AndroidManifest.xml's autoVerify intent-filter) or, before that domain
+  // is verified, load24://loads/:id (the same custom scheme already used
+  // for the OAuth callback in AuthContext.js, just a different host/path).
+  // Navigates immediately if the authenticated tree already exists (by far
+  // the common case — the app already installed and signed in when a
+  // WhatsApp link is tapped); only queues via setPendingLoadLink for the
+  // consume effect below when it doesn't yet (cold start before sign-in).
+  //
+  // Two ways this URL reaches JS, not just one: MainActivity.kt's
+  // onNewIntent -> setIntent(intent) updates what the *next*
+  // Linking.getInitialURL() call returns, but doesn't itself guarantee
+  // React Native's 'url' DeviceEvent actually fires for an already-running
+  // Activity (confirmed empirically — the 'url' listener alone didn't
+  // navigate). The AppState 'active' re-check below is a second, more
+  // reliable path: it re-reads getInitialURL() every time the app comes to
+  // the foreground, which does reflect the updated intent either way.
+  // lastHandledUrlRef stops either path from re-navigating to the same
+  // link on a later unrelated resume.
+  const lastHandledUrlRef = useRef(null);
+  useEffect(() => {
+    const extractLoadId = (url) => url?.match(/\/loads\/([^/?#]+)/)?.[1] ?? null;
+    const handleUrl = (url) => {
+      if (!url || url === lastHandledUrlRef.current) return;
+      lastHandledUrlRef.current = url;
+      const loadId = extractLoadId(url);
+      if (!loadId) return;
+      if (isAuthenticated && profile && !needsTerms) {
+        navigate('PlaceBid', { loadId });
+      } else {
+        setPendingLoadLink(loadId);
+      }
+    };
+
+    const subscription = Linking.addEventListener('url', ({ url }) => handleUrl(url));
+    Linking.getInitialURL().then(handleUrl);
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') Linking.getInitialURL().then(handleUrl);
+    });
+
+    return () => {
+      subscription.remove();
+      appStateSubscription.remove();
+    };
+  }, [isAuthenticated, profile, needsTerms]);
+
+  // Same "consume once the authenticated tree exists" pattern as
+  // consumePostLoginIntent above, for a load link tapped before sign-in (or
+  // before the app finished its cold-start auth check) — handleUrl above
+  // queues rather than navigates directly in that case.
+  useEffect(() => {
+    if (isAuthenticated && profile && !needsTerms) {
+      const loadId = consumePendingLoadLink();
+      if (loadId) navigate('PlaceBid', { loadId });
     }
   }, [isAuthenticated, profile, needsTerms]);
 

@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../lib/supabase.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { notifyUser } from '../lib/notify.js';
 import { sendWhatsAppLoadAlert } from '../lib/whatsapp.js';
-import { NEARBY_RADIUS_KM } from '../lib/notifyRadius.js';
+import { NEARBY_RADIUS_KM, WHATSAPP_ALERT_CAP } from '../lib/notifyRadius.js';
 
 const router = Router();
 const STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
@@ -61,13 +61,6 @@ async function notifyNearbyUsers(posting, nearby) {
   );
 }
 
-// How many of the matching loads' WhatsApp templates a single truck posting
-// can trigger. In-app notifications still go out for every match (they're
-// free and non-intrusive); WhatsApp is cost-per-message and each one is a
-// separate business-template send, so a busy hub with dozens of active
-// loads shouldn't turn into dozens of WhatsApp messages for one posting.
-const WHATSAPP_LOAD_ALERT_CAP = 3;
-
 // Fire-and-forget, the mirror of notifyNearbyUsers: tells the truck owner
 // about loads that are *already* posted and active within `nearby`
 // pincodes of where they just said their truck is. Matched on the load's
@@ -114,7 +107,7 @@ async function notifyNearbyLoads(req, posting, nearby) {
   // Best-effort, capped, and settled independently — a WhatsApp send
   // failure (missing template config, API hiccup, etc.) must never take
   // down the in-app notifications above, or stop the other capped sends.
-  const capped = loads.slice(0, WHATSAPP_LOAD_ALERT_CAP);
+  const capped = loads.slice(0, WHATSAPP_ALERT_CAP);
   const results = await Promise.allSettled(
     capped.map((load) =>
       sendWhatsAppLoadAlert(ownerPhone, {
