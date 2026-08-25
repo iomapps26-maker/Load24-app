@@ -25,9 +25,12 @@ const router = Router();
 
 // POST /api/auth/devices/checkin — called by the app right after a
 // successful login (OTP, password, or OAuth) to register/refresh the
-// device's session record and flag first-time-in-90-days devices.
+// device's session record and flag first-time-in-90-days devices. Also
+// doubles as where a device's FCM push token gets (re)registered — see
+// AuthContext.js, which fetches the token asynchronously and may call this
+// again with just push_token once it's ready, after the initial checkin.
 router.post('/devices/checkin', async (req, res) => {
-  const { device_id, device_info } = req.body;
+  const { device_id, device_info, push_token } = req.body;
   if (!device_id) return res.status(400).json({ error: 'device_id is required' });
 
   const now = new Date();
@@ -63,6 +66,11 @@ router.post('/devices/checkin', async (req, res) => {
         device_info: device_info ?? null,
         ip_address,
         platform: device_info?.platform ?? 'web',
+        // Only included when the caller actually sent one — omitting the
+        // key (rather than writing null) means a routine re-checkin that
+        // hasn't fetched a fresh token yet doesn't wipe out the token this
+        // device already registered.
+        ...(push_token ? { push_token } : {}),
         last_login_at: now.toISOString(),
         last_seen_at: now.toISOString()
       },

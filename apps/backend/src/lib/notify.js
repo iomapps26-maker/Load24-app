@@ -1,4 +1,5 @@
 import { supabaseAdmin } from './supabase.js';
+import { sendPushToUser } from './push.js';
 
 // Fire-and-forget notification creation: a failure here (bad user id, DB
 // hiccup) must never break the request that triggered it — e.g. a bid
@@ -10,6 +11,13 @@ async function insert(userId, { type, title, body, data }) {
     .from('notifications')
     .insert({ user_id: userId, type, title, body: body ?? null, data: data ?? {} });
   if (error) console.error('[notify]', type, error);
+
+  // The in-app notification above is the source of truth and always gets
+  // created regardless of what happens here — a push is just a best-effort
+  // nudge on top of it (silent no-op if Firebase isn't configured, or this
+  // user has no registered device — see push.js), never awaited by insert's
+  // own callers.
+  sendPushToUser(userId, { title, body, data }).catch((err) => console.error('[push] notifyUser failed', err));
 }
 
 // Most events in this codebase (loads, load_bids) identify the counterparty
