@@ -32,6 +32,7 @@ alter table public.incentive_rules enable row level security;
 -- way it did for crm.js's sales roles, and rule *configuration* is an admin
 -- task even though the payouts themselves move money. Writes always go
 -- through supabaseAdmin either way, so this is a defense-in-depth backstop.
+drop policy if exists "incentive_rules_staff_all" on public.incentive_rules;
 create policy "incentive_rules_staff_all" on public.incentive_rules
   for all using (
     public.has_role(array['admin','support_executive','support_manager'])

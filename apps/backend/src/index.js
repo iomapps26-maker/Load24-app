@@ -59,6 +59,32 @@ app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+// Android App Links verification for the mobile app's load24:// /
+// https://load24.in/loads/:id deep link (WhatsApp's "View Load"/"Bid"
+// buttons — see AndroidManifest.xml's autoVerify intent-filter and
+// PlaceBidScreen.jsx). Must be served from exactly this path on load24.in
+// itself with no redirect — served straight from this backend so it works
+// the moment load24.in is pointed at Render as a custom domain, no separate
+// static hosting needed. sha256_cert_fingerprints is the upload-key
+// certificate (apps/mobile/android/app/load24-upload-key-cert.pem) —
+// confirmed identical to Play Console's App signing key certificate (Test
+// and release > App integrity), so this one fingerprint covers both what
+// gets uploaded and what actually signs installs from the Play Store.
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  res.json([
+    {
+      relation: ['delegate_permission/common.handle_all_urls'],
+      target: {
+        namespace: 'android_app',
+        package_name: 'com.base699327bbace8d2c0b141d1bc.app',
+        sha256_cert_fingerprints: [
+          '82:BA:74:57:81:04:68:08:30:8E:FE:AB:77:DB:93:DE:BC:CC:52:D8:C5:FC:48:13:17:FD:E6:16:E3:59:49:65'
+        ]
+      }
+    }
+  ]);
+});
+
 app.use('/api', apiRateLimiter);
 
 // WhatsApp OTP login is the login step itself, so it runs with no session at

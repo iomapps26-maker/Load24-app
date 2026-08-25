@@ -79,3 +79,64 @@ export async function sendWhatsAppLoadAlert(phoneE164, { material, city }) {
   }
   return payload;
 }
+
+// Sends the approved UTILITY-category interactive template
+// (WHATSAPP_LOAD_BROADCAST_TEMPLATE_NAME) that starts the "Smart Load
+// Broadcast" flow — routes/loads.js's notifyNearbyTruckOwners calls this for
+// each matched, verified owner. The template's two buttons ("View Load" /
+// "Bid") are Visit-Website URL buttons configured in Meta Business Manager
+// with a static base (https://load24.in/loads/) and one dynamic {{1}}
+// suffix each — both buttons open the same PlaceBidScreen in the app (an
+// Android App Link; see AndroidManifest.xml + App.jsx's deep-link handling),
+// there's no separate webhook step the way a Quick Reply button would need.
+//
+// Positional {{1}}..{{5}} body variables, not Meta's newer named-variable
+// format (unlike sendWhatsAppLoadAlert's material_type/city) — WhatsApp
+// Manager's template editor rejected named variables outright ("Variable
+// parameters must be whole numbers with two sets of curly brackets") for
+// this account, so the approved template uses {{1}}=route, {{2}}=vehicle_type,
+// {{3}}=tonnage, {{4}}=pickup, {{5}}=freight in that order, and the send
+// call has to match: no parameter_name, just positional array order.
+export async function sendWhatsAppLoadBroadcast(phoneE164, { loadId, route, vehicleType, tonnage, pickup, freight }) {
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to: phoneE164.replace('+', ''),
+      type: 'template',
+      template: {
+        name: process.env.WHATSAPP_LOAD_BROADCAST_TEMPLATE_NAME,
+        language: { code: process.env.WHATSAPP_LOAD_BROADCAST_TEMPLATE_LANG },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: route || 'a route near you' },
+              { type: 'text', text: vehicleType || 'Any' },
+              { type: 'text', text: String(tonnage ?? '-') },
+              { type: 'text', text: pickup || 'To be confirmed' },
+              { type: 'text', text: String(freight ?? '-') }
+            ]
+          },
+          // index '0' = the "View Load" button, index '1' = "Bid" — both
+          // buttons' dynamic URL suffix in the template is just {{1}}, and
+          // both get the same load id here since both open the same screen.
+          { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(loadId) }] },
+          { type: 'button', sub_type: 'url', index: '1', parameters: [{ type: 'text', text: String(loadId) }] }
+        ]
+      }
+    })
+  });
+
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(payload?.error?.message || `WhatsApp send failed: ${res.status}`);
+  }
+  return payload;
+}

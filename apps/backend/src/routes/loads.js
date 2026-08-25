@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { drivingDistanceKm } from '../lib/googleMaps.js';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { notifyUser } from '../lib/notify.js';
-import { NEARBY_RADIUS_KM } from '../lib/notifyRadius.js';
+import { sendWhatsAppLoadBroadcast } from '../lib/whatsapp.js';
+import { NEARBY_RADIUS_KM, WHATSAPP_ALERT_CAP } from '../lib/notifyRadius.js';
 
 const router = Router();
 
@@ -13,12 +14,39 @@ function formatAddress(address, city, state, pincode) {
   return [address, city, state, pincode, 'India'].filter(Boolean).join(', ');
 }
 
+// A posting matches a load if: the truck's type is either exactly what the
+// load asks for or 'other' (a free-text type we can't rule out), its
+// capacity can carry the load's weight (or capacity isn't on file — don't
+// exclude an owner just for an unfilled field), and the truck is either
+// available right now or will be by the load's pickup date. Destination
+// isn't matched here: preferred_routes/destination_preference are freeform
+// text on truck_availabilities, not structured city/pincode fields, so
+// there's nothing reliable to compare against the load's unloading point
+// without geocoding that text first — a follow-up, not something this can
+// silently fake today.
+function matchesLoad(posting, load) {
+  const truckType = posting.truck?.truck_type;
+  if (truckType && truckType !== 'other' && truckType !== load.required_truck_type) return false;
+
+  const capacity = posting.truck?.capacity_tons;
+  if (capacity != null && Number(capacity) < Number(load.weight_tons)) return false;
+
+  if (!posting.available_now) {
+    if (!posting.available_from) return false;
+    if (load.loading_date && posting.available_from > load.loading_date) return false;
+  }
+
+  return true;
+}
+
 // Fire-and-forget: tells the owner of every *available* truck posting within
-// NEARBY_RADIUS_KM of this load's pickup point that a new load just showed
-// up near them. Only 'available' postings are eligible — once a truck is
-// booked on a trip (see loadBids.js's approve route), it drops out of this
-// fan-out until it's posted available again. Never throws — a lookup
-// failure here should never fail the load posting itself.
+// NEARBY_RADIUS_KM of this load's pickup point — filtered to postings whose
+// vehicle type, capacity and availability date actually fit this load (see
+// matchesLoad) — that a new load just showed up near them. Only 'available'
+// postings are eligible — once a truck is booked on a trip (see
+// loadBids.js's approve route), it drops out of this fan-out until it's
+// posted available again. Never throws — a lookup failure here should never
+// fail the load posting itself.
 async function notifyNearbyTruckOwners(req, load) {
   if (!load.loading_pincode) return;
 
@@ -33,16 +61,20 @@ async function notifyNearbyTruckOwners(req, load) {
   // (which is exactly what we want here) or the caller's own — service-role
   // client isn't strictly required, but used for consistency with the
   // reverse fan-out and to avoid any RLS surprises on future policy changes.
+  // The trucks join brings in truck_type/capacity_tons for matchesLoad.
   const { data: postings, error: postingsError } = await supabaseAdmin
     .from('truck_availabilities')
-    .select('id, owner_id')
+    .select('id, owner_id, available_now, available_from, truck:trucks(truck_type, capacity_tons)')
     .eq('status', 'available')
     .in('current_pincode', nearby.map((r) => r.pincode))
     .neq('owner_id', req.user.id);
   if (postingsError) return console.error('[loads] nearby truck lookup failed', postingsError);
 
+  const matches = (postings || []).filter((posting) => matchesLoad(posting, load));
+  if (!matches.length) return;
+
   await Promise.all(
-    (postings || []).map((posting) =>
+    matches.map((posting) =>
       notifyUser(posting.owner_id, {
         type: 'load_available_nearby',
         title: 'New load near your available truck',
@@ -51,6 +83,41 @@ async function notifyNearbyTruckOwners(req, load) {
       })
     )
   );
+
+  // WhatsApp goes to each matched owner's own verified account number only
+  // — same trust model as the OTP login flow and notifyNearbyLoads' reverse
+  // direction, and avoids texting a number that was never confirmed to
+  // belong to this account.
+  const { data: profiles, error: profilesError } = await supabaseAdmin
+    .from('user_profiles')
+    .select('user_id, mobile, mobile_verified')
+    .in('user_id', matches.map((m) => m.owner_id));
+  if (profilesError) return console.error('[loads] owner profile lookup failed', profilesError);
+
+  const verified = (profiles || []).filter((p) => p.mobile_verified && p.mobile);
+  if (!verified.length) return;
+
+  // Best-effort, capped, and settled independently — a WhatsApp send
+  // failure (missing template config, API hiccup, etc.) must never take
+  // down the in-app notifications above, or stop the other capped sends.
+  const capped = verified.slice(0, WHATSAPP_ALERT_CAP);
+  const route = `${load.loading_city || load.loading_pincode} → ${load.unloading_city || load.unloading_pincode}`;
+  const pickup = [load.loading_date, load.loading_time].filter(Boolean).join(' ');
+  const results = await Promise.allSettled(
+    capped.map((profile) =>
+      sendWhatsAppLoadBroadcast(profile.mobile, {
+        loadId: load.id,
+        route,
+        vehicleType: load.required_truck_type,
+        tonnage: load.weight_tons,
+        pickup,
+        freight: load.bhada_price
+      })
+    )
+  );
+  results.forEach((r) => {
+    if (r.status === 'rejected') console.error('[loads] WhatsApp load broadcast failed', r.reason);
+  });
 }
 
 // GET /api/loads?truck_type=tata_407&location=110001&material_type=cement — mirrors
@@ -115,6 +182,19 @@ router.post('/', async (req, res) => {
   // After the response, not before — same reasoning as truckAvailability.js's
   // notifyNearbyUsers: this fan-out shouldn't make the poster wait.
   notifyNearbyTruckOwners(req, data).catch((err) => console.error('[loads] notifyNearbyTruckOwners failed', err));
+});
+
+// GET /api/loads/:id — a single load by id. Added for the WhatsApp broadcast's
+// "View Load"/"Bid" links (https://load24.in/loads/:id — see
+// PlaceBidScreen.jsx's loadId param): those only carry an id, unlike
+// LoadCard.jsx's in-app navigation which already has the whole load object
+// on hand. Same RLS as the list route (req.supabase, not supabaseAdmin) —
+// no special-casing for "opened from WhatsApp" beyond that.
+router.get('/:id', async (req, res) => {
+  const { data, error } = await req.supabase.from('loads').select('*').eq('id', req.params.id).maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Load not found' });
+  res.json(data);
 });
 
 export default router;

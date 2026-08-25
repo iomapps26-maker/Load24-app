@@ -39,6 +39,31 @@
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="load24" android:host="auth-callback" />
         </intent-filter>
+        <!-- Android App Link for WhatsApp's "View Load"/"Bid" buttons
+             (https://load24.in/loads/:id — see App.jsx's Linking handling
+             and PlaceBidScreen.jsx's loadId param). autoVerify="true" only
+             actually opens the app directly (instead of falling back to a
+             disambiguation dialog or the browser) once load24.in serves
+             https://load24.in/.well-known/assetlinks.json listing this
+             app's applicationId + signing certificate SHA-256 fingerprint. -->
+        <intent-filter android:autoVerify="true">
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" android:host="load24.in" android:pathPrefix="/loads" />
+        </intent-filter>
+        <!-- Custom-scheme fallback for the same links (load24://loads/:id)
+             — not something WhatsApp's URL button can open directly (Meta
+             requires the button's own URL to be http/https), but kept for
+             any other trigger of the same link before App Links
+             verification has propagated, same scheme as the OAuth callback
+             above, just a different host/path. -->
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="load24" android:host="loads" />
+        </intent-filter>
       </activity>
     </application>
 </manifest>

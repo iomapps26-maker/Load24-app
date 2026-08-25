@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { Icon } from 'react-native-paper';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -81,31 +81,56 @@ function RoutePoint({ color, icon, title, address }) {
   );
 }
 
-// Full-page bid entry, opened from LoadCard's "Let's Bidding" button — replaces
-// the old bottom-sheet BidModal. Shows the whole load (route, distance,
-// loading time, required truck) with a step-by-500 rate picker pinned to the
-// bottom so a bidder can review everything before committing.
+// Full-page bid entry, opened either from LoadCard's "Let's Bidding" button
+// (which already has the whole load object on hand) or from a WhatsApp
+// "View Load"/"Bid" deep link (App.jsx's Linking handling — loads/:loadId),
+// which only carries an id. Shows the whole load (route, distance, loading
+// time, required truck) with a step-by-500 rate picker pinned to the bottom
+// so a bidder can review everything before committing.
 export default function PlaceBidScreen() {
   const route = useRoute();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
   const { language, t } = useLanguage();
-  const { load } = route.params;
+  const { load: loadParam, loadId } = route.params;
+
+  // Only fires for the deep-link entry point — LoadCard's in-app navigation
+  // already passes the full load object, so there's nothing to fetch there.
+  const { data: fetchedLoad, isLoading: isLoadingLoad } = useQuery({
+    queryKey: ['load', loadId],
+    queryFn: () => api.loads.get(loadId),
+    enabled: !loadParam && !!loadId
+  });
+  const load = loadParam ?? fetchedLoad;
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
   const { data: trucks } = useQuery({ queryKey: ['trucks'], queryFn: api.trucks.mine });
 
-  const basePrice = Math.round((Number(load.bhada_price) || 0) / BID_STEP) * BID_STEP;
+  // Every hook above (and below) must run unconditionally on every render —
+  // `load` starts out undefined for the deep-link entry point until its
+  // fetch resolves, so the "not found yet" branch has to come after all
+  // hooks are declared, not as an early return partway through them.
+  const basePrice = Math.round((Number(load?.bhada_price) || 0) / BID_STEP) * BID_STEP;
   const [amount, setAmount] = useState(basePrice || BID_STEP);
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [truckId, setTruckId] = useState(null);
   const selectedTruck = trucks?.find((tr) => tr.id === truckId) ?? null;
 
+  // useState's initializer only runs once on mount — fine for LoadCard's
+  // in-app navigation (load is already there on the first render), but the
+  // deep-link entry point mounts with load still undefined (basePrice 0,
+  // amount defaulting to BID_STEP) until its fetch resolves. This resyncs
+  // amount once the real basePrice is known instead of leaving the stepper
+  // stuck at ₹500 for a bid opened from WhatsApp.
+  useEffect(() => {
+    if (!loadParam && loadId) setAmount(basePrice || BID_STEP);
+  }, [basePrice, loadParam, loadId]);
+
   const bidMutation = useMutation({
     mutationFn: () =>
       api.loadBids.place({
-        load_id: load.id,
+        load_id: load?.id,
         amount,
         bid_by_type: profile?.user_type,
         truck_id: selectedTruck?.id,
@@ -119,6 +144,20 @@ export default function PlaceBidScreen() {
     onError: (err) => setError(err.message)
   });
 
+  const adjust = (delta) => setAmount((a) => Math.max(BID_STEP, a + delta));
+
+  if (!load) {
+    return (
+      <View className="flex-1 items-center justify-center bg-slate-50 p-6">
+        {isLoadingLoad ? (
+          <ActivityIndicator size="large" color="#f97316" />
+        ) : (
+          <Text className="text-center text-sm text-slate-500">{t('loadNotFound')}</Text>
+        )}
+      </View>
+    );
+  }
+
   const truckTypeLabel =
     load.required_truck_type === 'other'
       ? load.required_truck_type_other || t('other')
@@ -126,7 +165,6 @@ export default function PlaceBidScreen() {
 
   const loadingWhen = loadingWhenLabel(load.loading_date, t);
   const unloadingWhen = unloadingDateLabel(load.unloading_date);
-  const adjust = (delta) => setAmount((a) => Math.max(BID_STEP, a + delta));
 
   return (
     <View className="flex-1 bg-slate-50">
