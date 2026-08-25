@@ -54,6 +54,25 @@ router.post('/', async (req, res) => {
     });
   }
 
+  // Whether to mark this number verified: either it's the same number this
+  // account's login already proved possession of (WhatsApp OTP sign-up sets
+  // auth.users.phone + phone_confirm — see whatsappAuth.ts — so req.user.phone
+  // here is real OTP proof, not user input), or it's unchanged from a value
+  // this profile already had marked verified (e.g. set earlier via the
+  // link-phone flow in identityLinking.ts). Any other number — including one
+  // typed in over the top of a previously-verified different number — starts
+  // unverified until it's proven the same way.
+  const verifiedAuthPhone = req.user.phone ? normalizeIndianPhone(req.user.phone) : null;
+  const { data: currentProfile, error: currentProfileError } = await supabaseAdmin
+    .from('user_profiles')
+    .select('mobile, mobile_verified')
+    .eq('user_id', req.user.id)
+    .maybeSingle();
+  if (currentProfileError) return res.status(400).json({ error: currentProfileError.message });
+  const mobileVerified =
+    normalizedMobile === verifiedAuthPhone ||
+    (currentProfile?.mobile === normalizedMobile && !!currentProfile?.mobile_verified);
+
   const { data, error } = await req.supabase
     .from('user_profiles')
     .upsert(
@@ -62,6 +81,7 @@ router.post('/', async (req, res) => {
         user_email: req.user.email,
         full_name,
         mobile: normalizedMobile,
+        mobile_verified: mobileVerified,
         user_type,
         company_name,
         city,

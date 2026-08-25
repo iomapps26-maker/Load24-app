@@ -64,11 +64,20 @@ function createMockSupabase(seedRows = []) {
           };
         },
         upsert(row) {
-          rows = rows.filter((r) => !(r.user_id === row.user_id && r.device_id === row.device_id));
-          rows.push(row);
+          // Partial-merge, like a real Postgres/PostgREST upsert: a column
+          // omitted from the payload (e.g. push_token, when the caller
+          // didn't send one) leaves that column's existing value alone
+          // rather than wiping it — a full replace here would misrepresent
+          // that behavior in tests that rely on it.
+          let existing = rows.find((r) => r.user_id === row.user_id && r.device_id === row.device_id);
+          if (existing) Object.assign(existing, row);
+          else {
+            existing = { ...row };
+            rows.push(existing);
+          }
           return {
             select() {
-              return { single: () => Promise.resolve({ data: row, error: null }) };
+              return { single: () => Promise.resolve({ data: existing, error: null }) };
             }
           };
         }
@@ -127,6 +136,28 @@ describe('POST /api/auth/devices/checkin', () => {
     const app = buildApp(createMockSupabase());
     const res = await request(app).post('/api/auth/devices/checkin').send({});
     expect(res.status).toBe(400);
+  });
+
+  it('stores a push_token when the caller provides one', async () => {
+    const mockSupabase = createMockSupabase();
+    const app = buildApp(mockSupabase);
+    const res = await request(app)
+      .post('/api/auth/devices/checkin')
+      .send({ device_id: 'device-a', push_token: 'fcm-token-1' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.device.push_token).toBe('fcm-token-1');
+  });
+
+  it('does not overwrite an already-registered push_token when this checkin omits one', async () => {
+    const mockSupabase = createMockSupabase([
+      { user_id: 'user-1', device_id: 'device-a', push_token: 'fcm-token-1', last_login_at: new Date().toISOString() }
+    ]);
+    const app = buildApp(mockSupabase);
+    const res = await request(app).post('/api/auth/devices/checkin').send({ device_id: 'device-a' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.device.push_token).toBe('fcm-token-1');
   });
 });
 
