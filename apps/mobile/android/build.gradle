@@ -21,6 +21,11 @@ buildscript {
         classpath("com.android.tools.build:gradle")
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+        // Push notifications (@react-native-firebase/app + /messaging) — the
+        // plugin reads app/google-services.json (gitignored, per-environment,
+        // downloaded from Firebase Console) and generates the resource values
+        // the native SDK needs from it. Applied in app/build.gradle.
+        classpath("com.google.gms:google-services:4.4.2")
     }
 }
 

@@ -57,7 +57,10 @@ describe('notifyUser', () => {
       { user_id: 'user-1', type: 'load_available_nearby', title: 'Load nearby', body: 'Cement, Delhi', data: { load_id: 'l1' } }
     ]);
     expect(mockPushState.calls).toEqual([
-      { userId: 'user-1', event: { title: 'Load nearby', body: 'Cement, Delhi', data: { load_id: 'l1' } } }
+      {
+        userId: 'user-1',
+        event: { title: 'Load nearby', body: 'Cement, Delhi', data: { load_id: 'l1', type: 'load_available_nearby' } }
+      }
     ]);
   });
 

@@ -157,3 +157,10 @@ project.ext.vectoricons = [
     iconFontsDir: "../../../../node_modules/react-native-vector-icons/Fonts"
 ]
 apply from: file("../../../../node_modules/react-native-vector-icons/fonts.gradle")
+
+// Push notifications (@react-native-firebase/app + /messaging) — must be
+// applied last, after the Android application plugin above, and reads
+// google-services.json from this same directory (gitignored — see
+// .gitignore and apps/backend/.env.example's FIREBASE_SERVICE_ACCOUNT notes
+// for where that file comes from).
+apply plugin: "com.google.gms.google-services"

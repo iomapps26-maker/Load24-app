@@ -16,6 +16,9 @@ import { api } from './lib/api';
 import { navigationRef, navigate } from './lib/navigationRef';
 import { consumePostLoginIntent } from './lib/postLoginIntent';
 import { setPendingLoadLink, consumePendingLoadLink } from './lib/pendingLoadLink';
+import { ensureNotificationChannel, subscribeToPushNotifications } from './lib/pushNotifications';
+import { consumePendingNotification } from './lib/pendingNotification';
+import { navigateForNotification } from './lib/notificationRouting';
 import LandingScreen from './screens/LandingScreen';
 import AuthChoiceScreen from './screens/AuthChoiceScreen';
 import ProfileSetupScreen from './screens/ProfileSetupScreen';
@@ -208,6 +211,30 @@ function AuthGate() {
     if (isAuthenticated && profile && !needsTerms) {
       const loadId = consumePendingLoadLink();
       if (loadId) navigate('PlaceBid', { loadId });
+    }
+  }, [isAuthenticated, profile, needsTerms]);
+
+  // Push notifications: the channel has to exist before Android can
+  // auto-display a background/killed-state push into it, so this is
+  // unconditional — not gated on sign-in — and cheap to repeat (creating an
+  // already-existing channel is a no-op). subscribeToPushNotifications is
+  // likewise mount-once for the app's whole lifetime, not per sign-in — see
+  // AuthContext.js's registerPushToken call for the per-login token
+  // registration side of this.
+  useEffect(() => {
+    ensureNotificationChannel();
+    return subscribeToPushNotifications();
+  }, []);
+
+  // Same "consume once the authenticated tree exists" pattern as the
+  // pending-load-link effect above, for a push notification tapped from a
+  // killed state (see pushNotifications.js's getInitialNotification
+  // handling) — a tap while merely backgrounded skips this queue entirely
+  // and navigates immediately, since the tree already exists by then.
+  useEffect(() => {
+    if (isAuthenticated && profile && !needsTerms) {
+      const notification = consumePendingNotification();
+      if (notification) navigateForNotification({ navigate }, notification);
     }
   }, [isAuthenticated, profile, needsTerms]);
 

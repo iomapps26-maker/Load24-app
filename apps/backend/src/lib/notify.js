@@ -16,8 +16,12 @@ async function insert(userId, { type, title, body, data }) {
   // created regardless of what happens here — a push is just a best-effort
   // nudge on top of it (silent no-op if Firebase isn't configured, or this
   // user has no registered device — see push.js), never awaited by insert's
-  // own callers.
-  sendPushToUser(userId, { title, body, data }).catch((err) => console.error('[push] notifyUser failed', err));
+  // own callers. `type` rides along inside `data` (FCM has no separate slot
+  // for it) so a tapped push can be routed by the same
+  // lib/notificationRouting.js the in-app list already uses on tap.
+  sendPushToUser(userId, { title, body, data: { ...data, type } }).catch((err) =>
+    console.error('[push] notifyUser failed', err)
+  );
 }
 
 // Most events in this codebase (loads, load_bids) identify the counterparty

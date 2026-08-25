@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -14,6 +14,13 @@
          write-only flow like this one. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
+    <!-- Runtime-requested by pushNotifications.js on API 33+ (Android 13
+         made showing a notification permission-gated, same as camera/
+         location) — without it, FCM messages still arrive but never render
+         in the system tray. No-op on API < 33 (permission is granted at
+         install time there, this line just does nothing). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
@@ -21,6 +28,21 @@
       android:roundIcon="@mipmap/ic_launcher_round"
       android:allowBackup="false"
       android:theme="@style/AppTheme">
+      <!-- @react-native-firebase/messaging needs a channel to post a
+           background/killed-state notification into on API 26+ — pointed at
+           pushNotifications.js's createNotificationChannel('default', ...)
+           call, which must run (it does, at JS module load) before any push
+           arrives, or Android silently falls back to its own default
+           channel with no custom sound/importance. Icon reuses the launcher
+           icon for now — Android renders notification icons as a flat white
+           silhouette regardless, so a dedicated monochrome asset is a
+           cosmetic follow-up, not a functional gap. -->
+      <!-- tools:replace is required here: @react-native-firebase/messaging's
+           own AndroidManifest.xml already declares both of these same keys
+           (with an empty placeholder value), and the manifest merger treats
+           a plain re-declaration as a conflict rather than an override. -->
+      <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="default" tools:replace="android:value" />
+      <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher" tools:replace="android:resource" />
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"

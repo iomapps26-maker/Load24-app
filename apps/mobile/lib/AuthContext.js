@@ -3,6 +3,7 @@ import { Linking } from 'react-native';
 import { supabase } from './supabase';
 import { api } from './api';
 import { getDeviceId, getDeviceInfo } from './device';
+import { registerPushToken } from './pushNotifications';
 
 const AuthContext = createContext(null);
 
@@ -37,6 +38,12 @@ export function AuthProvider({ children }) {
         getDeviceId()
           .then((device_id) => api.auth.deviceCheckin({ device_id, device_info: getDeviceInfo() }))
           .catch(() => {}); // best-effort; never block sign-in on this
+        // Separate call, not folded into the checkin above: fetching an FCM
+        // token touches Google Play Services and can be slow or fail (no
+        // Play Services, permission dialog dismissed, ...) — isolating it
+        // means that never delays or breaks the base device checkin, which
+        // suspicious-login detection actually depends on.
+        registerPushToken();
       }
     });
 

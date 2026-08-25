@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
+import { navigateForNotification } from '../lib/notificationRouting';
 
 // One icon/color per event type — falls back to a plain bell for anything
 // this screen doesn't know about yet, so a new backend notification type
@@ -21,7 +22,8 @@ const TYPE_STYLE = {
   kyc_rejected: { icon: 'shield-alert-outline', bg: 'bg-red-100', color: '#dc2626' },
   truck_verified: { icon: 'truck-check-outline', bg: 'bg-green-100', color: '#16a34a' },
   truck_availability_offered: { icon: 'truck-fast-outline', bg: 'bg-blue-100', color: '#2563eb' },
-  truck_available_nearby: { icon: 'truck-outline', bg: 'bg-blue-100', color: '#2563eb' }
+  truck_available_nearby: { icon: 'truck-outline', bg: 'bg-blue-100', color: '#2563eb' },
+  load_available_nearby: { icon: 'package-variant-closed', bg: 'bg-orange-100', color: '#ea580c' }
 };
 const DEFAULT_STYLE = { icon: 'bell-outline', bg: 'bg-slate-100', color: '#334155' };
 
@@ -34,24 +36,6 @@ function timeAgo(iso, t) {
   if (hours < 24) return `${hours}${t('hoursAgoSuffix')}`;
   const days = Math.floor(hours / 24);
   return `${days}${t('daysAgoSuffix')}`;
-}
-
-// Routes a tapped notification to the screen its `data` refers to. Types
-// with no known destination (wallet/withdrawal events) just mark read.
-function navigateForNotification(navigation, notification) {
-  const { type, data } = notification;
-  if (type === 'bid_placed' && data?.load_id) return navigation.navigate('SeeBidding', { loadId: data.load_id });
-  if ((type === 'bid_approved' || type === 'bid_rejected') && data?.load_id) {
-    return navigation.navigate('TripDetails', { loadId: data.load_id });
-  }
-  if (type.startsWith('wallet') || type.startsWith('withdrawal')) return navigation.navigate('Wallet');
-  if (type.startsWith('kyc')) return navigation.navigate('KycVerification');
-  // truck_available_nearby is for shippers/transporters/brokers, not the
-  // owner — there's no "Find Trucks" browse screen yet to send them to, so
-  // it's left unrouted (tap just marks it read). truck_verified/
-  // truck_availability_offered are the owner's own posting, so those do go
-  // to "My Trucks".
-  if (type === 'truck_verified' || type === 'truck_availability_offered') return navigation.navigate('TruckDetails');
 }
 
 // The red "delete" action revealed by swiping a row left or right — tapping

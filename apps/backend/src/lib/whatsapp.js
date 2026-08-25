@@ -40,10 +40,12 @@ export async function sendWhatsAppOtp(phoneE164, code) {
 // telling a truck owner a load was found near their posted-available truck.
 // Same reasoning as sendWhatsAppOtp: this fires outside any user-initiated
 // 24h chat window, so it must be a pre-approved template, not free text.
-// Template uses Meta's named-variable format (required for templates created
-// after Meta deprecated positional {{1}}/{{2}} for new templates) — the
-// parameter_name values below (material_type, city) must match the variable
-// names exactly as approved in Meta Business Manager.
+// Positional {{1}}/{{2}} body variables, not Meta's named-variable format —
+// this account's WhatsApp Manager rejects named variables outright (see
+// scripts/create-whatsapp-load-alert-template.mjs and
+// sendWhatsAppLoadBroadcast's identical note below), so {{1}}=material_type,
+// {{2}}=city in that order; the send call has to match — no parameter_name,
+// just positional array order.
 export async function sendWhatsAppLoadAlert(phoneE164, { material, city }) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
 
@@ -64,8 +66,8 @@ export async function sendWhatsAppLoadAlert(phoneE164, { material, city }) {
           {
             type: 'body',
             parameters: [
-              { type: 'text', parameter_name: 'material_type', text: material || 'A load' },
-              { type: 'text', parameter_name: 'city', text: city || 'your area' }
+              { type: 'text', text: material || 'A load' },
+              { type: 'text', text: city || 'your area' }
             ]
           }
         ]

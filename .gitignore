@@ -39,6 +39,12 @@ apps/mobile/android/local.properties
 apps/mobile/android/app/keystore.properties
 apps/mobile/android/app/*.keystore
 !apps/mobile/android/app/debug.keystore
+apps/mobile/android/app/google-services.json
+
+# Firebase service-account keys (push notifications) — real private-key
+# credentials, never committed; base64-encoded into Render's
+# FIREBASE_SERVICE_ACCOUNT env var instead (see apps/backend/.env.example).
+*firebase-adminsdk*.json
 apps/mobile/.expo/
 apps/mobile/.bundle/
 apps/mobile/ios/build/
