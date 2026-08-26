@@ -8,7 +8,7 @@ import HomeScreen from '../screens/HomeScreen';
 import FindLoadsScreen from '../screens/FindLoadsScreen';
 import PostLoadScreen from '../screens/PostLoadScreen';
 import TruckDetailsScreen from '../screens/TruckDetailsScreen';
-import ChatScreen from '../screens/ChatScreen';
+import WalletScreen from '../screens/WalletScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 
 const Tab = createBottomTabNavigator();
@@ -23,7 +23,7 @@ const TAB_ICONS = {
   Loads: ['truck-outline', 'truck'],
   Create: ['plus-circle-outline', 'plus-circle'],
   MyTrucks: ['truck-check-outline', 'truck-check'],
-  Chat: ['chat-outline', 'chat'],
+  Wallet: ['wallet-outline', 'wallet'],
   Profile: ['account-circle-outline', 'account-circle']
 };
 
@@ -89,7 +89,15 @@ export default function MainTabs() {
           }}
         />
       )}
-      <Tab.Screen name="Chat" component={ChatScreen} />
+      <Tab.Screen
+        name="Wallet"
+        component={WalletScreen}
+        options={{
+          headerShown: true,
+          title: t('walletBalance'),
+          headerTitleStyle: { fontWeight: '800', color: '#0f172a' }
+        }}
+      />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );
