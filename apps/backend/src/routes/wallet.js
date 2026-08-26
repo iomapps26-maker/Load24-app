@@ -1,12 +1,18 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
-import { createRazorpayOrder, verifySignature } from '../lib/razorpay.js';
 import { generateTransactionId, getOrCreateWallet, getAvailableBalance, applyWalletAdjustment } from '../lib/wallet.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { notifyUser } from '../lib/notify.js';
 
 const STAFF_ROLES = ['admin', 'support_executive', 'support_manager', 'accounts_executive', 'accounts_manager'];
 const ADJUSTABLE_TYPES = ['credit', 'debit', 'refund', 'commission', 'service_charge', 'security_hold', 'security_release'];
+// Manual "Add Balance" top-up flow (replaces Razorpay): a user-supplied tag
+// for *why* they're adding money, shown to staff during review — not to be
+// confused with ADJUSTABLE_TYPES above, which are actual debit/credit ledger
+// types.
+const TOPUP_REASON_CATEGORIES = ['security_fee', 'service_charge', 'load_payment', 'other'];
+const TOPUP_BUCKET = 'wallet-payment-proofs';
+const TOPUP_PROOF_VIEW_URL_TTL_SECONDS = 300; // same TTL as kyc.js's DOC_VIEW_URL_TTL_SECONDS
 
 const router = Router();
 
@@ -61,40 +67,119 @@ router.get('/statement', async (req, res) => {
   res.status(200).send(csv);
 });
 
-// POST /api/wallet/add-money { amount } — opens a Razorpay order; the wallet
-// isn't credited until the webhook below confirms the payment actually went
-// through (this row starts 'pending' and the mobile Checkout SDK never
-// touches wallet balance directly).
-router.post('/add-money', async (req, res) => {
+// -- Wallet top-up (manual proof-of-payment) -------------------------------
+// Replaces Razorpay. Flow: user requests a top-up with an amount + reason
+// and immediately gets a transaction_id (this row starts 'awaiting_payment')
+// → pays via the static QR/bank details already shown in the app → attaches
+// a screenshot against that same transaction_id from Transaction History
+// (which moves it to 'pending_verification') → staff review the screenshot
+// and either verify it (the only thing that ever credits the wallet — see
+// POST /:id/verify below) or reject it. The wallet is never credited just
+// because a screenshot was attached.
+
+// POST /api/wallet/topup-requests { amount, reason_category, reason_note }
+router.post('/topup-requests', async (req, res) => {
   const amount = Number(req.body.amount);
+  const { reason_category, reason_note } = req.body;
+
   if (!amount || amount <= 0) return res.status(400).json({ error: 'amount must be a positive number' });
+  if (!TOPUP_REASON_CATEGORIES.includes(reason_category)) {
+    return res.status(400).json({ error: `reason_category must be one of ${TOPUP_REASON_CATEGORIES.join(', ')}` });
+  }
+  if (reason_category === 'other' && !reason_note?.trim()) {
+    return res.status(400).json({ error: 'reason_note is required when reason_category is "other"' });
+  }
 
   try {
     const wallet = await getOrCreateWallet(req.user.id);
     const transaction_id = generateTransactionId();
-    const order = await createRazorpayOrder({ amount, receipt: transaction_id });
 
-    const { error } = await supabaseAdmin.from('wallet_transactions').insert({
-      transaction_id,
-      wallet_id: wallet.id,
-      user_id: req.user.id,
-      type: 'add_money',
-      amount,
-      status: 'pending',
-      razorpay_order_id: order.id
-    });
+    const { data, error } = await supabaseAdmin
+      .from('wallet_topup_requests')
+      .insert({
+        transaction_id,
+        wallet_id: wallet.id,
+        user_id: req.user.id,
+        amount,
+        reason_category,
+        reason_note: reason_note?.trim() || null
+      })
+      .select()
+      .single();
     if (error) throw error;
 
-    res.status(201).json({
-      transaction_id,
-      order_id: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      key_id: process.env.RAZORPAY_KEY_ID
-    });
+    res.status(201).json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// GET /api/wallet/topup-requests/mine — the caller's own top-up requests,
+// newest first. The mobile app merges this with GET /transactions in
+// Transaction History — once a request is verified the real
+// wallet_transactions row (same transaction_id) takes over, so the client
+// only needs to show the not-yet-verified ones from here.
+router.get('/topup-requests/mine', async (req, res) => {
+  const { data, error } = await req.supabase
+    .from('wallet_topup_requests')
+    .select('*')
+    .eq('user_id', req.user.id)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// POST /api/wallet/topup-requests/:id/proof/upload-url { file_name } —
+// mints a signed Supabase Storage upload URL, same shape as kyc.js's
+// POST /documents/upload-url. One screenshot per request at a deterministic
+// path; a re-upload (while still awaiting review) overwrites it.
+router.post('/topup-requests/:id/proof/upload-url', async (req, res) => {
+  const { file_name } = req.body;
+
+  const { data: reqRow, error: fetchError } = await req.supabase
+    .from('wallet_topup_requests')
+    .select('*')
+    .eq('id', req.params.id)
+    .eq('user_id', req.user.id)
+    .maybeSingle();
+  if (fetchError) return res.status(400).json({ error: fetchError.message });
+  if (!reqRow) return res.status(404).json({ error: 'Top-up request not found' });
+  if (!['awaiting_payment', 'pending_verification'].includes(reqRow.status)) {
+    return res.status(400).json({ error: `Cannot attach proof to a request that is already ${reqRow.status}` });
+  }
+
+  const ext = file_name && file_name.includes('.') ? file_name.split('.').pop().toLowerCase() : 'jpg';
+  const storage_path = `${req.user.id}/${reqRow.id}.${ext}`;
+
+  await supabaseAdmin.storage.from(TOPUP_BUCKET).remove([storage_path]);
+  const { data, error } = await supabaseAdmin.storage.from(TOPUP_BUCKET).createSignedUploadUrl(storage_path);
+  if (error) return res.status(400).json({ error: error.message });
+
+  res.status(200).json({ storage_path, signed_url: data.signedUrl, token: data.token });
+});
+
+// POST /api/wallet/topup-requests/:id/proof { storage_path } — records the
+// screenshot already uploaded via the signed URL above and moves the
+// request to 'pending_verification' so it appears in the staff queue.
+router.post('/topup-requests/:id/proof', async (req, res) => {
+  const { storage_path } = req.body;
+  if (!storage_path) return res.status(400).json({ error: 'storage_path is required' });
+  if (!storage_path.startsWith(`${req.user.id}/`)) {
+    return res.status(403).json({ error: 'storage_path does not belong to this account' });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('wallet_topup_requests')
+    .update({ proof_storage_path: storage_path, proof_uploaded_at: new Date().toISOString(), status: 'pending_verification' })
+    .eq('id', req.params.id)
+    .eq('user_id', req.user.id)
+    .in('status', ['awaiting_payment', 'pending_verification'])
+    .select()
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Top-up request not found' });
+
+  res.status(200).json(data);
 });
 
 // GET /api/wallet/withdrawals/mine — the caller's own withdrawal requests.
@@ -284,46 +369,111 @@ router.post('/adjust', requireRole(STAFF_ROLES), async (req, res) => {
   }
 });
 
-// POST /api/wallet/razorpay-webhook — mounted without requireAuth/requireConsents
-// (see index.js): Razorpay calls this directly, there's no user session.
-// Signature verification against the raw request body is what stands in for
-// auth here.
-export async function razorpayWebhookHandler(req, res) {
-  const signature = req.headers['x-razorpay-signature'];
-  if (!verifySignature(req.rawBody, signature, process.env.RAZORPAY_WEBHOOK_SECRET)) {
-    return res.status(400).json({ error: 'Invalid signature' });
-  }
-
-  const event = req.body;
-  const payment = event?.payload?.payment?.entity;
-  if (event.event !== 'payment.captured' || !payment?.order_id) {
-    return res.status(200).json({ ignored: true });
-  }
-
-  const { data: tx, error: fetchError } = await supabaseAdmin
-    .from('wallet_transactions')
+// GET /api/wallet/topup-requests/pending — staff review queue: every request
+// with a screenshot attached and not yet resolved, oldest first, with a
+// short-lived signed view URL for the screenshot (proof_storage_path itself
+// is never sent to the client) and the requesting user's name/mobile so
+// staff aren't reviewing bare user_ids — same shape as kyc.js's GET /queue.
+router.get('/topup-requests/pending', requireRole(STAFF_ROLES), async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from('wallet_topup_requests')
     .select('*')
-    .eq('razorpay_order_id', payment.order_id)
+    .eq('status', 'pending_verification')
+    .order('created_at', { ascending: true });
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data || data.length === 0) return res.json([]);
+
+  const userIds = [...new Set(data.map((r) => r.user_id))];
+  const { data: profiles, error: profilesError } = await supabaseAdmin
+    .from('user_profiles')
+    .select('user_id, full_name, mobile')
+    .in('user_id', userIds);
+  if (profilesError) return res.status(400).json({ error: profilesError.message });
+  const profileByUserId = new Map((profiles || []).map((p) => [p.user_id, p]));
+
+  const withUrls = await Promise.all(
+    data.map(async (r) => {
+      const { data: signed } = await supabaseAdmin.storage.from(TOPUP_BUCKET).createSignedUrl(r.proof_storage_path, TOPUP_PROOF_VIEW_URL_TTL_SECONDS);
+      return { ...r, proof_url: signed?.signedUrl ?? null, profile: profileByUserId.get(r.user_id) || null };
+    })
+  );
+  res.json(withUrls);
+});
+
+// POST /api/wallet/topup-requests/:id/verify — only ever moves a request out
+// of 'pending_verification', mirroring the pending-only guards on withdrawal
+// approve/reject and kyc verify/reject. Reuses the request's own
+// transaction_id for the wallet_transactions row it creates (one ID the
+// user sees end-to-end) — that insert is what actually credits the wallet,
+// via the same apply_wallet_transaction() trigger every other credit goes
+// through. transaction_id is unique on wallet_transactions, so a concurrent
+// double-verify (e.g. two staff clicking Verify at once) fails the second
+// insert with a uniqueness violation instead of double-crediting.
+router.post('/topup-requests/:id/verify', requireRole(STAFF_ROLES), async (req, res) => {
+  const { data: reqRow, error: fetchError } = await supabaseAdmin
+    .from('wallet_topup_requests')
+    .select('*')
+    .eq('id', req.params.id)
+    .eq('status', 'pending_verification')
     .maybeSingle();
   if (fetchError) return res.status(400).json({ error: fetchError.message });
-  // Unknown order, or already applied by a webhook retry — 200 either way so
-  // Razorpay doesn't keep retrying a delivery there's nothing left to do for.
-  if (!tx || tx.status === 'completed') return res.status(200).json({ ok: true });
+  if (!reqRow) return res.status(409).json({ error: 'No pending top-up request awaiting review with this id' });
 
-  const { error: updateError } = await supabaseAdmin
+  const { data: tx, error: txError } = await supabaseAdmin
     .from('wallet_transactions')
-    .update({ status: 'completed', razorpay_payment_id: payment.id })
-    .eq('id', tx.id);
-  if (updateError) return res.status(400).json({ error: updateError.message });
+    .insert({
+      transaction_id: reqRow.transaction_id,
+      wallet_id: reqRow.wallet_id,
+      user_id: reqRow.user_id,
+      type: 'add_money',
+      amount: reqRow.amount,
+      status: 'completed',
+      notes: reqRow.reason_note || reqRow.reason_category
+    })
+    .select()
+    .single();
+  if (txError) return res.status(400).json({ error: txError.message });
 
-  await notifyUser(tx.user_id, {
+  const { data: verified, error: verifyError } = await supabaseAdmin
+    .from('wallet_topup_requests')
+    .update({ status: 'verified', reviewed_by: req.user.id, reviewed_at: new Date().toISOString(), wallet_transaction_id: tx.id })
+    .eq('id', reqRow.id)
+    .eq('status', 'pending_verification')
+    .select()
+    .maybeSingle();
+  if (verifyError) return res.status(400).json({ error: verifyError.message });
+
+  await notifyUser(reqRow.user_id, {
     type: 'wallet_credited',
     title: 'Wallet credited',
-    body: `₹${Number(tx.amount).toLocaleString('en-IN')} added to your wallet`,
-    data: { transaction_id: tx.transaction_id }
+    body: `₹${Number(reqRow.amount).toLocaleString('en-IN')} added to your wallet`,
+    data: { transaction_id: reqRow.transaction_id }
   });
 
-  res.status(200).json({ ok: true });
-}
+  res.json(verified);
+});
+
+// POST /api/wallet/topup-requests/:id/reject { reason }
+router.post('/topup-requests/:id/reject', requireRole(STAFF_ROLES), async (req, res) => {
+  const { reason } = req.body;
+  const { data, error } = await supabaseAdmin
+    .from('wallet_topup_requests')
+    .update({ status: 'rejected', rejection_reason: reason || null, reviewed_by: req.user.id, reviewed_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .eq('status', 'pending_verification')
+    .select()
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(409).json({ error: 'No pending top-up request awaiting review with this id' });
+
+  await notifyUser(data.user_id, {
+    type: 'wallet_topup_rejected',
+    title: 'Top-up not verified',
+    body: reason || `We couldn't verify your ₹${Number(data.amount).toLocaleString('en-IN')} payment proof`,
+    data: { transaction_id: data.transaction_id }
+  });
+
+  res.json(data);
+});
 
 export default router;

@@ -10,10 +10,42 @@ import crypto from 'crypto';
 // never touch a real Postgres instance.
 function createStore() {
   // notifications: routes now fire-and-forget a notify*() call (see
-  // lib/notify.js) on withdrawal approve/reject/pay and the Razorpay
-  // webhook — it writes through this same mocked supabaseAdmin, so the
-  // table needs a backing array or that insert throws on `store[table].length`.
-  return { wallets: [], wallet_transactions: [], withdrawal_requests: [], bank_details: [], user_roles: [], notifications: [] };
+  // lib/notify.js) on withdrawal approve/reject/pay and top-up verify/reject
+  // — it writes through this same mocked supabaseAdmin, so the table needs a
+  // backing array or that insert throws on `store[table].length`.
+  return {
+    wallets: [],
+    wallet_transactions: [],
+    withdrawal_requests: [],
+    wallet_topup_requests: [],
+    bank_details: [],
+    user_roles: [],
+    user_profiles: [],
+    notifications: []
+  };
+}
+
+const mockStorageState = { removeCalls: [], signedUploadCalls: [], signedUrlCalls: [] };
+
+function makeStorageMock() {
+  return {
+    from(bucket) {
+      return {
+        remove: (paths) => {
+          mockStorageState.removeCalls.push({ bucket, paths });
+          return Promise.resolve({ data: null, error: null });
+        },
+        createSignedUploadUrl: (path) => {
+          mockStorageState.signedUploadCalls.push({ bucket, path });
+          return Promise.resolve({ data: { signedUrl: `https://example.com/${path}`, path, token: 'tok' }, error: null });
+        },
+        createSignedUrl: (path, ttl) => {
+          mockStorageState.signedUrlCalls.push({ bucket, path, ttl });
+          return Promise.resolve({ data: { signedUrl: `https://example.com/view/${path}?ttl=${ttl}` }, error: null });
+        }
+      };
+    }
+  };
 }
 
 let store = createStore();
@@ -63,6 +95,7 @@ function makeQueryBuilder(table) {
 
 function makeSupabaseMock() {
   return {
+    storage: makeStorageMock(),
     from(table) {
       return {
         select: () => makeQueryBuilder(table),
@@ -70,7 +103,7 @@ function makeSupabaseMock() {
           const withDefaults = {
             id: `${table}-${store[table].length + 1}`,
             balance: 0,
-            status: table === 'withdrawal_requests' ? 'pending' : 'completed',
+            status: table === 'withdrawal_requests' ? 'pending' : table === 'wallet_topup_requests' ? 'awaiting_payment' : 'completed',
             created_at: new Date().toISOString(),
             ...row
           };
@@ -91,16 +124,17 @@ function makeSupabaseMock() {
               filters.push((r) => values.includes(r[field]));
               return chain;
             },
-            select: () => ({
-              single: () => {
+            select: () => {
+              const resolveMatch = () => {
                 const match = store[table].find((r) => filters.every((f) => f(r)));
                 if (!match) return Promise.resolve({ data: null, error: null });
                 const before = match.status;
                 Object.assign(match, fields);
                 if (table === 'wallet_transactions' && before !== 'completed') applyTransactionEffect(match);
                 return Promise.resolve({ data: match, error: null });
-              }
-            }),
+              };
+              return { single: resolveMatch, maybeSingle: resolveMatch };
+            },
             then: (resolve) => {
               const match = store[table].find((r) => filters.every((f) => f(r)));
               if (match) {
@@ -124,33 +158,26 @@ vi.mock('../lib/supabase.js', () => ({
   }
 }));
 
-vi.mock('../lib/razorpay.js', () => ({
-  createRazorpayOrder: vi.fn(async ({ amount, receipt }) => ({
-    id: `order_${receipt}`,
-    amount: Math.round(amount * 100),
-    currency: 'INR'
-  })),
-  verifySignature: vi.fn((body, signature, secret) => signature === `valid-signature-for-${secret}`)
-}));
-
-const { default: walletRouter, razorpayWebhookHandler } = await import('./wallet.js');
+const { default: walletRouter } = await import('./wallet.js');
 const { requireRole } = await import('../middleware/requireRole.js');
 
 function buildApp(userId = 'user-1') {
   const app = express();
-  app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+  app.use(express.json());
   app.use((req, res, next) => {
     req.user = { id: userId };
     req.supabase = makeSupabaseMock();
     next();
   });
   app.use('/api/wallet', walletRouter);
-  app.post('/webhook', razorpayWebhookHandler);
   return app;
 }
 
 beforeEach(() => {
   store = createStore();
+  mockStorageState.removeCalls = [];
+  mockStorageState.signedUploadCalls = [];
+  mockStorageState.signedUrlCalls = [];
 });
 
 describe('GET /api/wallet', () => {
@@ -169,74 +196,154 @@ describe('GET /api/wallet', () => {
   });
 });
 
-describe('POST /api/wallet/add-money', () => {
+describe('POST /api/wallet/topup-requests', () => {
   it('rejects a non-positive amount', async () => {
-    const res = await request(buildApp()).post('/api/wallet/add-money').send({ amount: 0 });
+    const res = await request(buildApp()).post('/api/wallet/topup-requests').send({ amount: 0, reason_category: 'load_payment' });
     expect(res.status).toBe(400);
   });
 
-  it('creates a pending add_money transaction with a Razorpay order', async () => {
-    const res = await request(buildApp()).post('/api/wallet/add-money').send({ amount: 500 });
+  it('rejects an invalid reason_category', async () => {
+    const res = await request(buildApp()).post('/api/wallet/topup-requests').send({ amount: 500, reason_category: 'bogus' });
+    expect(res.status).toBe(400);
+  });
+
+  it('requires reason_note when reason_category is "other"', async () => {
+    const res = await request(buildApp()).post('/api/wallet/topup-requests').send({ amount: 500, reason_category: 'other' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/reason_note/);
+  });
+
+  it('creates an awaiting_payment request with a generated transaction_id, without touching the balance', async () => {
+    const res = await request(buildApp())
+      .post('/api/wallet/topup-requests')
+      .send({ amount: 500, reason_category: 'security_fee' });
+
     expect(res.status).toBe(201);
-    expect(res.body.order_id).toMatch(/^order_TXN/);
-    expect(store.wallet_transactions[0]).toMatchObject({ type: 'add_money', amount: 500, status: 'pending' });
-    // Balance not credited yet — only the webhook does that.
+    expect(res.body).toMatchObject({ amount: 500, reason_category: 'security_fee', status: 'awaiting_payment' });
+    expect(res.body.transaction_id).toMatch(/^TXN/);
     expect(store.wallets[0].balance).toBe(0);
   });
 });
 
-describe('POST /webhook (razorpay-webhook)', () => {
-  const secret = 'whsec_test';
-  beforeEach(() => {
-    process.env.RAZORPAY_WEBHOOK_SECRET = secret;
+describe('GET /api/wallet/topup-requests/mine', () => {
+  it('only returns the caller\'s own requests', async () => {
+    store.wallet_topup_requests.push(
+      { id: 'r1', user_id: 'user-1', amount: 100, status: 'awaiting_payment' },
+      { id: 'r2', user_id: 'user-2', amount: 200, status: 'awaiting_payment' }
+    );
+    const res = await request(buildApp('user-1')).get('/api/wallet/topup-requests/mine');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].id).toBe('r1');
+  });
+});
+
+describe('POST /api/wallet/topup-requests/:id/proof/upload-url', () => {
+  it('404s for a request that does not belong to the caller', async () => {
+    store.wallet_topup_requests.push({ id: 'r1', user_id: 'user-2', status: 'awaiting_payment' });
+    const res = await request(buildApp('user-1')).post('/api/wallet/topup-requests/r1/proof/upload-url').send({ file_name: 'proof.jpg' });
+    expect(res.status).toBe(404);
   });
 
-  function payload(orderId, paymentId = 'pay_1') {
-    return {
-      event: 'payment.captured',
-      payload: { payment: { entity: { order_id: orderId, id: paymentId } } }
-    };
-  }
-
-  it('rejects an invalid signature', async () => {
-    const res = await request(buildApp())
-      .post('/webhook')
-      .set('x-razorpay-signature', 'wrong')
-      .send(payload('order_1'));
+  it('refuses to attach proof to an already-resolved request', async () => {
+    store.wallet_topup_requests.push({ id: 'r1', user_id: 'user-1', status: 'verified' });
+    const res = await request(buildApp('user-1')).post('/api/wallet/topup-requests/r1/proof/upload-url').send({ file_name: 'proof.jpg' });
     expect(res.status).toBe(400);
   });
 
-  it('credits the wallet once, on a valid signature matching a pending order', async () => {
-    store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 0 });
-    store.wallet_transactions.push({
-      id: 'tx1', wallet_id: 'w1', user_id: 'user-1', type: 'add_money',
-      amount: 500, status: 'pending', razorpay_order_id: 'order_1'
-    });
-
-    const res = await request(buildApp())
-      .post('/webhook')
-      .set('x-razorpay-signature', `valid-signature-for-${secret}`)
-      .send(payload('order_1'));
-
+  it('returns a signed upload URL scoped to the caller\'s own folder', async () => {
+    store.wallet_topup_requests.push({ id: 'r1', user_id: 'user-1', status: 'awaiting_payment' });
+    const res = await request(buildApp('user-1')).post('/api/wallet/topup-requests/r1/proof/upload-url').send({ file_name: 'proof.jpg' });
     expect(res.status).toBe(200);
-    expect(store.wallets[0].balance).toBe(500);
-    expect(store.wallet_transactions[0].status).toBe('completed');
+    expect(res.body.storage_path).toBe('user-1/r1.jpg');
+    expect(res.body.signed_url).toContain('user-1/r1.jpg');
+  });
+});
+
+describe('POST /api/wallet/topup-requests/:id/proof', () => {
+  it('rejects a storage_path outside the caller\'s own folder', async () => {
+    store.wallet_topup_requests.push({ id: 'r1', user_id: 'user-1', status: 'awaiting_payment' });
+    const res = await request(buildApp('user-1'))
+      .post('/api/wallet/topup-requests/r1/proof')
+      .send({ storage_path: 'someone-else/r1.jpg' });
+    expect(res.status).toBe(403);
   });
 
-  it('is idempotent against a webhook retry for an already-completed order', async () => {
-    store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 500 });
-    store.wallet_transactions.push({
-      id: 'tx1', wallet_id: 'w1', user_id: 'user-1', type: 'add_money',
-      amount: 500, status: 'completed', razorpay_order_id: 'order_1'
+  it('records the screenshot and moves the request to pending_verification', async () => {
+    store.wallet_topup_requests.push({ id: 'r1', user_id: 'user-1', status: 'awaiting_payment' });
+    const res = await request(buildApp('user-1'))
+      .post('/api/wallet/topup-requests/r1/proof')
+      .send({ storage_path: 'user-1/r1.jpg' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('pending_verification');
+    expect(res.body.proof_storage_path).toBe('user-1/r1.jpg');
+  });
+});
+
+describe('Staff top-up review', () => {
+  function staffApp() {
+    store.user_roles.push({ user_id: 'staff-1', role: 'admin' });
+    return buildApp('staff-1');
+  }
+
+  it('rejects a non-staff caller with 403', async () => {
+    const res = await request(buildApp('user-1')).get('/api/wallet/topup-requests/pending');
+    expect(res.status).toBe(403);
+  });
+
+  it('lists pending_verification requests with a signed proof URL and the requester\'s profile', async () => {
+    store.wallet_topup_requests.push({
+      id: 'r1', user_id: 'user-1', amount: 500, status: 'pending_verification', proof_storage_path: 'user-1/r1.jpg'
+    });
+    store.user_profiles.push({ user_id: 'user-1', full_name: 'Sumit', mobile: '9999999999' });
+
+    const res = await request(staffApp()).get('/api/wallet/topup-requests/pending');
+    expect(res.status).toBe(200);
+    expect(res.body[0].proof_url).toContain('user-1/r1.jpg');
+    expect(res.body[0].proof_storage_path).toBe('user-1/r1.jpg'); // fine to include here — only /pending is staff-only
+    expect(res.body[0].profile).toMatchObject({ full_name: 'Sumit', mobile: '9999999999' });
+  });
+
+  it('verify credits the wallet exactly once, reusing the request\'s transaction_id', async () => {
+    store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 1000 });
+    store.wallet_topup_requests.push({
+      id: 'r1', transaction_id: 'TXN20260826ABCD', wallet_id: 'w1', user_id: 'user-1',
+      amount: 500, status: 'pending_verification', proof_storage_path: 'user-1/r1.jpg'
     });
 
-    const res = await request(buildApp())
-      .post('/webhook')
-      .set('x-razorpay-signature', `valid-signature-for-${secret}`)
-      .send(payload('order_1'));
-
+    const res = await request(staffApp()).post('/api/wallet/topup-requests/r1/verify');
     expect(res.status).toBe(200);
-    expect(store.wallets[0].balance).toBe(500); // not double-credited
+    expect(res.body.status).toBe('verified');
+    expect(store.wallets[0].balance).toBe(1500);
+    expect(store.wallet_transactions[0]).toMatchObject({ transaction_id: 'TXN20260826ABCD', type: 'add_money', amount: 500, status: 'completed' });
+  });
+
+  it('cannot verify the same request twice', async () => {
+    store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 1000 });
+    store.wallet_topup_requests.push({
+      id: 'r1', transaction_id: 'TXN1', wallet_id: 'w1', user_id: 'user-1', amount: 500, status: 'pending_verification'
+    });
+
+    const app = staffApp();
+    const first = await request(app).post('/api/wallet/topup-requests/r1/verify');
+    expect(first.status).toBe(200);
+
+    const second = await request(app).post('/api/wallet/topup-requests/r1/verify');
+    expect(second.status).toBe(409);
+    expect(store.wallets[0].balance).toBe(1500); // not double-credited
+  });
+
+  it('reject marks the request rejected without touching the balance', async () => {
+    store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 1000 });
+    store.wallet_topup_requests.push({
+      id: 'r1', transaction_id: 'TXN1', wallet_id: 'w1', user_id: 'user-1', amount: 500, status: 'pending_verification'
+    });
+
+    const res = await request(staffApp()).post('/api/wallet/topup-requests/r1/reject').send({ reason: 'Screenshot unreadable' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'rejected', rejection_reason: 'Screenshot unreadable' });
+    expect(store.wallets[0].balance).toBe(1000);
+    expect(store.wallet_transactions).toHaveLength(0);
   });
 });
 

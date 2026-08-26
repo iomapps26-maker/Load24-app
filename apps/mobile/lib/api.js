@@ -173,7 +173,13 @@ export const api = {
       const qs = new URLSearchParams(params).toString();
       return request(`/api/wallet/transactions${qs ? `?${qs}` : ''}`);
     },
-    addMoney: (amount) => request('/api/wallet/add-money', { method: 'POST', body: { amount } }),
+    topupRequests: {
+      create: (body) => request('/api/wallet/topup-requests', { method: 'POST', body }),
+      mine: () => request('/api/wallet/topup-requests/mine'),
+      uploadUrl: (id, file_name) =>
+        request(`/api/wallet/topup-requests/${id}/proof/upload-url`, { method: 'POST', body: { file_name } }),
+      confirmProof: (id, body) => request(`/api/wallet/topup-requests/${id}/proof`, { method: 'POST', body })
+    },
     withdrawalsMine: () => request('/api/wallet/withdrawals/mine'),
     withdraw: (amount) => request('/api/wallet/withdraw', { method: 'POST', body: { amount } }),
     // CSV response, not JSON — can't go through request() above, which

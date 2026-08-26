@@ -30,7 +30,7 @@ SQL Editor (no migration runner wired up yet).
   `withdrawal_requests` for the staff-approved payout flow. RLS only gates
   reads (own or staff); all writes go through the service-role client in
   `apps/backend/src/routes/wallet.js` so business rules (balance checks,
-  Razorpay webhook idempotency) live in one place instead of being
+  top-up verification idempotency) live in one place instead of being
   duplicated into RLS.
 - `migrations/030_add_pincode_centroids.sql` — `pincode_centroids` reference
   table (~19k Indian pincodes with lat/lng, sourced from GeoNames.org) plus a
@@ -55,6 +55,17 @@ SQL Editor (no migration runner wired up yet).
   stayed hardcoded; out of scope for this pass). CRUD under
   `/api/admin/master-data`; public `GET /api/master-data/:category` is what
   the mobile app and admin site both read instead of a constant.
+- `migrations/042_add_wallet_topup_requests.sql` — `wallet_topup_requests`:
+  replaces the Razorpay "Add Money" flow with a manual proof-of-payment flow.
+  A user requests a top-up (amount + reason category/note), immediately gets
+  a `transaction_id`, pays via the static QR/bank details already shown in
+  the app, then attaches a screenshot against that same request from
+  Transaction History. Staff review the screenshot (`GET
+  /api/wallet/topup-requests/pending`) and either verify it — which creates
+  the actual `wallet_transactions` row (reusing the same `transaction_id`)
+  that credits the wallet — or reject it with a reason. Screenshots live in
+  the private `wallet-payment-proofs` Storage bucket, same signed-upload-URL
+  pattern as `kyc-documents` (008_add_kyc_documents.sql).
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.
