@@ -135,8 +135,7 @@ appVersionsRouter.put('/:platform', async (req, res) => {
 // launch, before any session exists, so it goes through supabaseAdmin
 // directly rather than req.supabase (there is no req.supabase — this route
 // is mounted with no requireAuth in front of it, same as whatsappAuth.ts's
-// OTP endpoints and the Razorpay webhook). Named export, not the default
-// router, mirroring wallet.js's razorpayWebhookHandler — a single public
+// OTP endpoints). Named export, not the default router — a single public
 // handler mounted directly in index.js rather than nested under a
 // requireAuth/requireRole-gated router.
 //

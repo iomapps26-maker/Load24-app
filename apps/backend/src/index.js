@@ -18,7 +18,7 @@ import trucksRouter from './routes/trucks.js';
 import truckAvailabilityRouter from './routes/truckAvailability.js';
 import reviewsRouter from './routes/reviews.js';
 import supportTicketsRouter from './routes/supportTickets.js';
-import walletRouter, { razorpayWebhookHandler } from './routes/wallet.js';
+import walletRouter from './routes/wallet.js';
 import notificationsRouter from './routes/notifications.js';
 import adminDashboardRouter from './routes/admin/dashboard.js';
 import adminUsersRouter from './routes/admin/users.js';
@@ -51,11 +51,7 @@ const CRM_STAFF_ROLES = ['admin', 'sales_executive', 'sales_team_lead', 'sales_m
 
 const app = express();
 app.use(cors());
-// The `verify` hook stashes the raw request bytes on req.rawBody, which the
-// Razorpay webhook handler needs for HMAC signature verification — deriving
-// it from the already-parsed req.body wouldn't reproduce the exact bytes
-// Razorpay signed.
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+app.use(express.json());
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -85,16 +81,62 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
   ]);
 });
 
+// Public landing page for https://load24.in/loads/:id when it's reached
+// over plain HTTP instead of being intercepted by the Android App Link
+// above — i.e. verification hasn't reached this device yet, the visitor is
+// on desktop/iOS, or the app isn't installed at all. GET /api/loads/:id
+// (routes/loads.js) returns the full row (pricing, party details) behind
+// requireAuth, so this route deliberately never fetches or renders any load
+// data — it only tries to hand off to the app via the load24:// custom
+// scheme (see AndroidManifest.xml's non-autoVerify intent-filter, already
+// wired up in App.jsx's extractLoadId) and otherwise points at the Play
+// Store. :id is validated as a uuid (matches db/migrations/001_init.sql's
+// loads.id column) before being interpolated into the page, since it comes
+// straight from the URL.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.base699327bbace8d2c0b141d1bc.app';
+app.get('/loads/:id', (req, res) => {
+  const loadId = UUID_RE.test(req.params.id) ? req.params.id : null;
+  const deepLink = loadId ? `load24://loads/${loadId}` : null;
+  res.status(loadId ? 200 : 404).type('html').send(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${loadId ? 'Open in LOAD24' : 'Load not found'}</title>
+<style>
+  body { font-family: -apple-system, Roboto, Arial, sans-serif; background: #0f172a; color: #f1f5f9; display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; padding: 24px; text-align: center; }
+  .card { max-width: 360px; }
+  h1 { font-size: 20px; margin-bottom: 8px; }
+  p { color: #94a3b8; font-size: 14px; line-height: 1.5; }
+  a.button { display: block; margin-top: 20px; padding: 14px; border-radius: 10px; background: #22c55e; color: #0f172a; font-weight: 600; text-decoration: none; }
+  a.secondary { display: block; margin-top: 12px; color: #60a5fa; font-size: 14px; text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    ${loadId ? `
+    <h1>Open this load in the LOAD24 app</h1>
+    <p>This link opens directly in the app once it's installed. If nothing happened automatically, use the button below.</p>
+    <a class="button" href="${deepLink}">Open in LOAD24</a>
+    <a class="secondary" href="${PLAY_STORE_URL}">Don't have the app? Get it on Google Play</a>
+    <script>window.location.href = ${JSON.stringify(deepLink)};</script>
+    ` : `
+    <h1>Load link not found</h1>
+    <p>This link looks incomplete or has expired. Open the LOAD24 app to browse current loads.</p>
+    <a class="button" href="${PLAY_STORE_URL}">Get LOAD24 on Google Play</a>
+    `}
+  </div>
+</body>
+</html>`);
+});
+
 app.use('/api', apiRateLimiter);
 
 // WhatsApp OTP login is the login step itself, so it runs with no session at
 // all — mounted at the more specific /api/auth/whatsapp path *before* the
 // requireAuth-gated /api/auth block below so it never hits that middleware.
 app.use('/api/auth/whatsapp', whatsappAuthRouter);
-
-// Same reasoning as WhatsApp OTP above: Razorpay calls this directly with no
-// user session, authenticated only by its HMAC signature.
-app.post('/api/wallet/razorpay-webhook', razorpayWebhookHandler);
 
 // Public, no auth — both called by the mobile app before/without a session
 // (app-config on launch, master-data to populate form dropdowns like truck

@@ -1,7 +1,6 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { View, Text, Image, ScrollView, Modal, Alert, Share, ActivityIndicator, TouchableOpacity } from 'react-native';
-import { Icon, TextInput, Button } from 'react-native-paper';
-import { WebView } from 'react-native-webview';
+import { Icon, TextInput, Button, Chip } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -12,6 +11,25 @@ import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 import CopyableUpiId from '../components/CopyableUpiId';
 import UpiAppButtons from '../components/UpiAppButtons';
 import QrCodeModal from '../components/QrCodeModal';
+import DocumentUploadRow from '../components/DocumentUploadRow';
+
+// Manual "Add Balance" flow (replaces Razorpay): user picks a reason tag,
+// gets a transaction_id immediately, pays via the QR/bank details already on
+// this screen, then attaches a screenshot against that transaction_id from
+// history below. Wallet is only ever credited once staff verify the
+// screenshot (see routes/wallet.js's POST /topup-requests/:id/verify).
+const TOPUP_REASON_CATEGORIES = ['security_fee', 'service_charge', 'load_payment', 'other'];
+const TOPUP_REASON_LABEL_KEYS = {
+  security_fee: 'reasonSecurityFee',
+  service_charge: 'reasonServiceCharge',
+  load_payment: 'reasonLoadPayment',
+  other: 'reasonOther'
+};
+const TOPUP_STATUS_STYLE = {
+  awaiting_payment: { bg: 'bg-orange-100', text: 'text-orange-700', key: 'topupStatusAwaitingPayment' },
+  pending_verification: { bg: 'bg-blue-100', text: 'text-blue-700', key: 'topupStatusPendingVerification' },
+  rejected: { bg: 'bg-red-100', text: 'text-red-700', key: 'topupStatusRejected' }
+};
 
 const TXN_META = {
   add_money: { labelKey: 'walletTxnAddMoney', icon: 'plus-circle-outline', positive: true },
@@ -32,32 +50,6 @@ const WITHDRAWAL_STATUS_STYLE = {
   paid: { bg: 'bg-green-100', text: 'text-green-700', key: 'withdrawalStatusPaid' }
 };
 
-function razorpayCheckoutHtml({ keyId, orderId, amount, currency }) {
-  return `
-    <html><body>
-    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-    <script>
-      var options = {
-        key: "${keyId}",
-        amount: ${amount},
-        currency: "${currency}",
-        order_id: "${orderId}",
-        handler: function (response) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ status: 'success', response: response }));
-        },
-        modal: {
-          ondismiss: function () {
-            window.ReactNativeWebView.postMessage(JSON.stringify({ status: 'dismissed' }));
-          }
-        }
-      };
-      var rzp = new Razorpay(options);
-      rzp.open();
-    </script>
-    </body></html>
-  `;
-}
-
 function TransactionRow({ txn, t }) {
   const meta = TXN_META[txn.type] ?? { labelKey: null, icon: 'swap-horizontal', positive: true };
   const isPending = txn.status && txn.status !== 'completed';
@@ -75,6 +67,61 @@ function TransactionRow({ txn, t }) {
       <Text className={`text-base font-bold ${isPending ? 'text-slate-400' : meta.positive ? 'text-green-600' : 'text-red-600'}`}>
         {meta.positive ? '+' : '-'}₹{Number(txn.amount).toLocaleString('en-IN')}
       </Text>
+    </View>
+  );
+}
+
+// Renders a not-yet-verified "Add Balance" request in Transaction History
+// (once verified, the real wallet_transactions row — same transaction_id —
+// takes over and this row stops being fetched by GET /topup-requests/mine's
+// caller). DocumentUploadRow is reused as-is for the proof attach/replace
+// button — it already handles the take-photo/gallery/pdf picker, upload,
+// and confirm-with-backend flow generically.
+function TopupRequestRow({ topup, t, onProofUploaded }) {
+  const style = TOPUP_STATUS_STYLE[topup.status] ?? TOPUP_STATUS_STYLE.awaiting_payment;
+  const reasonLabel = t(TOPUP_REASON_LABEL_KEYS[topup.reason_category] ?? 'reasonOther');
+  const canAttachProof = topup.status === 'awaiting_payment' || topup.status === 'pending_verification';
+
+  return (
+    <View className="mb-3 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+      <View className="flex-row items-center justify-between">
+        <View className="mr-3 flex-1 flex-row items-center">
+          <Icon source="progress-clock" size={22} color="#94a3b8" />
+          <View className="ml-3 flex-1">
+            <Text className="text-sm font-semibold text-slate-800">{reasonLabel}</Text>
+            {topup.reason_category === 'other' && !!topup.reason_note && (
+              <Text className="text-xs text-slate-500">{topup.reason_note}</Text>
+            )}
+            <Text className="text-xs text-slate-400">{new Date(topup.created_at).toLocaleString()}</Text>
+            <Text className="text-xs text-slate-400">{topup.transaction_id}</Text>
+          </View>
+        </View>
+        <Text className="text-base font-bold text-slate-400">+₹{Number(topup.amount).toLocaleString('en-IN')}</Text>
+      </View>
+
+      <View className="mt-2 flex-row items-center justify-between">
+        <View className={`rounded-full px-3 py-1 ${style.bg}`}>
+          <Text className={`text-xs font-semibold ${style.text}`}>{t(style.key)}</Text>
+        </View>
+        {topup.status === 'rejected' && !!topup.rejection_reason && (
+          <Text className="ml-2 flex-1 text-right text-xs text-red-600">{topup.rejection_reason}</Text>
+        )}
+      </View>
+
+      {canAttachProof && (
+        <View className="mt-3">
+          <DocumentUploadRow
+            bucket="wallet-payment-proofs"
+            documentType="proof"
+            label={t('addPaymentProof')}
+            icon="camera-outline"
+            uploadedDoc={topup.proof_storage_path ? { uploaded: true } : null}
+            getUploadUrl={(_docType, file_name) => api.wallet.topupRequests.uploadUrl(topup.id, file_name)}
+            confirmUpload={(payload) => api.wallet.topupRequests.confirmProof(topup.id, { storage_path: payload.storage_path })}
+            onUploaded={onProofUploaded}
+          />
+        </View>
+      )}
     </View>
   );
 }
@@ -136,6 +183,87 @@ function AmountModal({ visible, title, onClose, onSubmit, loading, error }) {
   );
 }
 
+function AddBalanceModal({ visible, onClose, onSubmit, loading, error }) {
+  const [amount, setAmount] = useState('');
+  const [reasonCategory, setReasonCategory] = useState('load_payment');
+  const [reasonNote, setReasonNote] = useState('');
+  const [localError, setLocalError] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
+
+  const handleClose = () => {
+    setAmount('');
+    setReasonCategory('load_payment');
+    setReasonNote('');
+    setLocalError('');
+    setConfirmed(false);
+    onClose();
+  };
+
+  const handleSubmit = () => {
+    setLocalError('');
+    if (!amount.trim() || Number(amount) <= 0) return setLocalError(t('enterAmount'));
+    if (reasonCategory === 'other' && !reasonNote.trim()) return setLocalError(t('enterReasonNote'));
+    onSubmit({ amount: Number(amount), reason_category: reasonCategory, reason_note: reasonCategory === 'other' ? reasonNote.trim() : undefined });
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
+      <View className="flex-1 justify-end bg-black/40">
+        <View className="rounded-t-3xl bg-white p-5" style={{ paddingBottom: Math.max(insets.bottom, 20) + 12 }}>
+          <Text className="mb-4 text-center text-base font-bold text-slate-900">{t('addBalance')}</Text>
+          <TextInput
+            mode="outlined"
+            keyboardType="number-pad"
+            placeholder={t('enterAmount')}
+            value={amount}
+            onChangeText={setAmount}
+            left={<TextInput.Icon icon="currency-inr" />}
+            className="mb-3"
+          />
+
+          <Text className="mb-2 text-sm text-slate-600">{t('reasonForAdding')}</Text>
+          <View className="mb-3 flex-row flex-wrap gap-2">
+            {TOPUP_REASON_CATEGORIES.map((category) => (
+              <Chip key={category} selected={reasonCategory === category} onPress={() => setReasonCategory(category)} compact>
+                {t(TOPUP_REASON_LABEL_KEYS[category])}
+              </Chip>
+            ))}
+          </View>
+          {reasonCategory === 'other' && (
+            <TextInput
+              mode="outlined"
+              placeholder={t('enterReasonNote')}
+              value={reasonNote}
+              onChangeText={setReasonNote}
+              className="mb-3"
+            />
+          )}
+
+          {!!(localError || error) && <Text className="mb-3 text-sm text-red-600">{localError || error}</Text>}
+
+          <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
+
+          <Button
+            mode="contained"
+            buttonColor="#f97316"
+            loading={loading}
+            disabled={loading || !confirmed}
+            onPress={handleSubmit}
+            className="mb-3"
+          >
+            {t('addBalance')}
+          </Button>
+          <Button mode="text" onPress={handleClose}>
+            {t('cancel')}
+          </Button>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function WalletScreen() {
   const { t } = useLanguage();
   const queryClient = useQueryClient();
@@ -146,25 +274,42 @@ export default function WalletScreen() {
   });
   const { data: transactions = [] } = useQuery({ queryKey: ['walletTransactions'], queryFn: () => api.wallet.transactions() });
   const { data: withdrawals = [] } = useQuery({ queryKey: ['walletWithdrawals'], queryFn: api.wallet.withdrawalsMine });
+  const { data: topupRequests = [] } = useQuery({ queryKey: ['walletTopupRequests'], queryFn: api.wallet.topupRequests.mine });
 
-  const [addMoneyVisible, setAddMoneyVisible] = useState(false);
+  const [addBalanceVisible, setAddBalanceVisible] = useState(false);
   const [withdrawVisible, setWithdrawVisible] = useState(false);
-  const [checkoutOrder, setCheckoutOrder] = useState(null);
   const [qrModal, setQrModal] = useState(null); // 'iom' | 'vivek' | null
 
   const refreshWallet = () => {
     queryClient.invalidateQueries({ queryKey: ['wallet'] });
     queryClient.invalidateQueries({ queryKey: ['walletTransactions'] });
     queryClient.invalidateQueries({ queryKey: ['walletWithdrawals'] });
+    queryClient.invalidateQueries({ queryKey: ['walletTopupRequests'] });
   };
 
-  const addMoney = useMutation({
-    mutationFn: (amount) => api.wallet.addMoney(amount),
-    onSuccess: (order) => {
-      setAddMoneyVisible(false);
-      setCheckoutOrder(order);
+  // History merges the real ledger (transactions) with not-yet-verified
+  // top-up requests — once a request is verified, the matching
+  // wallet_transactions row (same transaction_id) takes over, so verified
+  // requests are dropped here to avoid showing the same money twice.
+  const history = useMemo(() => {
+    const pendingTopups = topupRequests
+      .filter((r) => r.status !== 'verified')
+      .map((r) => ({ kind: 'topup', created_at: r.created_at, data: r }));
+    const ledgerRows = transactions.map((tx) => ({ kind: 'transaction', created_at: tx.created_at, data: tx }));
+    return [...pendingTopups, ...ledgerRows].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  }, [transactions, topupRequests]);
+
+  const createTopup = useMutation({
+    mutationFn: (body) => api.wallet.topupRequests.create(body),
+    onSuccess: (topup) => {
+      setAddBalanceVisible(false);
+      refreshWallet();
+      Alert.alert(
+        t('addBalance'),
+        `${t('topupCreatedTxnIdLabel')}: ${topup.transaction_id}\n\n${t('topupCreatedInstructions')}`
+      );
     },
-    onError: (err) => Alert.alert(t('addMoney'), err.message)
+    onError: (err) => Alert.alert(t('addBalance'), err.message)
   });
 
   const withdraw = useMutation({
@@ -175,17 +320,6 @@ export default function WalletScreen() {
       Alert.alert(t('withdraw'), t('withdrawalRequestSent'));
     }
   });
-
-  const handleCheckoutMessage = (event) => {
-    const payload = JSON.parse(event.nativeEvent.data);
-    setCheckoutOrder(null);
-    addMoney.reset();
-    if (payload.status === 'success') {
-      // The webhook is the real source of truth for crediting the wallet —
-      // this refetch just gives the UI a prompt update once it's landed.
-      setTimeout(refreshWallet, 1500);
-    }
-  };
 
   const handleDownloadStatement = async () => {
     try {
@@ -224,6 +358,27 @@ export default function WalletScreen() {
         <Text className="mt-2 text-xs text-slate-400">
           {t('availableBalance')}: ₹{Number(wallet?.available_balance ?? 0).toLocaleString('en-IN')}
         </Text>
+        <View className="mt-4 flex-row gap-2">
+          <Button
+            mode="contained"
+            buttonColor="#f97316"
+            icon="plus-circle-outline"
+            className="flex-1"
+            onPress={() => setAddBalanceVisible(true)}
+          >
+            {t('addBalance')}
+          </Button>
+          <Button
+            mode="outlined"
+            textColor="#ffffff"
+            style={{ borderColor: '#ffffff' }}
+            icon="bank-transfer-out"
+            className="flex-1"
+            onPress={() => setWithdrawVisible(true)}
+          >
+            {t('withdraw')}
+          </Button>
+        </View>
       </View>
 
       {/* LOAD24's own payment details — same static info shown on Home, kept
@@ -343,22 +498,27 @@ export default function WalletScreen() {
         </Button>
       </View>
 
-      {transactions.length === 0 ? (
+      {history.length === 0 ? (
         <View className="items-center py-10">
           <Icon source="wallet-outline" size={40} color="#cbd5e1" />
           <Text className="mt-3 text-sm text-slate-400">{t('noTransactionsYet')}</Text>
         </View>
       ) : (
-        transactions.map((txn) => <TransactionRow key={txn.id} txn={txn} t={t} />)
+        history.map((row) =>
+          row.kind === 'topup' ? (
+            <TopupRequestRow key={`topup-${row.data.id}`} topup={row.data} t={t} onProofUploaded={refreshWallet} />
+          ) : (
+            <TransactionRow key={`txn-${row.data.id}`} txn={row.data} t={t} />
+          )
+        )
       )}
 
-      <AmountModal
-        visible={addMoneyVisible}
-        title={t('addMoney')}
-        onClose={() => setAddMoneyVisible(false)}
-        onSubmit={(amount) => addMoney.mutate(amount)}
-        loading={addMoney.isPending}
-        error={addMoney.error?.message}
+      <AddBalanceModal
+        visible={addBalanceVisible}
+        onClose={() => setAddBalanceVisible(false)}
+        onSubmit={(body) => createTopup.mutate(body)}
+        loading={createTopup.isPending}
+        error={createTopup.error?.message}
       />
       <AmountModal
         visible={withdrawVisible}
@@ -368,23 +528,6 @@ export default function WalletScreen() {
         loading={withdraw.isPending}
         error={withdraw.error?.message}
       />
-
-      <Modal visible={!!checkoutOrder} animationType="slide" onRequestClose={() => setCheckoutOrder(null)}>
-        {checkoutOrder && (
-          <WebView
-            originWhitelist={['*']}
-            source={{
-              html: razorpayCheckoutHtml({
-                keyId: checkoutOrder.key_id,
-                orderId: checkoutOrder.order_id,
-                amount: checkoutOrder.amount,
-                currency: checkoutOrder.currency
-              })
-            }}
-            onMessage={handleCheckoutMessage}
-          />
-        )}
-      </Modal>
 
       <QrCodeModal
         visible={qrModal === 'iom'}
