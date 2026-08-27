@@ -132,10 +132,17 @@ export const api = {
   },
   loads: {
     list: (params = {}) => {
-      const defined = Object.fromEntries(
-        Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
-      );
-      const qs = new URLSearchParams(defined).toString();
+      // Array-valued params (e.g. location: ['Pune', '411001']) need repeated
+      // ?location=Pune&location=411001 keys, not one comma-joined value —
+      // `new URLSearchParams({ location: [...] })` would stringify the array
+      // with commas instead, and the backend's or() filter treats a comma as
+      // syntax, not a separator between picks (see routes/loads.js).
+      const qsParams = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        if (value === undefined || value === null) continue;
+        for (const v of Array.isArray(value) ? value : [value]) qsParams.append(key, v);
+      }
+      const qs = qsParams.toString();
       return request(`/api/loads${qs ? `?${qs}` : ''}`);
     },
     mine: () => request('/api/loads?mine=true'),

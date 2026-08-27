@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { View, Text, FlatList, RefreshControl } from 'react-native';
+import { View, Text, FlatList, Pressable, RefreshControl } from 'react-native';
 import { ActivityIndicator, Button, Menu, TextInput } from 'react-native-paper';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { TRUCK_TYPES as ALL_TRUCK_TYPES, TRUCK_TYPE_LABELS } from '../lib/loadOptions';
 import LoadCard from '../components/LoadCard';
+import LocationPickerModal from '../components/LocationPickerModal';
 
 // Same enum PostLoadScreen posts with, plus "all" — every filter here mirrors
 // a field collected on the Post Load form so shippers/vehicle owners can
@@ -18,9 +19,13 @@ export default function FindLoadsScreen() {
   const queryClient = useQueryClient();
   const { language, t } = useLanguage();
   const [truckType, setTruckType] = useState('all');
-  const [location, setLocation] = useState('');
+  // Multiple cities/pincodes can be picked at once — the backend ORs every
+  // entry together (see routes/loads.js), so a load matching ANY of them
+  // shows up.
+  const [locations, setLocations] = useState([]);
   const [materialType, setMaterialType] = useState('');
   const [filterMenuVisible, setFilterMenuVisible] = useState(false);
+  const [locationPickerVisible, setLocationPickerVisible] = useState(false);
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
 
@@ -30,10 +35,10 @@ export default function FindLoadsScreen() {
     isRefetching,
     refetch
   } = useQuery({
-    queryKey: ['loads', truckType, location, materialType],
+    queryKey: ['loads', truckType, locations, materialType],
     queryFn: () => api.loads.list({
       truck_type: truckType,
-      location: location || undefined,
+      location: locations.length ? locations : undefined,
       material_type: materialType || undefined
     })
   });
@@ -65,17 +70,25 @@ export default function FindLoadsScreen() {
     queryFn: api.loadBids.mine
   });
 
+  // "Pune" for one pick, "Pune +2" for several — the field itself is too
+  // narrow to list every pick, and the picker's own chips already show the
+  // full set once it's open.
+  const locationSummary = locations.length > 1 ? `${locations[0]} +${locations.length - 1}` : locations[0] ?? '';
+
   return (
     <View className="flex-1 bg-slate-50 px-4 pt-3">
       <View className="mb-3 flex-row gap-2">
-        <TextInput
-          mode="outlined"
-          placeholder={t('searchByPincodeOrCity')}
-          value={location}
-          onChangeText={setLocation}
-          dense
-          style={{ flex: 1 }}
-        />
+        <Pressable style={{ flex: 1 }} onPress={() => setLocationPickerVisible(true)}>
+          <View pointerEvents="none">
+            <TextInput
+              mode="outlined"
+              placeholder={t('searchByPincodeOrCity')}
+              value={locationSummary}
+              editable={false}
+              dense
+            />
+          </View>
+        </Pressable>
         <TextInput
           mode="outlined"
           placeholder={t('material')}
@@ -136,6 +149,14 @@ export default function FindLoadsScreen() {
           }
         />
       )}
+
+      <LocationPickerModal
+        visible={locationPickerVisible}
+        initialValues={locations}
+        onApply={setLocations}
+        onClose={() => setLocationPickerVisible(false)}
+        t={t}
+      />
     </View>
   );
 }

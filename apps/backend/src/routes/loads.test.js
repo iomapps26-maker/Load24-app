@@ -229,3 +229,66 @@ describe('GET /api/loads/:id', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('GET /api/loads location filter', () => {
+  // Thenable query builder that just records which .eq/.ilike/.or filters the
+  // route applied — enough to prove the location picks turn into one OR group,
+  // without standing up a real PostgREST.
+  function mockListSupabase(rows = [{ id: 'load-1' }]) {
+    const calls = { eq: [], ilike: [], or: [] };
+    const builder = {
+      select: () => builder,
+      order: () => builder,
+      limit: () => builder,
+      eq: (col, val) => { calls.eq.push([col, val]); return builder; },
+      ilike: (col, val) => { calls.ilike.push([col, val]); return builder; },
+      or: (expr) => { calls.or.push(expr); return builder; },
+      then: (resolve) => resolve({ data: rows, error: null })
+    };
+    return {
+      calls,
+      supabase: {
+        from: (table) => {
+          if (table !== 'loads') throw new Error(`unexpected table ${table}`);
+          return builder;
+        }
+      }
+    };
+  }
+
+  const orGroupFor = (picks) =>
+    picks
+      .map((l) => `loading_pincode.ilike.%${l}%,unloading_pincode.ilike.%${l}%,loading_city.ilike.%${l}%,unloading_city.ilike.%${l}%`)
+      .join(',');
+
+  it('matches a single pick against both city and both pincode fields', async () => {
+    const { calls, supabase } = mockListSupabase();
+    const res = await request(buildApp(supabase)).get('/api/loads?location=Mumbai');
+    expect(res.status).toBe(200);
+    expect(calls.or).toEqual([orGroupFor(['Mumbai'])]);
+  });
+
+  it('unions every pick when several cities/pincodes are selected at once', async () => {
+    const { calls, supabase } = mockListSupabase();
+    const res = await request(buildApp(supabase))
+      .get('/api/loads?location=Mumbai&location=110001&location=Noida');
+    expect(res.status).toBe(200);
+    // One OR group covering all three picks — a load matching ANY of them shows.
+    expect(calls.or).toEqual([orGroupFor(['Mumbai', '110001', 'Noida'])]);
+  });
+
+  it('strips or() syntax characters from each pick', async () => {
+    const { calls, supabase } = mockListSupabase();
+    const res = await request(buildApp(supabase))
+      .get(`/api/loads?location=${encodeURIComponent('Pune,(x)')}&location=Delhi`);
+    expect(res.status).toBe(200);
+    expect(calls.or).toEqual([orGroupFor(['Punex', 'Delhi'])]);
+  });
+
+  it('applies no location filter when none is picked', async () => {
+    const { calls, supabase } = mockListSupabase();
+    const res = await request(buildApp(supabase)).get('/api/loads');
+    expect(res.status).toBe(200);
+    expect(calls.or).toEqual([]);
+  });
+});

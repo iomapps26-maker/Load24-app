@@ -137,23 +137,26 @@ router.get('/', async (req, res) => {
   } else {
     query = query.eq('status', 'active');
     if (truck_type && truck_type !== 'all') query = query.eq('required_truck_type', truck_type);
-    // Single box, two kinds of input: a pincode (matched anywhere in either
-    // pincode field) or a city name (matched anywhere in either city field,
-    // case-insensitive) — whichever the caller typed. There's no reference
-    // table mapping pincodes to city names (pincode_centroids only has
-    // lat/lng/state — see db/migrations/030_add_pincode_centroids.sql), so
-    // this only knows what each load's own poster typed into its city
-    // fields, not a canonical city grouping.
-    if (location) {
+    // One box, multiple picks: each entry is a pincode (matched anywhere in
+    // either pincode field) or a city name (matched anywhere in either city
+    // field, case-insensitive) — the mobile picker lets the caller select
+    // several cities/pincodes at once (repeated ?location= params, so
+    // req.query.location is an array once there's more than one), and a
+    // load matching ANY of them should show up. There's no reference table
+    // mapping pincodes to city names (pincode_centroids only has lat/lng/
+    // state — see db/migrations/030_add_pincode_centroids.sql), so this only
+    // knows what each load's own poster typed into its city fields, not a
+    // canonical city grouping.
+    const locations = (Array.isArray(location) ? location : location ? [location] : [])
       // Comma/parens are PostgREST's own or() filter syntax — strip them so
       // a value containing one can't break or hijack the filter expression.
-      const safeLocation = location.replace(/[,()]/g, '');
-      if (safeLocation) {
-        query = query.or(
-          `loading_pincode.ilike.%${safeLocation}%,unloading_pincode.ilike.%${safeLocation}%,` +
-          `loading_city.ilike.%${safeLocation}%,unloading_city.ilike.%${safeLocation}%`
-        );
-      }
+      .map((loc) => String(loc).replace(/[,()]/g, '').trim())
+      .filter(Boolean);
+    if (locations.length) {
+      const orFilter = locations
+        .map((loc) => `loading_pincode.ilike.%${loc}%,unloading_pincode.ilike.%${loc}%,loading_city.ilike.%${loc}%,unloading_city.ilike.%${loc}%`)
+        .join(',');
+      query = query.or(orFilter);
     }
     if (material_type) query = query.ilike('material_type', `%${material_type}%`);
   }
