@@ -3,9 +3,13 @@ import { Modal, View, Text, FlatList, TouchableOpacity, ActivityIndicator } from
 import { Icon, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { POPULAR_CITIES } from '../lib/popularCities';
+import { INDIAN_CITIES } from '../lib/indianCities';
 import { lookupPincode } from '../lib/pincodeLookup';
 
 const PINCODE_LOOKUP_DEBOUNCE_MS = 400;
+// Cap the type-ahead list — a two-column grid of hundreds of matches for a
+// short query ("a", "ka") is just scroll, and FlatList stays cheap either way.
+const MAX_CITY_SUGGESTIONS = 40;
 
 // Full-screen "select locations" step for FindLoadsScreen's location filter —
 // tapping the search-by-pincode-or-city field opens this instead of typing
@@ -55,11 +59,31 @@ export default function LocationPickerModal({ visible, initialValues, onApply, o
     };
   }, [trimmedQuery]);
 
+  // Empty box → the curated "popular" grid. As soon as the caller types a
+  // name, suggest from the full ~1,300-city gazetteer instead (prefix matches
+  // first, then any substring) so places outside the popular 20 — Noida,
+  // Bhiwandi, Zirakpur — still surface. A numeric query is a pincode, handled
+  // by its own row above, so no city list for it.
   const filteredCities = useMemo(() => {
     if (!trimmedQuery) return POPULAR_CITIES;
+    if (isNumericQuery) return [];
     const q = trimmedQuery.toLowerCase();
-    return POPULAR_CITIES.filter((city) => city.toLowerCase().includes(q));
-  }, [trimmedQuery]);
+    const startsWith = [];
+    const contains = [];
+    for (const city of INDIAN_CITIES) {
+      const lc = city.toLowerCase();
+      if (lc.startsWith(q)) startsWith.push(city);
+      else if (lc.includes(q)) contains.push(city);
+    }
+    return [...startsWith, ...contains].slice(0, MAX_CITY_SUGGESTIONS);
+  }, [trimmedQuery, isNumericQuery]);
+
+  // When the typed text already exactly names a suggested city, the generic
+  // "Search for …" row is just a duplicate — hide it in that case.
+  const hasExactCityMatch = useMemo(
+    () => filteredCities.some((city) => city.toLowerCase() === trimmedQuery.toLowerCase()),
+    [filteredCities, trimmedQuery]
+  );
 
   const toggle = (value) => {
     setSelected((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
@@ -162,7 +186,7 @@ export default function LocationPickerModal({ visible, initialValues, onApply, o
                 </TouchableOpacity>
               )}
 
-              {!!trimmedQuery && !isNumericQuery && (
+              {!!trimmedQuery && !isNumericQuery && !hasExactCityMatch && (
                 <TouchableOpacity
                   className={`mb-4 flex-row items-center gap-2 rounded-xl border px-4 py-3 ${
                     selected.includes(trimmedQuery) ? 'border-brand bg-orange-100' : 'border-brand bg-orange-50'
