@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, Alert, ActivityIndicator, Modal, Pressable } from 'react-native';
+import { View, Text, Alert, ActivityIndicator, Modal, Pressable, TouchableOpacity } from 'react-native';
 import { Icon, Button } from 'react-native-paper';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { pick, types as documentTypes } from '@react-native-documents/picker';
@@ -60,7 +60,10 @@ function PickerSheet({ visible, label, onTakePhoto, onChooseGallery, onAttachPdf
   );
 }
 
-export default function DocumentUploadRow({ bucket, documentType, label, icon, uploadedDoc, getUploadUrl, confirmUpload, onUploaded }) {
+// `onView`, when given, adds an eye button next to Replace once a document is
+// on file — for callers (e.g. the Trip Details screen) that also want to open
+// what was uploaded, not just swap it.
+export default function DocumentUploadRow({ bucket, documentType, label, icon, uploadedDoc, getUploadUrl, confirmUpload, onUploaded, onView }) {
   const { t } = useLanguage();
   const [busy, setBusy] = useState(false);
   const [sheetVisible, setSheetVisible] = useState(false);
@@ -138,18 +141,26 @@ export default function DocumentUploadRow({ bucket, documentType, label, icon, u
           {!!uploadedDoc && <Text className="text-xs text-green-600">✓ {t('uploaded')}</Text>}
         </View>
       </View>
-      {busy ? (
-        <ActivityIndicator color="#f97316" />
-      ) : (
-        <Button
-          mode={uploadedDoc ? 'outlined' : 'contained'}
-          buttonColor={uploadedDoc ? undefined : '#f97316'}
-          compact
-          onPress={() => setSheetVisible(true)}
-        >
-          {uploadedDoc ? t('replace') : t('upload')}
-        </Button>
-      )}
+      <View className="flex-row items-center">
+        {!!uploadedDoc && !!onView && (
+          <TouchableOpacity onPress={onView} hitSlop={8} className="mr-1 flex-row items-center gap-1 px-2 py-1">
+            <Icon source="eye-outline" size={18} color="#f97316" />
+            <Text className="text-sm font-semibold text-brand">{t('view')}</Text>
+          </TouchableOpacity>
+        )}
+        {busy ? (
+          <ActivityIndicator color="#f97316" />
+        ) : (
+          <Button
+            mode={uploadedDoc ? 'outlined' : 'contained'}
+            buttonColor={uploadedDoc ? undefined : '#f97316'}
+            compact
+            onPress={() => setSheetVisible(true)}
+          >
+            {uploadedDoc ? t('replace') : t('upload')}
+          </Button>
+        )}
+      </View>
 
       <PickerSheet
         visible={sheetVisible}

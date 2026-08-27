@@ -3,8 +3,11 @@ import { supabaseAdmin } from '../lib/supabase.js';
 import { notifyEmail } from '../lib/notify.js';
 import { applyWalletAdjustment } from '../lib/wallet.js';
 
-const KYC_BUCKET = 'kyc-documents';
+const TRIP_DOCS_BUCKET = 'trip-documents';
 const TRIP_DOC_URL_TTL_SECONDS = 300;
+// The paperwork either trip party can attach on the Trip Details screen once
+// a bid is approved (see migrations/044_add_trip_documents.sql).
+const TRIP_DOCUMENT_TYPES = ['eway_bill', 'bilty'];
 
 const router = Router();
 
@@ -42,24 +45,47 @@ async function profileForEmail(email) {
   return data;
 }
 
-// Short-lived (5 min) signed URLs, minted fresh on every trip-details fetch
-// rather than stored/cached, so a leaked link stops working quickly.
-async function documentsForUser(userId) {
-  const { data: kycCase } = await supabaseAdmin.from('kyc_cases').select('id').eq('user_id', userId).maybeSingle();
-  if (!kycCase) return [];
+// The E-Way Bill / Bilty attached to this trip, keyed by document_type, each
+// with a short-lived (5 min) signed view URL minted fresh on every
+// trip-details fetch rather than stored/cached so a leaked link stops
+// working quickly. Shape: { eway_bill?: {...}, bilty?: {...} }.
+async function tripDocumentsForLoad(loadId) {
+  const { data: rows } = await supabaseAdmin
+    .from('trip_documents')
+    .select('document_type, file_name, mime_type, storage_path, uploaded_by_email, updated_at')
+    .eq('load_id', loadId);
+  if (!rows?.length) return {};
 
-  const { data: docs } = await supabaseAdmin
-    .from('kyc_documents')
-    .select('document_type, file_name, mime_type, storage_path')
-    .eq('case_id', kycCase.id);
-  if (!docs?.length) return [];
-
-  return Promise.all(
-    docs.map(async ({ document_type, file_name, mime_type, storage_path }) => {
-      const { data } = await supabaseAdmin.storage.from(KYC_BUCKET).createSignedUrl(storage_path, TRIP_DOC_URL_TTL_SECONDS);
-      return { document_type, file_name, mime_type, url: data?.signedUrl ?? null };
+  const entries = await Promise.all(
+    rows.map(async ({ document_type, file_name, mime_type, storage_path, uploaded_by_email, updated_at }) => {
+      const { data } = await supabaseAdmin.storage.from(TRIP_DOCS_BUCKET).createSignedUrl(storage_path, TRIP_DOC_URL_TTL_SECONDS);
+      return [document_type, { document_type, file_name, mime_type, uploaded_by_email, updated_at, url: data?.signedUrl ?? null }];
     })
   );
+  return Object.fromEntries(entries);
+}
+
+// Shared by the two trip-document routes below: resolves the load and its
+// approved bid and checks the caller is one of the trip's two parties. Same
+// explicit-JS-check constraint trip-details/deliver document (the parties are
+// identified by email, not a user_id RLS can key on). Returns { status, error }
+// on failure so the caller can forward it verbatim.
+async function resolveTripForParty(req) {
+  const { data: load, error: loadError } = await req.supabase
+    .from('loads').select('*').eq('id', req.params.load_id).maybeSingle();
+  if (loadError) { console.error('[load-bids]', loadError); return { status: 400, error: 'Could not load this load' }; }
+  if (!load) return { status: 404, error: 'Load not found' };
+
+  const { data: bid, error: bidError } = await req.supabase
+    .from('load_bids').select('*').eq('load_id', req.params.load_id).eq('status', 'approved').maybeSingle();
+  if (bidError) { console.error('[load-bids]', bidError); return { status: 400, error: 'Could not load bidding details' }; }
+  if (!bid) return { status: 404, error: 'No accepted bid yet for this load' };
+
+  const isPoster = req.user.email === load.posted_by;
+  const isAccepter = req.user.email === bid.bid_by_email;
+  if (!isPoster && !isAccepter) return { status: 403, error: 'Not authorized to view trip details for this load' };
+
+  return { load, bid, isPoster, isAccepter };
 }
 
 // Picks the highest-specificity active commission_rules row matching this
@@ -236,17 +262,15 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
     return res.status(403).json({ error: 'Not authorized to view trip details for this load' });
   }
 
-  const [posterProfile, accepterProfile] = await Promise.all([
+  const [posterProfile, accepterProfile, tripDocuments] = await Promise.all([
     profileForEmail(load.posted_by),
-    profileForEmail(bid.bid_by_email)
-  ]);
-
-  const [posterDocuments, accepterDocuments] = await Promise.all([
-    posterProfile ? documentsForUser(posterProfile.user_id) : [],
-    accepterProfile ? documentsForUser(accepterProfile.user_id) : []
+    profileForEmail(bid.bid_by_email),
+    tripDocumentsForLoad(load.id)
   ]);
 
   res.json({
+    // E-Way Bill / Bilty either party attached to this trip, keyed by type.
+    trip_documents: tripDocuments,
     viewer_role: isPoster ? 'poster' : 'accepter',
     load,
     bid: {
@@ -268,8 +292,7 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
       trust_score: posterProfile?.trust_score ?? null,
       rating_score: posterProfile?.rating_score ?? null,
       total_ratings: posterProfile?.total_ratings ?? null,
-      kyc_status: posterProfile?.kyc_status ?? null,
-      documents: posterDocuments
+      kyc_status: posterProfile?.kyc_status ?? null
     },
     accepter: {
       email: bid.bid_by_email,
@@ -282,10 +305,82 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
       trust_score: accepterProfile?.trust_score ?? null,
       rating_score: accepterProfile?.rating_score ?? null,
       total_ratings: accepterProfile?.total_ratings ?? null,
-      kyc_status: accepterProfile?.kyc_status ?? null,
-      documents: accepterDocuments
+      kyc_status: accepterProfile?.kyc_status ?? null
     }
   });
+});
+
+// POST /api/load-bids/load/:load_id/documents/upload-url { document_type, file_name }
+// — mints a signed Storage upload URL for one of this trip's two document
+// slots (eway_bill / bilty). Same signed-upload-URL-then-confirm shape as
+// wallet.js's payment-proof flow; either trip party may upload or replace.
+router.post('/load/:load_id/documents/upload-url', async (req, res) => {
+  const { document_type, file_name } = req.body;
+  if (!TRIP_DOCUMENT_TYPES.includes(document_type)) {
+    return res.status(400).json({ error: 'document_type must be eway_bill or bilty' });
+  }
+
+  const trip = await resolveTripForParty(req);
+  if (trip.error) return res.status(trip.status).json({ error: trip.error });
+
+  const ext = file_name && file_name.includes('.') ? file_name.split('.').pop().toLowerCase() : 'jpg';
+  const storage_path = `${req.user.id}/${trip.load.id}-${document_type}.${ext}`;
+
+  await supabaseAdmin.storage.from(TRIP_DOCS_BUCKET).remove([storage_path]);
+  const { data, error } = await supabaseAdmin.storage.from(TRIP_DOCS_BUCKET).createSignedUploadUrl(storage_path);
+  if (error) return dbError(res, error, 'Could not start the upload');
+
+  res.status(200).json({ storage_path, signed_url: data.signedUrl, token: data.token });
+});
+
+// POST /api/load-bids/load/:load_id/documents { document_type, storage_path, file_name, mime_type }
+// — records a file already uploaded via the signed URL above against the
+// trip. Upserts on (load_id, document_type) so a re-upload just replaces it,
+// removing the previous object (which may sit under the other party's folder).
+router.post('/load/:load_id/documents', async (req, res) => {
+  const { document_type, storage_path, file_name, mime_type } = req.body;
+  if (!TRIP_DOCUMENT_TYPES.includes(document_type)) {
+    return res.status(400).json({ error: 'document_type must be eway_bill or bilty' });
+  }
+  if (!storage_path) return res.status(400).json({ error: 'storage_path is required' });
+  if (!storage_path.startsWith(`${req.user.id}/`)) {
+    return res.status(403).json({ error: 'storage_path does not belong to this account' });
+  }
+
+  const trip = await resolveTripForParty(req);
+  if (trip.error) return res.status(trip.status).json({ error: trip.error });
+
+  const { data: existing } = await supabaseAdmin
+    .from('trip_documents')
+    .select('storage_path')
+    .eq('load_id', trip.load.id)
+    .eq('document_type', document_type)
+    .maybeSingle();
+  if (existing?.storage_path && existing.storage_path !== storage_path) {
+    await supabaseAdmin.storage.from(TRIP_DOCS_BUCKET).remove([existing.storage_path]);
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('trip_documents')
+    .upsert(
+      {
+        load_id: trip.load.id,
+        bid_id: trip.bid.id,
+        document_type,
+        uploaded_by: req.user.id,
+        uploaded_by_email: req.user.email,
+        storage_path,
+        file_name: file_name ?? null,
+        mime_type: mime_type ?? null,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'load_id,document_type' }
+    )
+    .select('document_type, file_name')
+    .single();
+  if (error) return dbError(res, error, 'Could not save this document');
+
+  res.status(200).json({ ok: true, document: data });
 });
 
 // POST /api/load-bids/load/:load_id/deliver — either trip party (the poster or

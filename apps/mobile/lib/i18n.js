@@ -430,6 +430,11 @@ const translations = {
     loadAccepterDetails: 'Load Accepter Details',
     documents: 'Documents',
     noDocumentsUploaded: 'No documents uploaded yet',
+    tripDocuments: 'Trip Documents',
+    ewayBill: 'E-Way Bill',
+    bilty: 'Bilty (LR)',
+    uploadedByYou: 'Uploaded by you',
+    uploadedByOtherParty: 'Uploaded by the other party',
     companyName: 'Company',
     location: 'Location'
   },
@@ -858,6 +863,11 @@ const translations = {
     loadAccepterDetails: 'लोड स्वीकर्ता विवरण',
     documents: 'दस्तावेज़',
     noDocumentsUploaded: 'अभी तक कोई दस्तावेज़ अपलोड नहीं हुआ',
+    tripDocuments: 'ट्रिप दस्तावेज़',
+    ewayBill: 'ई-वे बिल',
+    bilty: 'बिल्टी (LR)',
+    uploadedByYou: 'आपके द्वारा अपलोड किया गया',
+    uploadedByOtherParty: 'दूसरे पक्ष द्वारा अपलोड किया गया',
     companyName: 'कंपनी',
     location: 'स्थान'
   }

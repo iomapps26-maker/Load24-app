@@ -5,8 +5,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { AXLE_LABELS, BODY_TYPE_LABELS, SPECIAL_CONDITION_LABELS } from '../lib/loadOptions';
-import { KYC_DOCUMENT_META } from '../lib/kycDocuments';
 import LoadCard from '../components/LoadCard';
+import DocumentUploadRow from '../components/DocumentUploadRow';
+
+// The two paperwork slots either trip party can attach once a bid is approved
+// (backend: POST /api/load-bids/load/:id/documents — see routes/loadBids.js).
+const TRIP_DOC_TYPES = [
+  { type: 'eway_bill', labelKey: 'ewayBill', icon: 'file-document-outline' },
+  { type: 'bilty', labelKey: 'bilty', icon: 'clipboard-text-outline' }
+];
 
 function InfoRow({ icon, label, value }) {
   if (!value) return null;
@@ -18,26 +25,6 @@ function InfoRow({ icon, label, value }) {
         {value}
       </Text>
     </View>
-  );
-}
-
-function DocumentLink({ doc, t }) {
-  const meta = KYC_DOCUMENT_META[doc.document_type] ?? { labelKey: null, icon: 'file-outline' };
-  const label = meta.labelKey ? t(meta.labelKey) : doc.document_type;
-  return (
-    <TouchableOpacity
-      onPress={() => doc.url && Linking.openURL(doc.url)}
-      disabled={!doc.url}
-      className="mb-2 flex-row items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-3"
-    >
-      <View className="mr-3 flex-1 flex-row items-center gap-2">
-        <Icon source={meta.icon} size={18} color="#f97316" />
-        <Text className="flex-1 text-sm font-semibold text-slate-800" numberOfLines={1}>
-          {label}
-        </Text>
-      </View>
-      <Icon source="eye-outline" size={18} color="#f97316" />
-    </TouchableOpacity>
   );
 }
 
@@ -59,13 +46,41 @@ function PartyCard({ title, party, t }) {
           <Text className="text-sm font-bold text-white">{party.mobile}</Text>
         </TouchableOpacity>
       )}
+    </View>
+  );
+}
 
-      <Text className="mb-2 mt-4 text-sm font-semibold text-slate-500">{t('documents')}</Text>
-      {party.documents?.length ? (
-        party.documents.map((doc) => <DocumentLink key={doc.document_type} doc={doc} t={t} />)
-      ) : (
-        <Text className="text-xs text-slate-400">{t('noDocumentsUploaded')}</Text>
-      )}
+// E-Way Bill + Bilty upload slots, shown to both trip parties. Each row is an
+// upload/replace control; once a file is on record it also gets a View button
+// that opens the (short-lived, signed) URL from the trip-details payload.
+function TripDocumentsCard({ loadId, documents, viewerEmail, onChanged, t }) {
+  return (
+    <View className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
+      <Text className="mb-3 text-base font-bold text-slate-900">{t('tripDocuments')}</Text>
+      {TRIP_DOC_TYPES.map(({ type, labelKey, icon }) => {
+        const doc = documents?.[type];
+        const byYou = doc?.uploaded_by_email && doc.uploaded_by_email === viewerEmail;
+        return (
+          <View key={type}>
+            <DocumentUploadRow
+              bucket="trip-documents"
+              documentType={type}
+              label={t(labelKey)}
+              icon={icon}
+              uploadedDoc={doc}
+              getUploadUrl={(documentType, fileName) => api.loadBids.tripDocumentUploadUrl(loadId, documentType, fileName)}
+              confirmUpload={(body) => api.loadBids.confirmTripDocument(loadId, body)}
+              onUploaded={onChanged}
+              onView={() => doc?.url && Linking.openURL(doc.url)}
+            />
+            {!!doc && (
+              <Text className="-mt-2 mb-3 ml-1 text-xs text-slate-400">
+                {byYou ? t('uploadedByYou') : t('uploadedByOtherParty')}
+              </Text>
+            )}
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -128,6 +143,7 @@ export default function TripDetailsScreen() {
 
   const { load, bid, poster, accepter, viewer_role } = data;
   const otherParty = viewer_role === 'poster' ? accepter : poster;
+  const viewerEmail = viewer_role === 'poster' ? poster?.email : accepter?.email;
   // The load's bhada_price is just the original asking price — once a bid is
   // approved, the actual agreed price is what was bid, so that's what the
   // trip (and everything derived from it) should show.
@@ -190,6 +206,14 @@ export default function TripDetailsScreen() {
         )}
         <InfoRow icon="text" label={t('customRequirement')} value={load.custom_requirement} />
       </View>
+
+      <TripDocumentsCard
+        loadId={loadId}
+        documents={data.trip_documents}
+        viewerEmail={viewerEmail}
+        onChanged={() => queryClient.invalidateQueries({ queryKey: ['tripDetails', loadId] })}
+        t={t}
+      />
 
       <PartyCard
         title={viewer_role === 'poster' ? t('loadAccepterDetails') : t('posterDetails')}

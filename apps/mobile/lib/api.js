@@ -163,6 +163,11 @@ export const api = {
     place: (body) => request('/api/load-bids', { method: 'POST', body }),
     forLoad: (loadId) => request(`/api/load-bids/load/${loadId}`),
     tripDetails: (loadId) => request(`/api/load-bids/load/${loadId}/trip-details`),
+    // E-Way Bill / Bilty attached to a trip — signed-upload-URL then confirm,
+    // same shape as trucks.uploadUrl/confirmDocument (see DocumentUploadRow).
+    tripDocumentUploadUrl: (loadId, document_type, file_name) =>
+      request(`/api/load-bids/load/${loadId}/documents/upload-url`, { method: 'POST', body: { document_type, file_name } }),
+    confirmTripDocument: (loadId, body) => request(`/api/load-bids/load/${loadId}/documents`, { method: 'POST', body }),
     deliver: (loadId) => request(`/api/load-bids/load/${loadId}/deliver`, { method: 'POST' }),
     approve: (id) => request(`/api/load-bids/${id}/approve`, { method: 'POST' }),
     reject: (id) => request(`/api/load-bids/${id}/reject`, { method: 'POST' })

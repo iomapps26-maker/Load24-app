@@ -66,6 +66,19 @@ SQL Editor (no migration runner wired up yet).
   that credits the wallet — or reject it with a reason. Screenshots live in
   the private `wallet-payment-proofs` Storage bucket, same signed-upload-URL
   pattern as `kyc-documents` (008_add_kyc_documents.sql).
+- `migrations/044_add_trip_documents.sql` — `trip_documents`: the E-Way Bill
+  and Bilty (lorry receipt) either trip party attaches on the Trip Details
+  screen once a bid is approved. One row per `(load_id, document_type)` —
+  a re-upload by either side replaces it. Files live in the private
+  `trip-documents` Storage bucket, same signed-upload-URL-then-confirm
+  pattern as `kyc-documents`; routes are
+  `POST /api/load-bids/load/:load_id/documents{,/upload-url}` and the files
+  come back (with short-lived signed view URLs) inside
+  `GET /api/load-bids/load/:load_id/trip-details` as `trip_documents`.
+  Writes go through `supabaseAdmin` after an explicit party check in
+  `routes/loadBids.js` (same email-not-user_id constraint as
+  `trip_location_pings`), so the table's only RLS policy is a staff read
+  backstop.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.
