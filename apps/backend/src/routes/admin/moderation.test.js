@@ -215,3 +215,62 @@ describe('PATCH /api/admin/moderation/trucks/:id', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('PATCH /api/admin/moderation/users/:userId', () => {
+  it('rejects a non-staff caller with 403', async () => {
+    const res = await request(buildApp('user-1')).patch('/api/admin/moderation/users/u1').send({ is_active: false });
+    expect(res.status).toBe(403);
+  });
+
+  it('400s when no recognised field is supplied', async () => {
+    staff();
+    const res = await request(buildApp()).patch('/api/admin/moderation/users/u1').send({ nope: 1 });
+    expect(res.status).toBe(400);
+  });
+
+  it('deactivates an account', async () => {
+    staff();
+    adminStore.user_profiles.push({ user_id: 'u1', is_active: true });
+    const res = await request(buildApp()).patch('/api/admin/moderation/users/u1').send({ is_active: false });
+    expect(res.status).toBe(200);
+    expect(res.body.is_active).toBe(false);
+  });
+
+  it('sets a bidding restriction with a reason', async () => {
+    staff();
+    adminStore.user_profiles.push({ user_id: 'u1', is_active: true });
+    const until = new Date(Date.now() + 86400000).toISOString();
+    const res = await request(buildApp())
+      .patch('/api/admin/moderation/users/u1')
+      .send({ bidding_restricted_until: until, bidding_restriction_reason: 'payment dispute' });
+    expect(res.status).toBe(200);
+    expect(res.body.bidding_restricted_until).toBe(until);
+    expect(res.body.bidding_restriction_reason).toBe('payment dispute');
+  });
+
+  it('lifts a restriction (null) and clears the reason', async () => {
+    staff();
+    adminStore.user_profiles.push({
+      user_id: 'u1',
+      bidding_restricted_until: '2026-12-01T00:00:00.000Z',
+      bidding_restriction_reason: 'old reason'
+    });
+    const res = await request(buildApp()).patch('/api/admin/moderation/users/u1').send({ bidding_restricted_until: null });
+    expect(res.status).toBe(200);
+    expect(res.body.bidding_restricted_until).toBeNull();
+    expect(res.body.bidding_restriction_reason).toBeNull();
+  });
+
+  it('rejects a non-date bidding_restricted_until', async () => {
+    staff();
+    adminStore.user_profiles.push({ user_id: 'u1' });
+    const res = await request(buildApp()).patch('/api/admin/moderation/users/u1').send({ bidding_restricted_until: 'soon' });
+    expect(res.status).toBe(400);
+  });
+
+  it('404s for a user that does not exist', async () => {
+    staff();
+    const res = await request(buildApp()).patch('/api/admin/moderation/users/ghost').send({ is_active: false });
+    expect(res.status).toBe(404);
+  });
+});

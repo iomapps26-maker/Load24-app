@@ -15,6 +15,14 @@ const TRIP_DOC_TYPES = [
   { type: 'bilty', labelKey: 'bilty', icon: 'clipboard-text-outline' }
 ];
 
+// bookings.status (spec §8) -> i18n key for the label shown next to the ref.
+const BOOKING_STATUS_TKEY = {
+  confirmed: 'bookingStatusConfirmed',
+  in_transit: 'bookingStatusInTransit',
+  completed: 'bookingStatusCompleted',
+  cancelled: 'bookingStatusCancelled'
+};
+
 function InfoRow({ icon, label, value }) {
   if (!value) return null;
   return (
@@ -141,7 +149,7 @@ export default function TripDetailsScreen() {
     );
   }
 
-  const { load, bid, poster, accepter, viewer_role } = data;
+  const { load, bid, booking, poster, accepter, viewer_role } = data;
   const otherParty = viewer_role === 'poster' ? accepter : poster;
   const viewerEmail = viewer_role === 'poster' ? poster?.email : accepter?.email;
   // The load's bhada_price is just the original asking price — once a bid is
@@ -154,6 +162,17 @@ export default function TripDetailsScreen() {
   return (
     <ScrollView className="flex-1 bg-slate-50 px-4 pt-4">
       <LoadCard load={agreedLoad} hideActions />
+
+      {!!(booking?.booking_ref || bid?.booking_ref) && (
+        <View className="mb-4 flex-row items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white py-3">
+          <Icon source="identifier" size={16} color="#64748b" />
+          <Text className="text-xs text-slate-400">{t('bookingId')}</Text>
+          <Text className="text-sm font-bold text-slate-900">{booking?.booking_ref || bid?.booking_ref}</Text>
+          {!!booking?.status && (
+            <Text className="text-xs font-semibold text-slate-500">· {t(BOOKING_STATUS_TKEY[booking.status] || 'bookingStatusConfirmed')}</Text>
+          )}
+        </View>
+      )}
 
       {canDeliver ? (
         <TouchableOpacity

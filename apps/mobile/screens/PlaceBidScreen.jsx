@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { TRUCK_TYPE_LABELS } from '../lib/loadOptions';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
+import DateField from '../components/DateField';
 
 // Bidding with a specific truck is optional (brokers/transporters often bid
 // without one), so this is a compact chip row rather than the full required
@@ -65,6 +66,20 @@ function unloadingDateLabel(dateStr) {
   return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long' });
 }
 
+// One line of the payment breakup: label on the left, ₹ amount on the right.
+// `strong` bolds it (the "You receive" total), `muted` greys it (the Load24
+// charge deduction).
+function BreakupRow({ label, amount, sign = '', strong = false, muted = false }) {
+  return (
+    <View className="flex-row items-center justify-between py-1.5">
+      <Text className={`text-sm ${strong ? 'font-bold text-slate-900' : muted ? 'text-slate-500' : 'text-slate-600'}`}>{label}</Text>
+      <Text className={`text-sm ${strong ? 'font-extrabold text-slate-900' : muted ? 'text-slate-500' : 'font-semibold text-slate-800'}`}>
+        {sign}₹{Number(amount).toLocaleString('en-IN')}
+      </Text>
+    </View>
+  );
+}
+
 function RoutePoint({ color, icon, title, address }) {
   return (
     <View className="flex-row items-start">
@@ -79,6 +94,39 @@ function RoutePoint({ color, icon, title, address }) {
       </View>
     </View>
   );
+}
+
+// Mirrors the backend's lib/bidEligibility.js truck checks so the button can
+// disable (and say why) before the server's coded 403 comes back. Only
+// consulted for vehicle_owner / driver bidders — every other role bids with
+// no vehicle at all.
+function docExpired(dateStr) {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d < today;
+}
+
+function isTruckEligibleForLoad(truck, load) {
+  if (!truck || !load) return false;
+  if (!truck.verified) return false;
+  if (docExpired(truck.permit_expiry) || docExpired(truck.puc_expiry) || docExpired(truck.insurance_expiry)) return false;
+
+  const required = load.required_truck_type;
+  const typeOk =
+    required === 'other' && truck.truck_type === 'other'
+      ? !!(load.required_truck_type_other || '').trim() &&
+        (load.required_truck_type_other || '').trim().toLowerCase() === (truck.truck_type_other || '').trim().toLowerCase()
+      : required === truck.truck_type;
+  if (!typeOk) return false;
+
+  const capacity = truck.capacity_tons == null ? NaN : Number(truck.capacity_tons);
+  const weight = Number(load.weight_tons);
+  if (Number.isNaN(capacity)) return false;
+  if (weight > 0 && capacity < weight) return false;
+  return true;
 }
 
 // Full-page bid entry, opened either from LoadCard's "Let's Bidding" button
@@ -105,6 +153,12 @@ export default function PlaceBidScreen() {
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
   const { data: trucks } = useQuery({ queryKey: ['trucks'], queryFn: api.trucks.mine });
+  // Load24 charge % + wallet security-deposit amount for the payment breakup
+  // below — both are staff-tunable from the admin panel, so they're fetched
+  // rather than hardcoded. `['wallet']` is the same cache key WalletScreen
+  // fills, so this is usually a warm read.
+  const { data: biddingConfig } = useQuery({ queryKey: ['biddingConfig'], queryFn: api.loadBids.config });
+  const { data: wallet, isLoading: isLoadingWallet } = useQuery({ queryKey: ['wallet'], queryFn: api.wallet.balance });
 
   // Every hook above (and below) must run unconditionally on every render —
   // `load` starts out undefined for the deep-link entry point until its
@@ -115,6 +169,10 @@ export default function PlaceBidScreen() {
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [truckId, setTruckId] = useState(null);
+  // Optional: the date the bidder expects to pick the load up. Pre-filled
+  // with the load's own loading date as the natural starting point — the
+  // bidder can push it out or clear it. Sent as expected_pickup_at.
+  const [expectedPickup, setExpectedPickup] = useState(load?.loading_date || '');
   const selectedTruck = trucks?.find((tr) => tr.id === truckId) ?? null;
 
   // useState's initializer only runs once on mount — fine for LoadCard's
@@ -127,6 +185,15 @@ export default function PlaceBidScreen() {
     if (!loadParam && loadId) setAmount(basePrice || BID_STEP);
   }, [basePrice, loadParam, loadId]);
 
+  // Same resync for the deep-link entry point: `load` (and its loading_date)
+  // isn't known on the first render, so seed the expected-pickup default once
+  // it resolves — unless the bidder has already picked a date themselves.
+  useEffect(() => {
+    if (!loadParam && loadId && load?.loading_date) {
+      setExpectedPickup((current) => current || load.loading_date);
+    }
+  }, [load?.loading_date, loadParam, loadId]);
+
   const bidMutation = useMutation({
     mutationFn: () =>
       api.loadBids.place({
@@ -134,7 +201,8 @@ export default function PlaceBidScreen() {
         amount,
         bid_by_type: profile?.user_type,
         truck_id: selectedTruck?.id,
-        truck_number: selectedTruck?.registration_number
+        truck_number: selectedTruck?.registration_number,
+        expected_pickup_at: expectedPickup || undefined
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['myBids'] });
@@ -145,6 +213,42 @@ export default function PlaceBidScreen() {
   });
 
   const adjust = (delta) => setAmount((a) => Math.max(BID_STEP, a + delta));
+
+  // Payment breakup. chargePercent/securityDeposit fall back to the same
+  // defaults the backend seeds (043_add_platform_settings.sql) so the card
+  // still renders sensibly if the config fetch hasn't resolved. The wallet
+  // check mirrors loadBids.js's POST / gate (available balance, not raw
+  // balance) so the button disables for the same reason the server would 402.
+  const chargePercent = Number(biddingConfig?.load24_charge_percent ?? 4);
+  const securityDeposit = Number(biddingConfig?.security_deposit_amount ?? 1000);
+  const load24Charge = Math.round((amount * chargePercent) / 100);
+  const netReceive = amount - load24Charge;
+  const walletBalance = Number(wallet?.available_balance ?? 0);
+  // While the wallet balance is still loading (Render cold starts can take
+  // 20s), don't block bidding on an unknown balance — the backend's POST /
+  // gate is the real enforcement and its 402 message is surfaced via
+  // `error`. Once it resolves, enforce the same rule the server does.
+  const walletKnown = !isLoadingWallet;
+  const meetsSecurityDeposit = securityDeposit <= 0 || !walletKnown || walletBalance >= securityDeposit;
+
+  // Bidding is gated to KYC-verified users (loadBids.js POST / returns a
+  // kyc_verification_required 403). Mirror it client-side: until the profile
+  // resolves, don't block — the server stays the real enforcement.
+  const kycKnown = profile !== undefined;
+  const kycVerified = !kycKnown || profile?.kyc_status === 'verified';
+
+  // Remaining bid-eligibility conditions (spec §2), all mirrored the same
+  // "OK until the profile resolves" way — loadBids.js's coded 403 stays
+  // authoritative and surfaces through `error`.
+  const accountActive = profile?.is_active !== false;
+  const mobileVerified = profile?.mobile_verified !== false;
+  const notRestricted =
+    !profile?.bidding_restricted_until || new Date(profile.bidding_restricted_until) <= new Date();
+  // vehicle_owner / driver must bid with a truck that clears every vehicle
+  // check; other roles never need one.
+  const needsVehicle = ['vehicle_owner', 'driver'].includes(profile?.user_type);
+  const vehicleEligible = !needsVehicle || isTruckEligibleForLoad(selectedTruck, load);
+  const eligibleToBid = accountActive && mobileVerified && notRestricted && kycVerified && vehicleEligible;
 
   if (!load) {
     return (
@@ -168,7 +272,16 @@ export default function PlaceBidScreen() {
 
   return (
     <View className="flex-1 bg-slate-50">
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 220 }}>
+      <ScrollView
+        contentContainerStyle={{
+          padding: 16,
+          paddingBottom:
+            240 +
+            (meetsSecurityDeposit ? 0 : 60) +
+            (kycVerified ? 0 : 60) +
+            (accountActive && mobileVerified && notRestricted && vehicleEligible ? 0 : 60)
+        }}
+      >
         <View className="mb-4 rounded-3xl border border-slate-100 bg-white p-5">
           <RoutePoint color="#16a34a" icon="arrow-up" title={load.loading_city || load.loading_pincode} address={load.loading_address} />
           <View className="my-2 ml-3 h-6 border-l border-dashed border-slate-300" />
@@ -215,6 +328,45 @@ export default function PlaceBidScreen() {
             )}
           </View>
         </View>
+
+        <View className="mb-4 rounded-3xl border border-slate-100 bg-white p-5">
+          <Text className="mb-3 text-base font-bold text-slate-900">{t('expectedPickupTitle')}</Text>
+          <DateField label={t('expectedPickupDate')} value={expectedPickup} onChange={setExpectedPickup} />
+        </View>
+
+        <View className="mb-4 rounded-3xl border border-slate-100 bg-white p-5">
+          <Text className="mb-2 text-base font-bold text-slate-900">{t('paymentBreakup')}</Text>
+
+          <BreakupRow label={t('bidAmountLabel')} amount={amount} />
+          <BreakupRow label={`${t('load24ChargeLabel')} (${chargePercent.toFixed(1)}%)`} amount={load24Charge} sign="− " muted />
+          <View className="my-1 border-t border-slate-100" />
+          <BreakupRow label={t('youReceiveLabel')} amount={netReceive} strong />
+
+          {securityDeposit > 0 && (
+            <View className="mt-3 rounded-2xl bg-slate-50 p-3">
+              <View className="flex-row items-center justify-between">
+                <View className="flex-row items-center gap-1.5">
+                  <Icon source="shield-lock-outline" size={16} color="#475569" />
+                  <Text className="text-sm font-semibold text-slate-700">{t('securityDepositLabel')}</Text>
+                </View>
+                <Text className="text-sm font-bold text-slate-900">₹{securityDeposit.toLocaleString('en-IN')}</Text>
+              </View>
+              <Text className="mt-1.5 text-xs leading-4 text-slate-500">{t('securityDepositHeldNote')}</Text>
+              {walletKnown && (
+                <View className="mt-2 flex-row items-center gap-1.5">
+                  <Icon
+                    source={walletBalance >= securityDeposit ? 'check-circle' : 'alert-circle-outline'}
+                    size={14}
+                    color={walletBalance >= securityDeposit ? '#16a34a' : '#dc2626'}
+                  />
+                  <Text className={`text-xs font-medium ${walletBalance >= securityDeposit ? 'text-green-700' : 'text-red-600'}`}>
+                    {t('walletBalance')}: ₹{walletBalance.toLocaleString('en-IN')}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
       </ScrollView>
 
       <View className="absolute bottom-0 left-0 right-0 rounded-t-3xl border border-slate-100 bg-white p-5 pb-8">
@@ -240,15 +392,72 @@ export default function PlaceBidScreen() {
 
         {!!error && <Text className="mb-3 text-center text-sm text-red-600">{error}</Text>}
 
+        {!meetsSecurityDeposit && (
+          <View className="mb-3 flex-row items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+            <Icon source="wallet-outline" size={16} color="#dc2626" />
+            <Text className="flex-1 text-xs text-red-700">{t('securityDepositRequired')}</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Wallet')} className="rounded-full bg-red-600 px-3 py-1.5">
+              <Text className="text-xs font-semibold text-white">{t('addMoney')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!kycVerified && (
+          <View className="mb-3 flex-row items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2">
+            <Icon source="shield-alert-outline" size={16} color="#f97316" />
+            <Text className="flex-1 text-xs text-orange-800">{t('kycRequiredToBid')}</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('KycVerification')} className="rounded-full bg-orange-600 px-3 py-1.5">
+              <Text className="text-xs font-semibold text-white">{t('kycVerification')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!accountActive && (
+          <View className="mb-3 flex-row items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+            <Icon source="account-alert-outline" size={16} color="#dc2626" />
+            <Text className="flex-1 text-xs text-red-700">{t('accountInactiveToBid')}</Text>
+          </View>
+        )}
+
+        {accountActive && !mobileVerified && (
+          <View className="mb-3 flex-row items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2">
+            <Icon source="cellphone-check" size={16} color="#f97316" />
+            <Text className="flex-1 text-xs text-orange-800">{t('mobileNotVerifiedToBid')}</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('ProfileSetup')} className="rounded-full bg-orange-600 px-3 py-1.5">
+              <Text className="text-xs font-semibold text-white">{t('verifyMobileCta')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {accountActive && !notRestricted && (
+          <View className="mb-3 flex-row items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+            <Icon source="cancel" size={16} color="#dc2626" />
+            <Text className="flex-1 text-xs text-red-700">
+              {profile?.bidding_restriction_reason
+                ? `${t('biddingRestrictedToBid')} (${profile.bidding_restriction_reason})`
+                : t('biddingRestrictedToBid')}
+            </Text>
+          </View>
+        )}
+
+        {accountActive && needsVehicle && !vehicleEligible && (
+          <View className="mb-3 flex-row items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2">
+            <Icon source="truck-alert-outline" size={16} color="#f97316" />
+            <Text className="flex-1 text-xs text-orange-800">
+              {selectedTruck ? t('vehicleNotEligibleToBid') : t('selectVehicleToBid')}
+            </Text>
+          </View>
+        )}
+
         <TruckChips trucks={trucks} selectedId={truckId} onSelect={setTruckId} t={t} />
 
         <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
 
         <TouchableOpacity
           onPress={() => bidMutation.mutate()}
-          disabled={bidMutation.isPending || amount <= 0 || !confirmed}
+          disabled={bidMutation.isPending || amount <= 0 || !confirmed || !meetsSecurityDeposit || !eligibleToBid}
           className="items-center rounded-2xl bg-green-600 py-4"
-          style={bidMutation.isPending || !confirmed ? { opacity: 0.6 } : undefined}
+          style={bidMutation.isPending || !confirmed || !meetsSecurityDeposit || !eligibleToBid ? { opacity: 0.6 } : undefined}
         >
           <Text className="text-base font-bold text-white">{t('confirmThisRate')}</Text>
         </TouchableOpacity>

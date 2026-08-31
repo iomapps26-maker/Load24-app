@@ -30,15 +30,21 @@ export async function getOrCreateWallet(userId) {
 // user/type/amount. Used by both routes/wallet.js's POST /adjust (a staff
 // member typing an amount in by hand) and automatic adjustments applied
 // elsewhere (loadBids.js auto-applies a matching commission_rules row on
-// trip completion) — one insert shape for "record a completed adjustment",
-// so neither call site duplicates the other's column list.
-export async function applyWalletAdjustment({ user_id, type, amount, notes, reference_load_id }) {
+// trip completion; lib/bidSecurityHold.js places/releases a bid's security
+// hold) — one insert shape for "record a completed adjustment", so neither
+// call site duplicates the other's column list.
+//
+// transaction_id is generated here unless the caller passes one — a caller
+// that needs a *deterministic* id (lib/bidSecurityHold.js derives REL-<bidId>
+// so a concurrent double-release trips the unique constraint instead of
+// double-crediting) supplies its own.
+export async function applyWalletAdjustment({ user_id, type, amount, notes, reference_load_id, transaction_id }) {
   const wallet = await getOrCreateWallet(user_id);
-  const transaction_id = generateTransactionId();
+  const txnId = transaction_id || generateTransactionId();
   const { data, error } = await supabaseAdmin
     .from('wallet_transactions')
     .insert({
-      transaction_id,
+      transaction_id: txnId,
       wallet_id: wallet.id,
       user_id,
       type,
@@ -67,4 +73,26 @@ export async function getAvailableBalance(wallet) {
 
   const held = (data || []).reduce((sum, row) => sum + Number(row.amount), 0);
   return Number(wallet.balance) - held;
+}
+
+// Net of the bid security holds (§5) that haven't been released yet: money
+// the user still owns but that's locked against an active bid or an
+// in-progress trip. Informational only — a 'security_hold' already debits
+// wallets.balance via the 014_add_wallet.sql trigger, so this is NOT
+// subtracted again from getAvailableBalance; it's surfaced separately
+// (GET /api/wallet -> held_balance) so the wallet screen can show "₹X held".
+export async function getHeldBalance(wallet) {
+  const { data, error } = await supabaseAdmin
+    .from('wallet_transactions')
+    .select('type, amount')
+    .eq('wallet_id', wallet.id)
+    .in('type', ['security_hold', 'security_release'])
+    .eq('status', 'completed');
+  if (error) throw error;
+
+  const net = (data || []).reduce(
+    (sum, row) => sum + (row.type === 'security_hold' ? Number(row.amount) : -Number(row.amount)),
+    0
+  );
+  return Math.max(0, net);
 }

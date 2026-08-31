@@ -168,7 +168,11 @@ router.get('/', async (req, res) => {
 
 // POST /api/loads — create a load (RLS enforces posted_by === caller's email)
 router.post('/', async (req, res) => {
-  const payload = { ...req.body, posted_by: req.user.email };
+  // load_id is a sequential "LDnnnnnn" assigned by a column default
+  // (db/migrations/045) and the uuid primary key is DB-generated — never let
+  // a client set or override either.
+  const { load_id, id, ...body } = req.body;
+  const payload = { ...body, posted_by: req.user.email };
 
   // Approximate road distance, looked up once at posting time and stored —
   // cheaper than re-querying Google on every read, and the route isn't

@@ -160,6 +160,9 @@ export const api = {
   },
   loadBids: {
     mine: () => request('/api/load-bids/mine'),
+    // Tunable Load24 charge % + wallet security-deposit amount shown as the
+    // payment breakup on PlaceBidScreen (staff-adjustable via the admin panel).
+    config: () => request('/api/load-bids/config'),
     place: (body) => request('/api/load-bids', { method: 'POST', body }),
     forLoad: (loadId) => request(`/api/load-bids/load/${loadId}`),
     tripDetails: (loadId) => request(`/api/load-bids/load/${loadId}/trip-details`),

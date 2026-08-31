@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../../lib/supabase.js';
 import { notifyEmail } from '../../lib/notify.js';
+import { releaseBidSecurityHold } from '../../lib/bidSecurityHold.js';
+import { cancelBookingForLoad } from '../../lib/bookings.js';
 
 const router = Router();
 
@@ -31,6 +33,16 @@ router.get('/', async (req, res) => {
 
   const bidByLoadId = new Map((bids || []).map((b) => [b.load_id, b]));
 
+  // The booking (spec §8) for each active trip — keyed by load_id, only the
+  // live one (bookings_one_active_per_load).
+  const { data: bookings, error: bookingsError } = await supabaseAdmin
+    .from('bookings')
+    .select('id, booking_ref, load_id, status, amount, confirmed_at')
+    .in('load_id', loadIds)
+    .neq('status', 'cancelled');
+  if (bookingsError) return res.status(400).json({ error: bookingsError.message });
+  const bookingByLoadId = new Map((bookings || []).map((b) => [b.load_id, b]));
+
   const emails = new Set(loads.map((l) => l.posted_by));
   for (const bid of bids || []) emails.add(bid.bid_by_email);
 
@@ -49,6 +61,7 @@ router.get('/', async (req, res) => {
       const bid = bidByLoadId.get(load.id) || null;
       return {
         load,
+        booking: bookingByLoadId.get(load.id) || null,
         bid: bid
           ? {
               id: bid.id,
@@ -56,6 +69,7 @@ router.get('/', async (req, res) => {
               truck_id: bid.truck_id,
               truck_number: bid.truck_number,
               bid_by_type: bid.bid_by_type,
+              expected_pickup_at: bid.expected_pickup_at,
               reviewed_at: bid.reviewed_at
             }
           : null,
@@ -87,7 +101,7 @@ router.post('/:loadId/cancel', async (req, res) => {
 
   const { data: bid, error: bidError } = await supabaseAdmin
     .from('load_bids')
-    .select('bid_by_email')
+    .select('id, load_id, bid_by_email, security_hold_txn_id, security_hold_amount, security_hold_released_at')
     .eq('load_id', load.id)
     .eq('status', 'approved')
     .maybeSingle();
@@ -101,6 +115,19 @@ router.post('/:loadId/cancel', async (req, res) => {
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
+
+  // Release the accepted bid's §5 security hold — the trip is off, so the
+  // bidder gets their deposit back (best-effort, must not fail the cancel).
+  if (bid) {
+    await releaseBidSecurityHold(bid, { reason: 'trip cancelled by staff' }).catch((err) =>
+      console.error('[admin/trips] hold release on cancel failed for bid', bid.id, err)
+    );
+  }
+
+  // Move the booking (spec §8) to 'cancelled' — best-effort, mirrors the load.
+  await cancelBookingForLoad(load.id, reason || 'cancelled by LOAD24 staff').catch((err) =>
+    console.error('[admin/trips] booking cancel failed for load', load.id, err)
+  );
 
   const body = reason || `${load.material_type ? `${load.material_type} — ` : ''}this trip was cancelled by LOAD24 staff`;
   await notifyEmail(load.posted_by, { type: 'trip_cancelled_by_staff', title: 'Trip cancelled', body, data: { load_id: load.id } });

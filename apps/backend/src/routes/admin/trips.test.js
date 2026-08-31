@@ -2,8 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+// §5 — cancelling a trip releases the accepted bid's security hold. Mechanics
+// covered in lib/bidSecurityHold.test.js.
+const releaseBidSecurityHold = vi.fn(() => Promise.resolve(null));
+vi.mock('../../lib/bidSecurityHold.js', () => ({
+  releaseBidSecurityHold: (...args) => releaseBidSecurityHold(...args)
+}));
+
 function createAdminStore() {
-  return { user_roles: [], loads: [], load_bids: [], user_profiles: [], trip_location_pings: [], notifications: [] };
+  return { user_roles: [], loads: [], load_bids: [], bookings: [], user_profiles: [], trip_location_pings: [], notifications: [] };
 }
 let adminStore = createAdminStore();
 
@@ -20,6 +27,10 @@ function makeAdminQueryBuilder(table) {
     select: () => builder,
     eq: (field, value) => {
       filters.push((r) => r[field] === value);
+      return builder;
+    },
+    neq: (field, value) => {
+      filters.push((r) => r[field] !== value);
       return builder;
     },
     in: (field, values) => {
@@ -105,6 +116,7 @@ function buildApp(userId = 'staff-1') {
 
 beforeEach(() => {
   adminStore = createAdminStore();
+  releaseBidSecurityHold.mockClear();
 });
 
 function staff() {
@@ -128,6 +140,7 @@ describe('GET /api/admin/trips', () => {
       { id: 'b1', load_id: 'l1', status: 'approved', bid_by_email: 'trucker@x.com', amount: 5000 },
       { id: 'b2', load_id: 'l2', status: 'pending', bid_by_email: 'trucker2@x.com', amount: 6000 }
     );
+    adminStore.bookings.push({ id: 'bk1', load_id: 'l1', booking_ref: 'BK000001', status: 'confirmed', amount: 5000 });
     adminStore.user_profiles.push(
       { user_id: 'u1', user_email: 'shipper@x.com', full_name: 'Shipper One' },
       { user_id: 'u2', user_email: 'trucker@x.com', full_name: 'Trucker One' }
@@ -139,8 +152,11 @@ describe('GET /api/admin/trips', () => {
     expect(res.body).toHaveLength(2); // l3 excluded — status 'active'
     const trip1 = res.body.find((t) => t.load.id === 'l1');
     expect(trip1.bid).toMatchObject({ id: 'b1', amount: 5000 });
+    expect(trip1.booking).toMatchObject({ booking_ref: 'BK000001', status: 'confirmed' });
     expect(trip1.poster).toMatchObject({ full_name: 'Shipper One' });
     expect(trip1.accepter).toMatchObject({ full_name: 'Trucker One' });
+    const trip2Booking = res.body.find((t) => t.load.id === 'l2');
+    expect(trip2Booking.booking).toBeNull();
     const trip2 = res.body.find((t) => t.load.id === 'l2');
     expect(trip2.bid).toBeNull(); // b2 is 'pending', not 'approved'
     expect(trip2.accepter).toBeNull();
@@ -166,15 +182,24 @@ describe('POST /api/admin/trips/:loadId/cancel', () => {
     expect(res.status).toBe(409);
   });
 
-  it('cancels the trip and notifies both parties', async () => {
+  it('cancels the trip, releases the security hold and notifies both parties', async () => {
     staff();
     adminStore.loads.push({ id: 'l1', posted_by: 'shipper@x.com', status: 'matched', material_type: 'Steel' });
-    adminStore.load_bids.push({ id: 'b1', load_id: 'l1', status: 'approved', bid_by_email: 'trucker@x.com', amount: 5000 });
+    adminStore.load_bids.push({
+      id: 'b1', load_id: 'l1', status: 'approved', bid_by_email: 'trucker@x.com', amount: 5000,
+      security_hold_txn_id: 'hold-txn-1', security_hold_amount: 1000, security_hold_released_at: null
+    });
+    adminStore.bookings.push({ id: 'bk1', load_id: 'l1', booking_ref: 'BK000001', status: 'confirmed' });
 
     const res = await request(buildApp()).post('/api/admin/trips/l1/cancel').send({ reason: 'Fraud reported' });
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('cancelled');
+    expect(releaseBidSecurityHold).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'b1' }),
+      { reason: 'trip cancelled by staff' }
+    );
+    expect(adminStore.bookings[0]).toMatchObject({ status: 'cancelled', cancellation_reason: 'Fraud reported' });
     expect(adminStore.notifications).toHaveLength(0); // no user_id resolvable (no user_profiles seeded) — notifyEmail no-ops silently, as designed
   });
 

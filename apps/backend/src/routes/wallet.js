@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
-import { generateTransactionId, getOrCreateWallet, getAvailableBalance, applyWalletAdjustment } from '../lib/wallet.js';
+import { generateTransactionId, getOrCreateWallet, getAvailableBalance, getHeldBalance, applyWalletAdjustment } from '../lib/wallet.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { notifyUser } from '../lib/notify.js';
 
@@ -16,13 +16,18 @@ const TOPUP_PROOF_VIEW_URL_TTL_SECONDS = 300; // same TTL as kyc.js's DOC_VIEW_U
 
 const router = Router();
 
-// GET /api/wallet — balance, plus what's actually spendable right now
-// (balance minus anything held by a not-yet-paid withdrawal request).
+// GET /api/wallet — balance, what's actually spendable right now (balance
+// minus anything held by a not-yet-paid withdrawal request), and how much
+// is locked in §5 bid security holds (already out of `balance`, surfaced
+// separately so the wallet screen can show "₹X held").
 router.get('/', async (req, res) => {
   try {
     const wallet = await getOrCreateWallet(req.user.id);
-    const available_balance = await getAvailableBalance(wallet);
-    res.json({ balance: Number(wallet.balance), available_balance });
+    const [available_balance, held_balance] = await Promise.all([
+      getAvailableBalance(wallet),
+      getHeldBalance(wallet)
+    ]);
+    res.json({ balance: Number(wallet.balance), available_balance, held_balance });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

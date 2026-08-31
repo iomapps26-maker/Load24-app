@@ -1,7 +1,21 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { notifyEmail } from '../lib/notify.js';
-import { applyWalletAdjustment } from '../lib/wallet.js';
+import { applyWalletAdjustment, getOrCreateWallet, getAvailableBalance } from '../lib/wallet.js';
+import { getBiddingSettings } from '../lib/platformSettings.js';
+import { checkBidEligibility, TRUCK_REQUIRED_ROLES } from '../lib/bidEligibility.js';
+import { placeBidSecurityHold, releaseBidSecurityHold, sweepExpiredBidHolds } from '../lib/bidSecurityHold.js';
+import {
+  createBookingForConfirmedBid,
+  ensureBooking,
+  getBookingByLoadId,
+  completeBookingForLoad
+} from '../lib/bookings.js';
+
+// The load_bids columns that track a bid's security hold (§5, migration 047)
+// — read wherever a hold might need releasing so releaseBidSecurityHold can
+// decide idempotently.
+const SECURITY_HOLD_COLUMNS = 'id, load_id, bid_by_email, security_hold_txn_id, security_hold_amount, security_hold_released_at';
 
 const TRIP_DOCS_BUCKET = 'trip-documents';
 const TRIP_DOC_URL_TTL_SECONDS = 300;
@@ -22,14 +36,134 @@ function dbError(res, error, fallbackMessage) {
 // Any pending bid whose 1-minute window has passed but hasn't been acted on
 // yet is treated as rejected — checked lazily whenever bids are read, same
 // approach as the WhatsApp OTP expires_at column (see whatsappAuth.js)
-// rather than a background job.
+// rather than a background job. Each bid it rejects gets its §5 security
+// hold released back to the bidder (best-effort — a release failure must
+// not stop the others or the read that triggered this).
 async function autoRejectExpired(supabase, load_id) {
-  await supabase
+  const nowIso = new Date().toISOString();
+
+  const { data: expiring } = await supabase
     .from('load_bids')
-    .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
+    .select(SECURITY_HOLD_COLUMNS)
     .eq('load_id', load_id)
     .eq('status', 'pending')
-    .lt('expires_at', new Date().toISOString());
+    .lt('expires_at', nowIso);
+  if (!expiring?.length) return;
+
+  await supabase
+    .from('load_bids')
+    .update({ status: 'rejected', reviewed_at: nowIso })
+    .eq('load_id', load_id)
+    .eq('status', 'pending')
+    .lt('expires_at', nowIso);
+
+  for (const bid of expiring) {
+    await releaseBidSecurityHold(bid, { reason: 'bid expired' }).catch((err) =>
+      console.error('[load-bids] expired hold release failed for bid', bid.id, err)
+    );
+  }
+}
+
+// Prevent double booking (spec §9): the moment one bid on a load is accepted,
+// every other still-pending bid on that load is out. Flip them 'rejected' right
+// away — rather than leaving them for the 1-minute lazy expiry
+// (autoRejectExpired) — and hand each bidder back their §5 security hold.
+// Best-effort: the approval this follows is already committed, so a failure
+// here just means a sibling hold frees a little later (its own lazy expiry
+// still catches it). Mirrors autoRejectExpired above.
+async function rejectSiblingBids(supabase, load_id, approvedBidId) {
+  const nowIso = new Date().toISOString();
+
+  const { data: siblings } = await supabase
+    .from('load_bids')
+    .select(SECURITY_HOLD_COLUMNS)
+    .eq('load_id', load_id)
+    .eq('status', 'pending')
+    .neq('id', approvedBidId);
+  if (!siblings?.length) return;
+
+  await supabase
+    .from('load_bids')
+    .update({ status: 'rejected', reviewed_at: nowIso })
+    .eq('load_id', load_id)
+    .eq('status', 'pending')
+    .neq('id', approvedBidId);
+
+  for (const sib of siblings) {
+    await releaseBidSecurityHold(sib, { reason: 'another bid was approved' }).catch((err) =>
+      console.error('[load-bids] sibling hold release failed for bid', sib.id, err)
+    );
+    await notifyEmail(sib.bid_by_email, {
+      type: 'bid_rejected',
+      title: 'Your bid was not selected',
+      body: 'This load was awarded to another bidder',
+      data: { load_id, bid_id: sib.id }
+    }).catch((err) => console.error('[load-bids] sibling reject notify failed for bid', sib.id, err));
+  }
+}
+
+// Spec §8 "Load Confirmation" preconditions, re-checked the moment the poster
+// confirms rather than trusted from when the bid was placed. Between bidding
+// and confirmation the winning bidder could have been deactivated, put under a
+// bidding restriction, had a vehicle document lapse or lose verification, or
+// had their §5 security hold released by another path. Any of those must block
+// the confirmation — the load stays open for other bids — instead of locking a
+// load to a bid that no longer qualifies.
+//
+// Reads the bidder's profile and truck on the service-role client: req.supabase
+// is scoped to the poster, whose RLS can't see the other party's rows (same
+// reason profileForEmail below switches clients). `bid` must carry
+// bid_by_email, truck_id, security_hold_txn_id and security_hold_released_at;
+// `load` carries required_truck_type / required_truck_type_other / weight_tons.
+// Returns { status, body } to forward verbatim, or null when the bid may be
+// confirmed.
+async function assertConfirmable(bid, load) {
+  const { data: profile } = await supabaseAdmin
+    .from('user_profiles')
+    .select('kyc_status, is_active, mobile_verified, user_type, bidding_restricted_until, bidding_restriction_reason')
+    .eq('user_email', bid.bid_by_email)
+    .maybeSingle();
+
+  let truck = null;
+  if (bid.truck_id && TRUCK_REQUIRED_ROLES.includes(profile?.user_type)) {
+    const { data: truckRow } = await supabaseAdmin
+      .from('trucks')
+      .select('verified, truck_type, truck_type_other, capacity_tons, permit_expiry, puc_expiry, insurance_expiry')
+      .eq('id', bid.truck_id)
+      .maybeSingle();
+    truck = truckRow;
+  }
+
+  // load.status is forced 'active' here on purpose — the atomic
+  // 'active' -> 'matched' claim right after this call is the real load-state
+  // gate; from checkBidEligibility we only want the account/vehicle verdict.
+  const ineligible = checkBidEligibility({ profile, load: { ...load, status: 'active' }, truck, now: new Date() });
+  if (ineligible) {
+    return {
+      status: 409,
+      body: {
+        error: `This bid can't be confirmed — the bidder is no longer eligible (${ineligible.body.error})`,
+        code: 'bidder_ineligible',
+        reason: ineligible.body
+      }
+    };
+  }
+
+  // §5 security deposit: the hold placed when the bid was made must still be
+  // active. If the platform currently charges no deposit, there's nothing to
+  // verify (a bid placed while it was 0 also carries no hold).
+  const { security_deposit_amount } = await getBiddingSettings();
+  if (Number(security_deposit_amount) > 0 && (!bid.security_hold_txn_id || bid.security_hold_released_at)) {
+    return {
+      status: 409,
+      body: {
+        error: "This bid can't be confirmed — its security deposit hold is no longer active",
+        code: 'security_hold_inactive'
+      }
+    };
+  }
+
+  return null;
 }
 
 // user_profiles RLS only lets a row's own owner (or staff) select it, so
@@ -164,23 +298,135 @@ router.get('/mine', async (req, res) => {
     .order('created_at', { ascending: false });
 
   if (error) return dbError(res, error, 'Could not load your bids');
+
+  // Free any §5 security hold stuck on a bid whose 1-minute window lapsed
+  // without the poster ever opening "See Bidding" (the only other place
+  // expired bids get swept). Best-effort — never block the bidder's list on it.
+  await sweepExpiredBidHolds(data).catch((err) => console.error('[load-bids] expired hold sweep failed', err));
+
+  // Attach the booking (spec §8) to each approved bid so the home-screen trip
+  // card can show the reference. Merged in JS rather than a PostgREST embed so
+  // the shape is predictable; RLS (bookings_select_parties_or_staff) lets the
+  // bidder read their own via accepter_email.
+  const approvedIds = (data || []).filter((b) => b.status === 'approved').map((b) => b.id);
+  if (approvedIds.length) {
+    const { data: bookings } = await req.supabase
+      .from('bookings')
+      .select('bid_id, booking_ref, status')
+      .in('bid_id', approvedIds);
+    const byBidId = new Map((bookings || []).map((bk) => [bk.bid_id, bk]));
+    for (const bid of data) bid.booking = byBidId.get(bid.id) ?? null;
+  }
+
   res.json(data);
+});
+
+// GET /api/load-bids/config — the tunable bidding values PlaceBidScreen
+// renders as its payment breakup: the Load24 charge percentage and the
+// security-deposit amount that POST / below moves into a wallet hold (§5).
+// Staff change these from the admin panel (PATCH /api/admin/platform-settings/bidding).
+router.get('/config', async (req, res) => {
+  try {
+    res.json(await getBiddingSettings());
+  } catch (error) {
+    return dbError(res, error, 'Could not load bidding settings');
+  }
 });
 
 // POST /api/load-bids — place a bid amount on a load
 router.post('/', async (req, res) => {
-  const { load_id, amount, bid_by_type, truck_id, truck_number } = req.body;
+  const { load_id, amount, bid_by_type, truck_id, truck_number, expected_pickup_at } = req.body;
   if (!load_id) return res.status(400).json({ error: 'load_id is required' });
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'amount must be greater than 0' });
 
+  // Expected pickup date/time is optional, but if sent it must be a real
+  // date — normalize to an ISO string so the timestamptz column stores it
+  // consistently regardless of what format the client sent.
+  let expectedPickupAt = null;
+  if (expected_pickup_at != null && expected_pickup_at !== '') {
+    const parsed = new Date(expected_pickup_at);
+    if (Number.isNaN(parsed.getTime())) {
+      return res.status(400).json({ error: 'expected_pickup_at is not a valid date' });
+    }
+    expectedPickupAt = parsed.toISOString();
+  }
+
+  // Bid eligibility (marketplace spec §2): the caller's account — and, for a
+  // driver/vehicle_owner, their chosen vehicle — must clear every condition in
+  // lib/bidEligibility.js before a bid is accepted. RLS (load_bids_insert_own,
+  // migrations 045/046) is the real boundary for the account-level conditions;
+  // this is the friendly per-reason path, and the only place the vehicle
+  // conditions are enforced. user_profiles / loads / trucks RLS each let the
+  // caller read their own row.
+  const { data: bidderProfile, error: bidderProfileError } = await req.supabase
+    .from('user_profiles')
+    .select('kyc_status, is_active, mobile_verified, user_type, bidding_restricted_until, bidding_restriction_reason')
+    .eq('user_id', req.user.id)
+    .maybeSingle();
+  if (bidderProfileError) return dbError(res, bidderProfileError, 'Could not verify your account');
+
   const { data: load, error: loadError } = await req.supabase
     .from('loads')
-    .select('posted_by')
+    .select('posted_by, status, required_truck_type, required_truck_type_other, weight_tons')
     .eq('id', load_id)
     .single();
   if (loadError) return dbError(res, loadError, 'Could not find this load');
   if (load.posted_by === req.user.email) {
     return res.status(403).json({ error: 'You cannot bid on your own posted load' });
+  }
+
+  // A driver/vehicle_owner must bid with one of their own registered trucks;
+  // checkBidEligibility then validates it (verified, matching type/capacity,
+  // unexpired documents). Every other role bids without a vehicle.
+  let bidderTruck = null;
+  if (TRUCK_REQUIRED_ROLES.includes(bidderProfile?.user_type)) {
+    if (!truck_id) {
+      return res.status(403).json({ error: 'Select a verified vehicle to bid on this load', code: 'vehicle_required' });
+    }
+    const { data: truckRow, error: truckError } = await req.supabase
+      .from('trucks')
+      .select('verified, truck_type, truck_type_other, capacity_tons, permit_expiry, puc_expiry, insurance_expiry')
+      .eq('id', truck_id)
+      .eq('owner_id', req.user.id)
+      .maybeSingle();
+    if (truckError) return dbError(res, truckError, 'Could not verify your vehicle');
+    if (!truckRow) {
+      return res.status(403).json({ error: 'Select one of your registered vehicles to bid', code: 'vehicle_required' });
+    }
+    bidderTruck = truckRow;
+  }
+
+  const ineligible = checkBidEligibility({ profile: bidderProfile, load, truck: bidderTruck, now: new Date() });
+  if (ineligible) return res.status(ineligible.status).json(ineligible.body);
+
+  // ₹1,000 Load Confirmation Rule (marketplace spec §5): placing a bid moves
+  // the configurable security-deposit amount into a real wallet HOLD (a
+  // 'security_hold' ledger entry — see lib/bidSecurityHold.js), not just a
+  // balance check. Checked against available balance first (money already
+  // committed to a pending withdrawal doesn't count), same "spendable right
+  // now" figure POST /api/wallet/withdraw guards on. The hold is released
+  // automatically when the bid is declined/expires or the resulting trip
+  // completes/cancels; the amount is snapshotted on the bid so a later
+  // Super-Admin change doesn't retro-alter it.
+  const { security_deposit_amount } = await getBiddingSettings();
+  const depositAmount = Number(security_deposit_amount);
+  let holdTxn = null;
+  if (depositAmount > 0) {
+    const wallet = await getOrCreateWallet(req.user.id);
+    const available = await getAvailableBalance(wallet);
+    if (available < depositAmount) {
+      return res.status(402).json({
+        error: `Keep ₹${depositAmount.toLocaleString('en-IN')} in your wallet as a security deposit before placing a bid`,
+        code: 'security_deposit_required',
+        security_deposit_amount: depositAmount,
+        wallet_balance: available
+      });
+    }
+    try {
+      holdTxn = await placeBidSecurityHold({ userId: req.user.id, loadId: load_id, amount: depositAmount });
+    } catch (err) {
+      return dbError(res, err, 'Could not place the security hold for your bid');
+    }
   }
 
   const { data, error } = await req.supabase
@@ -191,12 +437,28 @@ router.post('/', async (req, res) => {
       bid_by_type,
       truck_id,
       truck_number,
-      amount
+      amount,
+      expected_pickup_at: expectedPickupAt,
+      security_hold_txn_id: holdTxn?.id ?? null,
+      security_hold_amount: holdTxn ? depositAmount : null
     })
     .select()
     .single();
 
-  if (error) return dbError(res, error, 'Could not place your bid');
+  if (error) {
+    // The bid row didn't persist — undo the hold so the bidder isn't left
+    // with money locked against a bid that doesn't exist.
+    if (holdTxn) {
+      await applyWalletAdjustment({
+        user_id: req.user.id,
+        type: 'security_release',
+        amount: depositAmount,
+        reference_load_id: load_id,
+        notes: 'Security release — bid could not be saved'
+      }).catch((releaseErr) => console.error('[load-bids] hold rollback failed', releaseErr));
+    }
+    return dbError(res, error, 'Could not place your bid');
+  }
 
   await notifyEmail(load.posted_by, {
     type: 'bid_placed',
@@ -228,7 +490,17 @@ router.get('/load/:load_id', async (req, res) => {
     .order('created_at', { ascending: false });
   if (bidsError) return dbError(res, bidsError, 'Could not load bids for this load');
 
-  res.json({ load, bids });
+  // Once one bid is approved this load has a booking (spec §8) — hand it to the
+  // poster's "See Bidding" view so it can show the reference next to the
+  // confirmed bid without a second round-trip.
+  const booking = bids?.some((b) => b.status === 'approved')
+    ? await getBookingByLoadId(req.params.load_id).catch((err) => {
+        console.error('[load-bids] getBookingByLoadId failed for load', req.params.load_id, err);
+        return null;
+      })
+    : null;
+
+  res.json({ load, bids, booking });
 });
 
 // GET /api/load-bids/load/:load_id/trip-details — once a bid on this load
@@ -262,10 +534,17 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
     return res.status(403).json({ error: 'Not authorized to view trip details for this load' });
   }
 
-  const [posterProfile, accepterProfile, tripDocuments] = await Promise.all([
+  const [posterProfile, accepterProfile, tripDocuments, booking] = await Promise.all([
     profileForEmail(load.posted_by),
     profileForEmail(bid.bid_by_email),
-    tripDocumentsForLoad(load.id)
+    tripDocumentsForLoad(load.id),
+    // Spec §8: the confirmed-trip record. ensureBooking backfills one for a
+    // confirmation that predates the bookings table (migration 049) or whose
+    // best-effort create in POST /:id/approve failed.
+    ensureBooking({ load, bid }).catch((err) => {
+      console.error('[load-bids] ensureBooking failed for bid', bid.id, err);
+      return null;
+    })
   ]);
 
   res.json({
@@ -273,12 +552,15 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
     trip_documents: tripDocuments,
     viewer_role: isPoster ? 'poster' : 'accepter',
     load,
+    booking,
     bid: {
       id: bid.id,
+      booking_ref: booking?.booking_ref ?? null,
       amount: bid.amount,
       truck_id: bid.truck_id,
       truck_number: bid.truck_number,
       bid_by_type: bid.bid_by_type,
+      expected_pickup_at: bid.expected_pickup_at,
       reviewed_at: bid.reviewed_at
     },
     poster: {
@@ -429,6 +711,18 @@ router.post('/load/:load_id/deliver', async (req, res) => {
 
   await applyCommissionForCompletedTrip(load, bid);
 
+  // Move the booking (spec §8) to 'completed' — best-effort, the load's own
+  // status is the source of truth for the trip.
+  await completeBookingForLoad(load.id).catch((err) =>
+    console.error('[load-bids] booking complete failed for load', load.id, err)
+  );
+
+  // The §5 security hold rode through the confirmed trip — release it now
+  // the trip is done (best-effort, same treatment as the commission apply).
+  await releaseBidSecurityHold(bid, { reason: 'trip completed' }).catch((err) =>
+    console.error('[load-bids] hold release on delivery failed for bid', bid.id, err)
+  );
+
   await notifyEmail(isPoster ? bid.bid_by_email : load.posted_by, {
     type: 'trip_delivered',
     title: 'Trip marked delivered',
@@ -440,29 +734,85 @@ router.post('/load/:load_id/deliver', async (req, res) => {
 });
 
 // POST /api/load-bids/:id/approve — poster-only via RLS (load_bids_update_poster).
-// Guarded to still-pending, still-within-window bids so a stale approve can't
-// land after the 1-minute auto-reject window has already passed.
+// Confirming a load (spec §8 "Load Confirmation" / §9 "prevent double booking"):
+//
+//   1. winning bid still pending and within its window   (guard below)
+//   2. bidder eligibility re-verified   \  assertConfirmable() — §8 steps 2-4,
+//   3. wallet / §5 security hold still active  }  not trusted from bid-placement
+//   4. ₹1,000 hold confirmed present   /
+//   5. load locked — the load row is the lock: we claim it ('active' ->
+//      'matched') as the *first* write, so a second confirmation (this bid
+//      again, or any sibling bid) finds it already matched and gets a 409
+//      instead of a second accepted bid. load_bids_one_approved_per_load
+//      (migration 048) is the DB backstop.
+//   6. booking created — the bookings row (lib/bookings.js, migration 049)
+//      carrying the BKnnnnnn reference and the trip's lifecycle status.
+//      Best-effort: the trip is confirmed regardless, and trip-details
+//      backfills a missing booking on read (ensureBooking).
 router.post('/:id/approve', async (req, res) => {
+  const nowIso = new Date().toISOString();
+
+  const { data: bid, error: bidError } = await req.supabase
+    .from('load_bids')
+    .select('id, load_id, status, expires_at, bid_by_email, truck_id, security_hold_txn_id, security_hold_amount, security_hold_released_at')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (bidError) return dbError(res, bidError, 'Could not approve this bid');
+  if (!bid) return res.status(404).json({ error: 'Bid not found' });
+  if (bid.status !== 'pending' || new Date(bid.expires_at).getTime() <= Date.now()) {
+    return res.status(409).json({ error: 'Bid is no longer pending (expired or already reviewed)' });
+  }
+
+  // Spec §8 steps 2-4: re-verify the bidder still qualifies and their §5
+  // security hold is still active *before* anything is locked. A failure here
+  // leaves the load open for other bids.
+  const { data: loadForCheck, error: loadCheckError } = await req.supabase
+    .from('loads')
+    .select('posted_by, required_truck_type, required_truck_type_other, weight_tons')
+    .eq('id', bid.load_id)
+    .maybeSingle();
+  if (loadCheckError) return dbError(res, loadCheckError, 'Could not confirm this load');
+  if (!loadForCheck) return res.status(404).json({ error: 'Load not found' });
+
+  const blocked = await assertConfirmable(bid, loadForCheck);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+
+  // Claim the load. Only one approve can move it out of 'active'; a racing
+  // confirmation of another bid — or a double-tap — gets 409 right here,
+  // before any second bid can be flipped to 'approved'.
+  const { data: claimedLoad, error: claimError } = await req.supabase
+    .from('loads')
+    .update({ status: 'matched' })
+    .eq('id', bid.load_id)
+    .eq('status', 'active')
+    .select('id')
+    .maybeSingle();
+  if (claimError) return dbError(res, claimError, 'Could not confirm this load');
+  if (!claimedLoad) {
+    return res.status(409).json({ error: 'This load is already booked', code: 'load_already_booked' });
+  }
+
+  // Now accept the bid. Still guarded — the 1-minute window can lapse in the
+  // gap above; if it has, put the load back so it isn't stranded 'matched'
+  // with no accepted bid.
   const { data, error } = await req.supabase
     .from('load_bids')
-    .update({ status: 'approved', reviewed_at: new Date().toISOString() })
-    .eq('id', req.params.id)
+    .update({ status: 'approved', reviewed_at: nowIso })
+    .eq('id', bid.id)
     .eq('status', 'pending')
-    .gt('expires_at', new Date().toISOString())
+    .gt('expires_at', nowIso)
     .select()
     .single();
 
-  if (error) return dbError(res, error, 'Could not approve this bid');
-  if (!data) return res.status(409).json({ error: 'Bid is no longer pending (expired or already reviewed)' });
-
-  // Take the load out of the active pool now that it has a trip — otherwise
-  // it keeps showing up in Find Loads (which filters on status='active')
-  // even though it's already booked.
-  const { error: loadUpdateError } = await req.supabase
-    .from('loads')
-    .update({ status: 'matched' })
-    .eq('id', data.load_id);
-  if (loadUpdateError) console.error('[load-bids] failed to mark load matched', loadUpdateError);
+  if (error || !data) {
+    await req.supabase
+      .from('loads')
+      .update({ status: 'active' })
+      .eq('id', bid.load_id)
+      .eq('status', 'matched');
+    if (error) return dbError(res, error, 'Could not approve this bid');
+    return res.status(409).json({ error: 'Bid is no longer pending (expired or already reviewed)' });
+  }
 
   // This truck now has a trip — take its posting out of the 'available' pool
   // so it stops surfacing in notifyNearbyTruckOwners (loads.js) and
@@ -473,20 +823,38 @@ router.post('/:id/approve', async (req, res) => {
   if (data.truck_id) {
     const { error: truckStatusError } = await supabaseAdmin
       .from('truck_availabilities')
-      .update({ status: 'booked', updated_at: new Date().toISOString() })
+      .update({ status: 'booked', updated_at: nowIso })
       .eq('truck_id', data.truck_id)
       .eq('status', 'available');
     if (truckStatusError) console.error('[load-bids] failed to mark truck availability booked', truckStatusError);
   }
 
+  // Spec §8 step 6: create the booking — the confirmed-trip record carrying
+  // the BKnnnnnn reference. Best-effort: the load is already locked and the
+  // bid approved, so a failure here just means trip-details backfills it on
+  // the next read (ensureBooking). Never fail the confirmation over it.
+  let booking = null;
+  try {
+    booking = await createBookingForConfirmedBid({
+      load: { id: data.load_id, posted_by: loadForCheck.posted_by },
+      bid: data
+    });
+  } catch (err) {
+    console.error('[load-bids] booking create failed for bid', data.id, err);
+  }
+
+  // Spec §9 "reject further bids": now this load is booked, drop every other
+  // pending bid on it and return each bidder's security hold.
+  await rejectSiblingBids(req.supabase, data.load_id, data.id);
+
   await notifyEmail(data.bid_by_email, {
     type: 'bid_approved',
     title: 'Your bid was approved',
-    body: `₹${Number(data.amount).toLocaleString('en-IN')} — trip details are ready`,
-    data: { load_id: data.load_id, bid_id: data.id }
+    body: `₹${Number(data.amount).toLocaleString('en-IN')}${booking ? ` · Booking ${booking.booking_ref}` : ''} — trip details are ready`,
+    data: { load_id: data.load_id, bid_id: data.id, booking_ref: booking?.booking_ref ?? null }
   });
 
-  res.json(data);
+  res.json({ ...data, booking });
 });
 
 // POST /api/load-bids/:id/reject — poster-only via RLS (load_bids_update_poster).
@@ -501,6 +869,11 @@ router.post('/:id/reject', async (req, res) => {
 
   if (error) return dbError(res, error, 'Could not reject this bid');
   if (!data) return res.status(409).json({ error: 'Bid is no longer pending' });
+
+  // Give the bidder their §5 security hold back now the bid is off the table.
+  await releaseBidSecurityHold(data, { reason: 'bid rejected' }).catch((err) =>
+    console.error('[load-bids] hold release on reject failed for bid', data.id, err)
+  );
 
   await notifyEmail(data.bid_by_email, {
     type: 'bid_rejected',

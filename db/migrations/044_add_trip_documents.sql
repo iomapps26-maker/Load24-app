@@ -9,6 +9,9 @@
 -- constraint trip_location_pings / the trip-details+deliver routes document
 -- and handle the same way). The policy below is therefore just a staff-only
 -- read backstop.
+--
+-- Every `create policy` here is drop-then-create (Postgres has no
+-- `create policy if not exists`) so this script is safe to re-run.
 create table if not exists public.trip_documents (
   id uuid primary key default gen_random_uuid(),
   load_id uuid not null references public.loads(id) on delete cascade,
@@ -27,6 +30,7 @@ create index if not exists trip_documents_load_id_idx on public.trip_documents (
 
 alter table public.trip_documents enable row level security;
 
+drop policy if exists "trip_documents_select_staff" on public.trip_documents;
 create policy "trip_documents_select_staff" on public.trip_documents
   for select using (
     public.has_role(array['admin', 'support_executive', 'support_manager'])
@@ -45,6 +49,7 @@ on conflict (id) do nothing;
 -- routes/loadBids.js removes the previous object. Signed upload/view URLs are
 -- minted server-side and already scope the exact path, so these policies are
 -- a defense-in-depth backstop, same reasoning as kyc_documents_storage_*.
+drop policy if exists "trip_documents_storage_select_own_or_staff" on storage.objects;
 create policy "trip_documents_storage_select_own_or_staff" on storage.objects
   for select using (
     bucket_id = 'trip-documents'
@@ -53,10 +58,12 @@ create policy "trip_documents_storage_select_own_or_staff" on storage.objects
       or public.has_role(array['admin', 'support_executive', 'support_manager'])
     )
   );
+drop policy if exists "trip_documents_storage_insert_own" on storage.objects;
 create policy "trip_documents_storage_insert_own" on storage.objects
   for insert with check (
     bucket_id = 'trip-documents' and auth.uid()::text = (storage.foldername(name))[1]
   );
+drop policy if exists "trip_documents_storage_update_own" on storage.objects;
 create policy "trip_documents_storage_update_own" on storage.objects
   for update using (
     bucket_id = 'trip-documents' and auth.uid()::text = (storage.foldername(name))[1]

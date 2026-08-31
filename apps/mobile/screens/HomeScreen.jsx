@@ -58,6 +58,9 @@ function TripRow({ bid, t, navigation }) {
           {load.material_type} • ₹{Number(bid.amount).toLocaleString('en-IN')}
           {!!load.distance_km && ` • ${load.distance_km} km`}
         </Text>
+        {!!bid.booking?.booking_ref && (
+          <Text className="mt-0.5 text-xs font-semibold text-slate-600">{t('bookingId')}: {bid.booking.booking_ref}</Text>
+        )}
       </View>
       <TouchableOpacity
         className="flex-row items-center gap-1 rounded-lg bg-brand px-3 py-2"

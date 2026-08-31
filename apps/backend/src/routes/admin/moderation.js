@@ -101,4 +101,55 @@ router.patch('/trucks/:id', async (req, res) => {
   res.json(data);
 });
 
+// PATCH /api/admin/moderation/users/:userId
+//   { is_active?, bidding_restricted_until?, bidding_restriction_reason? }
+// Staff control for the account-level bid-eligibility conditions (spec §2 —
+// enforced by lib/bidEligibility.js / load_bids_insert_own RLS): deactivate or
+// reactivate an account, and set or lift a bidding restriction.
+// bidding_restricted_until is an ISO date/time in the future to restrict, or
+// null (or "") to lift it — lifting also clears the reason. Same
+// service-role-write pattern as the load/truck PATCHes above (no per-column
+// RLS on user_profiles, and has_role() can't be relied on — see users.js).
+router.patch('/users/:userId', async (req, res) => {
+  const patch = {};
+
+  if (req.body.is_active !== undefined) {
+    patch.is_active = !!req.body.is_active;
+  }
+
+  if (req.body.bidding_restricted_until !== undefined) {
+    const raw = req.body.bidding_restricted_until;
+    if (raw === null || raw === '') {
+      patch.bidding_restricted_until = null;
+      patch.bidding_restriction_reason = null;
+    } else {
+      const when = new Date(raw);
+      if (Number.isNaN(when.getTime())) {
+        return res.status(400).json({ error: 'bidding_restricted_until must be an ISO date/time or null' });
+      }
+      patch.bidding_restricted_until = when.toISOString();
+      if (req.body.bidding_restriction_reason !== undefined) {
+        patch.bidding_restriction_reason = req.body.bidding_restriction_reason || null;
+      }
+    }
+  } else if (req.body.bidding_restriction_reason !== undefined) {
+    patch.bidding_restriction_reason = req.body.bidding_restriction_reason || null;
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: 'Provide is_active, bidding_restricted_until and/or bidding_restriction_reason' });
+  }
+  patch.updated_at = new Date().toISOString();
+
+  const { data, error } = await supabaseAdmin
+    .from('user_profiles')
+    .update(patch)
+    .eq('user_id', req.params.userId)
+    .select('user_id, full_name, mobile, user_email, user_type, is_active, kyc_status, bidding_restricted_until, bidding_restriction_reason')
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'User not found' });
+  res.json(data);
+});
+
 export default router;

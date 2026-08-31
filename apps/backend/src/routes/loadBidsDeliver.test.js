@@ -8,6 +8,27 @@ vi.mock('../lib/notify.js', () => ({
   notifyUser: vi.fn(() => Promise.resolve())
 }));
 
+// §5 bid security hold — deliver releases the approved bid's hold; the
+// mechanics live in lib/bidSecurityHold.test.js.
+const releaseBidSecurityHold = vi.fn(() => Promise.resolve(null));
+vi.mock('../lib/bidSecurityHold.js', () => ({
+  releaseBidSecurityHold: (...args) => releaseBidSecurityHold(...args),
+  placeBidSecurityHold: vi.fn(() => Promise.resolve({ id: 'hold-txn' })),
+  sweepExpiredBidHolds: vi.fn(() => Promise.resolve())
+}));
+
+// §8 booking — deliver moves it to 'completed'. Mechanics in lib/bookings.js.
+const completeBookingForLoad = vi.fn(() => Promise.resolve({ id: 'bk-1', status: 'completed' }));
+vi.mock('../lib/bookings.js', () => ({
+  completeBookingForLoad: (...args) => completeBookingForLoad(...args),
+  createBookingForConfirmedBid: vi.fn(() => Promise.resolve(null)),
+  ensureBooking: vi.fn(() => Promise.resolve(null)),
+  getBookingByLoadId: vi.fn(() => Promise.resolve(null)),
+  cancelBookingForLoad: vi.fn(() => Promise.resolve(null)),
+  getBookingByBidId: vi.fn(() => Promise.resolve(null)),
+  BOOKING_COLUMNS: 'id'
+}));
+
 // Records every supabaseAdmin.from('loads').update(...) call so tests can
 // assert the patch and the status guard it was scoped to, without simulating
 // real row filtering.
@@ -113,9 +134,11 @@ describe('POST /api/load-bids/load/:load_id/deliver', () => {
     adminCalls.length = 0;
     adminStore = createAdminStore();
     notifyEmail.mockClear();
+    releaseBidSecurityHold.mockClear();
+    completeBookingForLoad.mockClear();
   });
 
-  it('lets the poster mark the trip delivered and notifies the accepter', async () => {
+  it('lets the poster mark the trip delivered, releases the hold, completes the booking and notifies the accepter', async () => {
     const app = buildApp({ load, bid, callerEmail: 'poster@example.com' });
     const res = await request(app).post('/api/load-bids/load/load-1/deliver').send({});
 
@@ -124,6 +147,8 @@ describe('POST /api/load-bids/load/:load_id/deliver', () => {
     expect(call.patch).toEqual({ status: 'completed' });
     expect(call.filters).toContainEqual(['id', 'load-1']);
     expect(call.inFilters).toContainEqual(['status', ['matched', 'in_transit']]);
+    expect(releaseBidSecurityHold).toHaveBeenCalledWith(bid, { reason: 'trip completed' });
+    expect(completeBookingForLoad).toHaveBeenCalledWith('load-1');
     expect(notifyEmail).toHaveBeenCalledWith('trucker@example.com', expect.objectContaining({ type: 'trip_delivered' }));
   });
 

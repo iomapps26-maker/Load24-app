@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
 import { Icon } from 'react-native-paper';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -9,6 +9,13 @@ import LoadRouteSummary from '../components/LoadRouteSummary';
 
 function msRemaining(bid) {
   return new Date(bid.expires_at).getTime() - Date.now();
+}
+
+function pickupLabel(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 }
 
 function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
@@ -36,6 +43,9 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
         <View>
           <Text className="text-xl font-extrabold text-slate-900">₹{Number(bid.amount).toLocaleString('en-IN')}</Text>
           <Text className="text-xs text-slate-400">{bid.bid_by_email}{bid.truck_number ? ` · ${bid.truck_number}` : ''}</Text>
+          {!!pickupLabel(bid.expected_pickup_at) && (
+            <Text className="mt-0.5 text-xs text-slate-500">{t('expectedPickupShort')}: {pickupLabel(bid.expected_pickup_at)}</Text>
+          )}
         </View>
         <View className={`rounded-full px-3 py-1 ${statusStyle.bg}`}>
           <Text className={`text-xs font-bold ${statusStyle.text}`}>{statusStyle.label}</Text>
@@ -83,7 +93,23 @@ export default function SeeBiddingScreen() {
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['loadBids', loadId] });
-  const approveMutation = useMutation({ mutationFn: (id) => api.loadBids.approve(id), onSuccess: invalidate });
+  const approveMutation = useMutation({
+    mutationFn: (id) => api.loadBids.approve(id),
+    onSuccess: invalidate,
+    // Confirmation can fail for a few reasons, all 409 — surface the right one
+    // and refresh so the list reflects reality. `load_already_booked` is the
+    // racing-confirmation case; the rest (winning bidder no longer eligible,
+    // their security deposit hold gone, the 1-minute window lapsed mid-tap)
+    // carry a specific server message worth showing verbatim.
+    onError: (err) => {
+      invalidate();
+      if (err?.code === 'load_already_booked') {
+        Alert.alert(t('loadAlreadyBookedTitle'), t('loadAlreadyBooked'));
+      } else if (err?.status === 409) {
+        Alert.alert(t('couldNotConfirmTitle'), err?.message || t('loadAlreadyBooked'));
+      }
+    }
+  });
   const rejectMutation = useMutation({ mutationFn: (id) => api.loadBids.reject(id), onSuccess: invalidate });
 
   if (isLoading) {
@@ -94,7 +120,7 @@ export default function SeeBiddingScreen() {
     );
   }
 
-  const { load, bids = [] } = data || {};
+  const { load, bids = [], booking } = data || {};
   const hasApprovedBid = bids.some((bid) => bid.status === 'approved');
 
   return (
@@ -108,6 +134,14 @@ export default function SeeBiddingScreen() {
             </Text>
           </View>
           <LoadRouteSummary load={load} />
+        </View>
+      )}
+
+      {!!booking?.booking_ref && (
+        <View className="mb-4 flex-row items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white py-3">
+          <Icon source="identifier" size={16} color="#64748b" />
+          <Text className="text-xs text-slate-400">{t('bookingId')}</Text>
+          <Text className="text-sm font-bold text-slate-900">{booking.booking_ref}</Text>
         </View>
       )}
 

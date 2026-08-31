@@ -184,7 +184,7 @@ describe('GET /api/wallet', () => {
   it('lazily creates a wallet with zero balance', async () => {
     const res = await request(buildApp()).get('/api/wallet');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ balance: 0, available_balance: 0 });
+    expect(res.body).toEqual({ balance: 0, available_balance: 0, held_balance: 0 });
   });
 
   it('excludes pending/approved withdrawals from available_balance', async () => {
@@ -192,7 +192,18 @@ describe('GET /api/wallet', () => {
     store.withdrawal_requests.push({ id: 'wr1', wallet_id: 'w1', user_id: 'user-1', amount: 300, status: 'pending' });
 
     const res = await request(buildApp()).get('/api/wallet');
-    expect(res.body).toEqual({ balance: 1000, available_balance: 700 });
+    expect(res.body).toEqual({ balance: 1000, available_balance: 700, held_balance: 0 });
+  });
+
+  it('reports held_balance as the net of unreleased security holds (§5)', async () => {
+    store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 1000 });
+    store.wallet_transactions.push(
+      { id: 't1', wallet_id: 'w1', user_id: 'user-1', type: 'security_hold', amount: 150, status: 'completed' },
+      { id: 't2', wallet_id: 'w1', user_id: 'user-1', type: 'security_release', amount: 50, status: 'completed' }
+    );
+
+    const res = await request(buildApp()).get('/api/wallet');
+    expect(res.body.held_balance).toBe(100);
   });
 });
 

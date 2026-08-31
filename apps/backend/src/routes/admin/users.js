@@ -31,7 +31,7 @@ router.get('/', async (req, res) => {
 
   let query = supabaseAdmin
     .from('user_profiles')
-    .select('user_id, full_name, mobile, city, user_email, user_type, kyc_status, created_at', { count: 'exact' })
+    .select('user_id, full_name, mobile, city, user_email, user_type, kyc_status, is_active, bidding_restricted_until, created_at', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(from, to);
 

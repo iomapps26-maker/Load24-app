@@ -358,6 +358,11 @@ export default function WalletScreen() {
         <Text className="mt-2 text-xs text-slate-400">
           {t('availableBalance')}: ₹{Number(wallet?.available_balance ?? 0).toLocaleString('en-IN')}
         </Text>
+        {Number(wallet?.held_balance ?? 0) > 0 && (
+          <Text className="mt-1 text-xs text-slate-400">
+            {t('heldBalance')}: ₹{Number(wallet.held_balance).toLocaleString('en-IN')}
+          </Text>
+        )}
         <View className="mt-4 flex-row gap-2">
           <Button
             mode="contained"
