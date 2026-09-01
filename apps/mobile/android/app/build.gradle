@@ -107,8 +107,8 @@ android {
         applicationId "com.base699327bbace8d2c0b141d1bc.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 34
-        versionName "34.0"
+        versionCode 35
+        versionName "35.0"
     }
     signingConfigs {
         debug {
