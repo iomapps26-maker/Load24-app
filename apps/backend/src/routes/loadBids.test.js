@@ -9,12 +9,24 @@ vi.mock('../lib/notify.js', () => ({
 }));
 
 // POST / now reads the tunable bidding settings and the caller's wallet
-// balance before accepting a bid — mock both so these tests can drive the
-// security-deposit gate directly.
-const getBiddingSettings = vi.fn(() => Promise.resolve({ load24_charge_percent: 4, security_deposit_amount: 1000 }));
-vi.mock('../lib/platformSettings.js', () => ({
-  getBiddingSettings: (...args) => getBiddingSettings(...args),
-  BIDDING_SETTINGS_DEFAULTS: { load24_charge_percent: 4, security_deposit_amount: 1000 }
+// balance before accepting a bid — mock getBiddingSettings so these tests can
+// drive the security-deposit gate directly, but keep the real
+// computeBidSecurityHold slab evaluator (a pure function, covered on its own
+// in lib/platformSettings.test.js).
+const DEFAULT_DEPOSIT = {
+  slabs: [
+    { up_to: 10000, amount: 750 },
+    { up_to: 20000, amount: 1000 },
+    { up_to: 30000, amount: 1100 }
+  ],
+  above_slab_percent: 1
+};
+const getBiddingSettings = vi.fn(() =>
+  Promise.resolve({ load24_charge_percent: 4, security_deposit: DEFAULT_DEPOSIT })
+);
+vi.mock('../lib/platformSettings.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  getBiddingSettings: (...args) => getBiddingSettings(...args)
 }));
 
 const getAvailableBalance = vi.fn(() => Promise.resolve(0));
@@ -307,7 +319,7 @@ describe('POST /api/load-bids/:id/approve', () => {
     releaseBidSecurityHold.mockClear();
     createBookingForConfirmedBid.mockClear();
     createBookingForConfirmedBid.mockResolvedValue({ id: 'bk-1', booking_ref: 'BK000042', status: 'confirmed' });
-    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4, security_deposit_amount: 1000 });
+    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4, security_deposit: DEFAULT_DEPOSIT });
     approveBidder.profile = {
       kyc_status: 'verified',
       is_active: true,
@@ -509,6 +521,7 @@ describe('POST /api/load-bids/:id/approve', () => {
           bid_by_email: 'trucker@example.com',
           amount: 5000,
           security_hold_txn_id: 'h1',
+          security_hold_amount: 750,
           security_hold_released_at: pastIso()
         }
       ]
@@ -520,8 +533,7 @@ describe('POST /api/load-bids/:id/approve', () => {
     expect(app.locals.store.loads[0].status).toBe('active');
   });
 
-  it('still confirms when the platform charges no security deposit (no hold to check)', async () => {
-    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4, security_deposit_amount: 0 });
+  it('still confirms a bid that was placed while the deposit was disabled (no hold to check)', async () => {
     const app = buildApproveApp({
       loads: [{ id: 'load-1', status: 'active' }],
       load_bids: [
@@ -550,29 +562,43 @@ describe('POST /api/load-bids — security-deposit gate', () => {
     notifyEmail.mockClear();
     placeBidSecurityHold.mockClear();
     placeBidSecurityHold.mockResolvedValue({ id: 'hold-txn-1' });
-    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4, security_deposit_amount: 1000 });
+    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4, security_deposit: DEFAULT_DEPOSIT });
   });
 
-  it('rejects the bid with 402 when available balance is below the security deposit', async () => {
+  // The hold scales with the bid amount via the slab table: a ₹5,000 bid sits
+  // in the first slab (≤ 10,000) → ₹750; a ₹25,000 bid → ₹1,100.
+  it('rejects the bid with 402 when available balance is below the slab hold for that bid amount', async () => {
     const res = await request(buildBidApp(500)).post('/api/load-bids').send({ load_id: 'load-1', amount: 5000 });
     expect(res.status).toBe(402);
     expect(res.body.code).toBe('security_deposit_required');
-    expect(res.body.security_deposit_amount).toBe(1000);
+    expect(res.body.security_deposit_amount).toBe(750);
     expect(placeBidSecurityHold).not.toHaveBeenCalled();
     expect(notifyEmail).not.toHaveBeenCalled();
   });
 
-  it('places the wallet hold and stamps the bid when the balance meets the deposit', async () => {
+  it('holds the first-slab amount for a small bid', async () => {
     const app = buildBidApp(1000);
     const res = await request(app).post('/api/load-bids').send({ load_id: 'load-1', amount: 5000 });
     expect(res.status).toBe(201);
-    expect(placeBidSecurityHold).toHaveBeenCalledWith({ userId: 'bidder-1', loadId: 'load-1', amount: 1000 });
-    expect(app.locals.insertedRows[0]).toMatchObject({ security_hold_txn_id: 'hold-txn-1', security_hold_amount: 1000 });
+    expect(placeBidSecurityHold).toHaveBeenCalledWith({ userId: 'bidder-1', loadId: 'load-1', amount: 750 });
+    expect(app.locals.insertedRows[0]).toMatchObject({ security_hold_txn_id: 'hold-txn-1', security_hold_amount: 750 });
     expect(notifyEmail).toHaveBeenCalledWith('poster@example.com', expect.objectContaining({ type: 'bid_placed' }));
   });
 
-  it('skips the wallet check and the hold when the security deposit is configured to 0', async () => {
-    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4, security_deposit_amount: 0 });
+  it('holds ₹1,100 + 1% of the excess over 30,000 for a large bid', async () => {
+    const app = buildBidApp(5000);
+    const res = await request(app).post('/api/load-bids').send({ load_id: 'load-1', amount: 45000 });
+    expect(res.status).toBe(201);
+    // 1100 + 1% of (45000 - 30000) = 1250
+    expect(placeBidSecurityHold).toHaveBeenCalledWith({ userId: 'bidder-1', loadId: 'load-1', amount: 1250 });
+    expect(app.locals.insertedRows[0]).toMatchObject({ security_hold_amount: 1250 });
+  });
+
+  it('skips the wallet check and the hold when the deposit slab table is empty', async () => {
+    getBiddingSettings.mockResolvedValue({
+      load24_charge_percent: 4,
+      security_deposit: { slabs: [], above_slab_percent: 0 }
+    });
     const app = buildBidApp(0);
     const res = await request(app).post('/api/load-bids').send({ load_id: 'load-1', amount: 5000 });
     expect(res.status).toBe(201);
@@ -664,7 +690,7 @@ describe('GET /api/load-bids/mine — attaches the booking to approved bids', ()
 describe('POST /api/load-bids — eligibility gate (spec §2)', () => {
   beforeEach(() => {
     notifyEmail.mockClear();
-    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4, security_deposit_amount: 1000 });
+    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4, security_deposit: DEFAULT_DEPOSIT });
   });
 
   const bid = (app, body = {}) => request(app).post('/api/load-bids').send({ load_id: 'load-1', amount: 5000, ...body });
@@ -767,7 +793,7 @@ describe('POST /api/load-bids — eligibility gate (spec §2)', () => {
 
 describe('GET /api/load-bids/config', () => {
   it('returns the current bidding settings', async () => {
-    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4.5, security_deposit_amount: 1000 });
+    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4.5, security_deposit: DEFAULT_DEPOSIT });
     const app = express();
     app.use((req, res, next) => {
       req.user = { id: 'u1', email: 'u1@example.com' };
@@ -777,7 +803,7 @@ describe('GET /api/load-bids/config', () => {
 
     const res = await request(app).get('/api/load-bids/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ load24_charge_percent: 4.5, security_deposit_amount: 1000 });
+    expect(res.body).toEqual({ load24_charge_percent: 4.5, security_deposit: DEFAULT_DEPOSIT });
   });
 });
 

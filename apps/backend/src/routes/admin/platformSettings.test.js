@@ -53,6 +53,16 @@ const { requireRole } = await import('../../middleware/requireRole.js');
 
 const STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
 
+// Matches SECURITY_DEPOSIT_DEFAULT in lib/platformSettings.js.
+const DEFAULT_DEPOSIT = {
+  slabs: [
+    { up_to: 10000, amount: 750 },
+    { up_to: 20000, amount: 1000 },
+    { up_to: 30000, amount: 1100 }
+  ],
+  above_slab_percent: 1
+};
+
 function buildApp(userId = 'staff-1') {
   const app = express();
   app.use(express.json());
@@ -82,14 +92,21 @@ describe('GET /api/admin/platform-settings/bidding', () => {
     staff();
     const res = await request(buildApp()).get('/api/admin/platform-settings/bidding');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ load24_charge_percent: 4.0, security_deposit_amount: 1000 });
+    expect(res.body).toEqual({ load24_charge_percent: 4.0, security_deposit: DEFAULT_DEPOSIT });
   });
 
   it('returns the saved value merged over the defaults', async () => {
     staff();
     store.platform_settings.push({ key: 'bidding', value: { load24_charge_percent: 6 } });
     const res = await request(buildApp()).get('/api/admin/platform-settings/bidding');
-    expect(res.body).toEqual({ load24_charge_percent: 6, security_deposit_amount: 1000 });
+    expect(res.body).toEqual({ load24_charge_percent: 6, security_deposit: DEFAULT_DEPOSIT });
+  });
+
+  it('falls back to the default slab table for a row saved before the slab table (legacy security_deposit_amount)', async () => {
+    staff();
+    store.platform_settings.push({ key: 'bidding', value: { load24_charge_percent: 5, security_deposit_amount: 2000 } });
+    const res = await request(buildApp()).get('/api/admin/platform-settings/bidding');
+    expect(res.body).toEqual({ load24_charge_percent: 5, security_deposit: DEFAULT_DEPOSIT });
   });
 });
 
@@ -107,9 +124,43 @@ describe('PATCH /api/admin/platform-settings/bidding', () => {
     }
   });
 
-  it('rejects a negative security deposit', async () => {
+  it('rejects a security_deposit slab with a negative amount', async () => {
     staff();
-    const res = await request(buildApp()).patch('/api/admin/platform-settings/bidding').send({ security_deposit_amount: -100 });
+    const res = await request(buildApp())
+      .patch('/api/admin/platform-settings/bidding')
+      .send({ security_deposit: { slabs: [{ up_to: 10000, amount: -100 }], above_slab_percent: 1 } });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a security_deposit slab with a non-positive up_to', async () => {
+    staff();
+    const res = await request(buildApp())
+      .patch('/api/admin/platform-settings/bidding')
+      .send({ security_deposit: { slabs: [{ up_to: 0, amount: 750 }], above_slab_percent: 1 } });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects an out-of-range above_slab_percent', async () => {
+    staff();
+    const res = await request(buildApp())
+      .patch('/api/admin/platform-settings/bidding')
+      .send({ security_deposit: { slabs: [{ up_to: 10000, amount: 750 }], above_slab_percent: 150 } });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a security_deposit with duplicate up_to values', async () => {
+    staff();
+    const res = await request(buildApp())
+      .patch('/api/admin/platform-settings/bidding')
+      .send({
+        security_deposit: {
+          slabs: [
+            { up_to: 10000, amount: 750 },
+            { up_to: 10000, amount: 900 }
+          ],
+          above_slab_percent: 1
+        }
+      });
     expect(res.status).toBe(400);
   });
 
@@ -119,11 +170,11 @@ describe('PATCH /api/admin/platform-settings/bidding', () => {
     expect(res.status).toBe(400);
   });
 
-  it('raises the Load24 charge, leaving the deposit untouched', async () => {
+  it('raises the Load24 charge, leaving the deposit table untouched', async () => {
     staff();
     const res = await request(buildApp()).patch('/api/admin/platform-settings/bidding').send({ load24_charge_percent: 4.5 });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ load24_charge_percent: 4.5, security_deposit_amount: 1000 });
+    expect(res.body).toEqual({ load24_charge_percent: 4.5, security_deposit: DEFAULT_DEPOSIT });
     expect(store.platform_settings[0]).toMatchObject({ key: 'bidding', updated_by: 'staff-1' });
   });
 
@@ -134,12 +185,48 @@ describe('PATCH /api/admin/platform-settings/bidding', () => {
     expect(res.body.load24_charge_percent).toBe(0);
   });
 
-  it('updates both values at once', async () => {
+  it('saves a new slab table, sorting the slabs by up_to', async () => {
     staff();
     const res = await request(buildApp())
       .patch('/api/admin/platform-settings/bidding')
-      .send({ load24_charge_percent: 3, security_deposit_amount: 2000 });
+      .send({
+        load24_charge_percent: 3,
+        security_deposit: {
+          slabs: [
+            { up_to: 20000, amount: 1000 },
+            { up_to: 10000, amount: 500 }
+          ],
+          above_slab_percent: 2
+        }
+      });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ load24_charge_percent: 3, security_deposit_amount: 2000 });
+    expect(res.body).toEqual({
+      load24_charge_percent: 3,
+      security_deposit: {
+        slabs: [
+          { up_to: 10000, amount: 500 },
+          { up_to: 20000, amount: 1000 }
+        ],
+        above_slab_percent: 2
+      }
+    });
+  });
+
+  it('accepts an empty slab table (deposit disabled)', async () => {
+    staff();
+    const res = await request(buildApp())
+      .patch('/api/admin/platform-settings/bidding')
+      .send({ security_deposit: { slabs: [], above_slab_percent: 0 } });
+    expect(res.status).toBe(200);
+    expect(res.body.security_deposit).toEqual({ slabs: [], above_slab_percent: 0 });
+  });
+
+  it('drops the legacy security_deposit_amount key when staff touch the settings', async () => {
+    staff();
+    store.platform_settings.push({ key: 'bidding', value: { load24_charge_percent: 4, security_deposit_amount: 2000 } });
+    const res = await request(buildApp()).patch('/api/admin/platform-settings/bidding').send({ load24_charge_percent: 5 });
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('security_deposit_amount');
+    expect(store.platform_settings[0].value).not.toHaveProperty('security_deposit_amount');
   });
 });

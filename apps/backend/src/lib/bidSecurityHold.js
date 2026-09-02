@@ -1,9 +1,10 @@
 import { supabaseAdmin } from './supabase.js';
 import { applyWalletAdjustment } from './wallet.js';
 
-// ₹1,000 Load Confirmation Rule (marketplace spec §5). Placing a bid moves
-// the configurable security-deposit amount
-// (platform_settings.bidding.security_deposit_amount) into a real WALLET
+// Load Confirmation Rule (marketplace spec §5). Placing a bid moves a
+// security-deposit amount — the bid-amount-scaled figure from the
+// platform_settings.bidding.security_deposit slab table, see
+// lib/bidSecurityDeposit.js — into a real WALLET
 // HOLD: a 'security_hold' wallet_transactions row, which the
 // 014_add_wallet.sql trigger debits from wallets.balance. It is never
 // treated as revenue — it's released ('security_release') back to the

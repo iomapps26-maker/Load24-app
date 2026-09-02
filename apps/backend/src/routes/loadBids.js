@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../lib/supabase.js';
 import { notifyEmail } from '../lib/notify.js';
 import { applyWalletAdjustment, getOrCreateWallet, getAvailableBalance } from '../lib/wallet.js';
 import { getBiddingSettings } from '../lib/platformSettings.js';
+import { computeBidSecurityHold } from '../lib/bidSecurityDeposit.js';
 import { checkBidEligibility, TRUCK_REQUIRED_ROLES } from '../lib/bidEligibility.js';
 import { placeBidSecurityHold, releaseBidSecurityHold, sweepExpiredBidHolds } from '../lib/bidSecurityHold.js';
 import {
@@ -149,11 +150,12 @@ async function assertConfirmable(bid, load) {
     };
   }
 
-  // §5 security deposit: the hold placed when the bid was made must still be
-  // active. If the platform currently charges no deposit, there's nothing to
-  // verify (a bid placed while it was 0 also carries no hold).
-  const { security_deposit_amount } = await getBiddingSettings();
-  if (Number(security_deposit_amount) > 0 && (!bid.security_hold_txn_id || bid.security_hold_released_at)) {
+  // §5 security deposit: a bid placed while the deposit was active carries a
+  // hold, its amount snapshotted on the row (security_hold_amount). That hold
+  // must still be active to confirm the bid. A bid placed while the deposit
+  // was disabled carries no hold and skips this check — no need to re-read the
+  // current setting.
+  if (Number(bid.security_hold_amount) > 0 && (!bid.security_hold_txn_id || bid.security_hold_released_at)) {
     return {
       status: 409,
       body: {
@@ -341,7 +343,7 @@ router.get('/mine', async (req, res) => {
 
 // GET /api/load-bids/config — the tunable bidding values PlaceBidScreen
 // renders as its payment breakup: the Load24 charge percentage and the
-// security-deposit amount that POST / below moves into a wallet hold (§5).
+// security-deposit slab table POST / below evaluates into a wallet hold (§5).
 // Staff change these from the admin panel (PATCH /api/admin/platform-settings/bidding).
 router.get('/config', async (req, res) => {
   try {
@@ -417,17 +419,19 @@ router.post('/', async (req, res) => {
   const ineligible = checkBidEligibility({ profile: bidderProfile, load, truck: bidderTruck, now: new Date() });
   if (ineligible) return res.status(ineligible.status).json(ineligible.body);
 
-  // ₹1,000 Load Confirmation Rule (marketplace spec §5): placing a bid moves
-  // the configurable security-deposit amount into a real wallet HOLD (a
-  // 'security_hold' ledger entry — see lib/bidSecurityHold.js), not just a
-  // balance check. Checked against available balance first (money already
-  // committed to a pending withdrawal doesn't count), same "spendable right
-  // now" figure POST /api/wallet/withdraw guards on. The hold is released
-  // automatically when the bid is declined/expires or the resulting trip
-  // completes/cancels; the amount is snapshotted on the bid so a later
-  // Super-Admin change doesn't retro-alter it.
-  const { security_deposit_amount } = await getBiddingSettings();
-  const depositAmount = Number(security_deposit_amount);
+  // Load Confirmation Rule (marketplace spec §5): placing a bid moves a
+  // security-deposit amount into a real wallet HOLD (a 'security_hold' ledger
+  // entry — see lib/bidSecurityHold.js), not just a balance check. The amount
+  // scales with the bid via the staff-tunable slab table
+  // (platform_settings.bidding.security_deposit — see computeBidSecurityHold).
+  // Checked against available balance first (money already committed to a
+  // pending withdrawal doesn't count), same "spendable right now" figure POST
+  // /api/wallet/withdraw guards on. The hold is released automatically when the
+  // bid is declined/expires or the resulting trip completes/cancels; the
+  // amount is snapshotted on the bid so a later slab-table change doesn't
+  // retro-alter it.
+  const { security_deposit } = await getBiddingSettings();
+  const depositAmount = computeBidSecurityHold(amount, security_deposit);
   let holdTxn = null;
   if (depositAmount > 0) {
     const wallet = await getOrCreateWallet(req.user.id);

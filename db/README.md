@@ -71,12 +71,22 @@ SQL Editor (no migration runner wired up yet).
   per-row rule engine (`commission_rules`) or CMS content (`content_blocks`).
   Seeded with the `bidding` key holding `load24_charge_percent` (the headline
   Load24 charge shown to a bidder as a payment breakup on `PlaceBidScreen`)
-  and `security_deposit_amount` (default ₹1000 — the amount moved into a
-  wallet hold when a bid is placed; see `047_add_bid_security_hold.sql`).
-  Read by the app via `GET /api/load-bids/config` and enforced server-side in
+  and `security_deposit_amount` (the flat ₹ amount moved into a wallet hold
+  when a bid is placed — replaced by a slab table in `052`; see
+  `047_add_bid_security_hold.sql`). Read by the app via
+  `GET /api/load-bids/config` and enforced server-side in
   `routes/loadBids.js`'s `POST /`; staff raise or lower either value from the
   admin panel via `PATCH /api/admin/platform-settings/bidding`
   (`routes/admin/platformSettings.js`).
+- `migrations/052_bidding_security_deposit_slabs.sql` — replaces the flat
+  `bidding.security_deposit_amount` with `bidding.security_deposit`, a slab
+  table `{ slabs: [{ up_to, amount }], above_slab_percent }` so the wallet
+  hold scales with the bid amount (≤10k → ₹750, ≤20k → ₹1000, ≤30k → ₹1100,
+  above → ₹1100 + 1% of the excess over 30k). Evaluated by
+  `lib/bidSecurityDeposit.js`'s `computeBidSecurityHold()` (mirrored in
+  `apps/mobile/lib/bidSecurityDeposit.js`); an empty `slabs` array disables
+  the deposit. No schema change — the migration just rewrites the `bidding`
+  row's JSON.
 - `migrations/044_add_trip_documents.sql` — `trip_documents`: the E-Way Bill
   and Bilty (lorry receipt) either trip party attaches on the Trip Details
   screen once a bid is approved. One row per `(load_id, document_type)` —

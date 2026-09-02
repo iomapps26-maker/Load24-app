@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
 import { TRUCK_TYPE_LABELS } from '../lib/loadOptions';
+import { computeBidSecurityHold, SECURITY_DEPOSIT_DEFAULT } from '../lib/bidSecurityDeposit';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 import DateField from '../components/DateField';
 
@@ -153,10 +154,10 @@ export default function PlaceBidScreen() {
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
   const { data: trucks } = useQuery({ queryKey: ['trucks'], queryFn: api.trucks.mine });
-  // Load24 charge % + wallet security-deposit amount for the payment breakup
-  // below — both are staff-tunable from the admin panel, so they're fetched
-  // rather than hardcoded. `['wallet']` is the same cache key WalletScreen
-  // fills, so this is usually a warm read.
+  // Load24 charge % + the wallet security-deposit slab table for the payment
+  // breakup below — both are staff-tunable from the admin panel, so they're
+  // fetched rather than hardcoded. `['wallet']` is the same cache key
+  // WalletScreen fills, so this is usually a warm read.
   const { data: biddingConfig } = useQuery({ queryKey: ['biddingConfig'], queryFn: api.loadBids.config });
   const { data: wallet, isLoading: isLoadingWallet } = useQuery({ queryKey: ['wallet'], queryFn: api.wallet.balance });
 
@@ -214,13 +215,19 @@ export default function PlaceBidScreen() {
 
   const adjust = (delta) => setAmount((a) => Math.max(BID_STEP, a + delta));
 
-  // Payment breakup. chargePercent/securityDeposit fall back to the same
-  // defaults the backend seeds (043_add_platform_settings.sql) so the card
-  // still renders sensibly if the config fetch hasn't resolved. The wallet
-  // check mirrors loadBids.js's POST / gate (available balance, not raw
-  // balance) so the button disables for the same reason the server would 402.
+  // Payment breakup. chargePercent / the deposit slab table fall back to the
+  // same defaults the backend seeds (052_bidding_security_deposit_slabs.sql)
+  // so the card still renders sensibly if the config fetch hasn't resolved.
+  // The wallet check mirrors loadBids.js's POST / gate (available balance, not
+  // raw balance) so the button disables for the same reason the server 402s.
   const chargePercent = Number(biddingConfig?.load24_charge_percent ?? 4);
-  const securityDeposit = Number(biddingConfig?.security_deposit_amount ?? 1000);
+  // The security deposit scales with the bid amount (spec §5) — recompute it
+  // live as the stepper moves so the breakup and the wallet gate below match
+  // what loadBids.js POST / will hold. Same slab-table evaluator as the server.
+  const securityDeposit = computeBidSecurityHold(
+    amount,
+    biddingConfig?.security_deposit ?? SECURITY_DEPOSIT_DEFAULT
+  );
   const load24Charge = Math.round((amount * chargePercent) / 100);
   const netReceive = amount - load24Charge;
   const walletBalance = Number(wallet?.available_balance ?? 0);
