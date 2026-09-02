@@ -1,4 +1,5 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const translations = {
   en: {
@@ -63,7 +64,7 @@ const translations = {
     load24ChargeLabel: 'Load24 charge',
     youReceiveLabel: 'You receive',
     securityDepositLabel: 'Security deposit',
-    securityDepositHeldNote: 'Moved to a wallet hold when you place this bid — released back to your wallet if the bid is declined or once the trip is done.',
+    securityDepositHeldNote: 'Moved to a wallet hold when you place this bid — released back to your wallet if the bid is declined or once the loading is done.',
     securityDepositRequired: 'Add money to your wallet to meet the security deposit before bidding.',
     kycRequiredToBid: 'Complete your KYC verification to place a bid.',
     accountInactiveToBid: 'Your account is not active. Contact LOAD24 support to place bids.',
@@ -277,6 +278,16 @@ const translations = {
     addBankDetails: 'Add bank details',
     bankVerified: 'Bank Verified',
     bankNotVerified: 'Verification pending',
+    bankStatusPending: 'Verification pending',
+    bankStatusVerified: 'Verified',
+    bankStatusRejected: 'Rejected',
+    bankRejectionReasonLabel: 'Reason',
+    bankResubmitHint: 'Fix the details above and save to submit again for review.',
+    bankBranch: 'Branch',
+    accountType: 'Account Type',
+    accountTypeSavings: 'Savings',
+    accountTypeCurrent: 'Current',
+    bankProofHint: 'Upload a cancelled cheque or passbook page so staff can verify this account.',
     accountHolderName: 'Account Holder Name',
     save: 'Save',
     cancel: 'Cancel',
@@ -459,10 +470,91 @@ const translations = {
     tripDocuments: 'Trip Documents',
     ewayBill: 'E-Way Bill',
     bilty: 'Bilty (LR)',
+    ewayBillNumber: 'E-Way Bill Number',
+    ewayBillNumberPlaceholder: 'Enter 12-digit number',
+    ewayBillNumberInvalid: 'E-Way Bill number must be exactly 12 digits',
     uploadedByYou: 'Uploaded by you',
     uploadedByOtherParty: 'Uploaded by the other party',
     companyName: 'Company',
-    location: 'Location'
+    location: 'Location',
+
+    // Language switcher
+    language: 'Language',
+
+    // Bottom tab bar labels
+    tabHome: 'Home',
+    tabLoads: 'Loads',
+    tabPost: 'Post',
+    tabMyTrucks: 'My Trucks',
+    tabWallet: 'Wallet',
+    tabProfile: 'Profile',
+
+    // Post Load form
+    loadingPoint: 'Loading point',
+    unloadingPoint: 'Unloading point',
+    landmark: 'Landmark',
+    contactName: 'Contact name',
+    contactMobile: 'Contact mobile',
+    unloadingDate: 'Unloading date',
+    materialType: 'Material type',
+    weightTons: 'Weight (tons)',
+    bhadaPrice: 'Bhada price (₹)',
+    truckLengthFt: 'Truck length (ft)',
+    requiredTruckType: 'Required truck type',
+    fuelTypeRequired: 'Fuel type required',
+    specifyAxleType: 'Specify axle type',
+    specifySpecialCondition: 'Specify special condition',
+    specialDemandComment: 'Special demand comment',
+    mustBeNumber: 'must be a number',
+    missingOrInvalid: 'Missing or invalid',
+    phLandmark: 'e.g. Near XYZ warehouse',
+    phLoadingTime: 'e.g. 14:00',
+    phMaterialType: 'e.g. Cement, Steel, Cotton',
+    phSpecifyTruckType: 'e.g. Bolero Pickup',
+    phSpecifyFuelType: 'e.g. Petrol',
+    phSpecifyAxleType: 'e.g. Triple Axle',
+    phSpecifyBodyType: 'e.g. Curtain-sided',
+    phSpecifySpecialCondition: 'e.g. Live animals',
+    phSpecialDemandComment: 'Any additional handling instructions',
+    phCustomRequirement: 'Anything else the transporter should know',
+
+    // Post Truck availability form
+    postTruckAvailability: 'Post Truck Availability',
+    postAvailability: 'Post Availability',
+    registerTruckFirst: 'Register a truck first',
+    whichTruckForPosting: 'Which truck is this posting for?',
+    whichTruckForPostingShort: 'Which truck this posting is for',
+    availabilityLabel: 'Availability',
+    availableNow: 'Available now',
+    availableFromDate: 'Available from date',
+    availableFrom: 'Available from',
+    currentLocation: 'Current location',
+    preferredRoutes: 'Preferred routes',
+    destinationPreference: 'Destination preference',
+    operatingRadiusKm: 'Operating radius (km)',
+    freight: 'Freight',
+    expectedFreight: 'Expected freight (₹)',
+    minimumAcceptable: 'Minimum acceptable (₹)',
+    tripPreference: 'Trip preference',
+    tripPrefSingleTrip: 'Single trip',
+    tripPrefReturnLoad: 'Return load',
+    tripPrefRegularLane: 'Regular lane',
+    repeatAvailability: 'Repeat availability',
+    repeatWeekly: 'Repeat this posting weekly',
+    atLeastOneRepeatDay: 'At least one repeat day',
+    phPreferredRoutes: 'e.g. Delhi - Mumbai, Delhi - Pune',
+    phDestinationPreference: 'e.g. Any, or specific cities',
+    dayMon: 'Mon',
+    dayTue: 'Tue',
+    dayWed: 'Wed',
+    dayThu: 'Thu',
+    dayFri: 'Fri',
+    daySat: 'Sat',
+    daySun: 'Sun',
+
+    // Misc
+    editProfile: 'Edit Profile',
+    couldNotGetLocation: 'Could not get location'
   },
   hi: {
     appName: 'LOAD24',
@@ -509,7 +601,7 @@ const translations = {
     material: 'माल',
     weight: 'वजन',
     truckType: 'ट्रक प्रकार',
-    fuel: 'Fuel',
+    fuel: 'ईंधन',
     price: 'भाड़ा',
     loadingDate: 'लोडिंग तारीख',
     like: 'पसंद',
@@ -526,7 +618,7 @@ const translations = {
     load24ChargeLabel: 'Load24 शुल्क',
     youReceiveLabel: 'आपको मिलेंगे',
     securityDepositLabel: 'सुरक्षा राशि',
-    securityDepositHeldNote: 'बोली लगाते ही यह राशि वॉलेट में रोक दी जाती है — बोली अस्वीकार होने पर या ट्रिप पूरी होने पर वापस आपके वॉलेट में मिल जाती है।',
+    securityDepositHeldNote: 'बोली लगाते ही यह राशि वॉलेट में रोक दी जाती है — बोली अस्वीकार होने पर या लोडिंग पूरी होने पर वापस आपके वॉलेट में मिल जाती है।',
     securityDepositRequired: 'बोली लगाने से पहले सुरक्षा राशि पूरी करने के लिए वॉलेट में पैसे जोड़ें।',
     kycRequiredToBid: 'बोली लगाने के लिए अपना KYC वेरिफिकेशन पूरा करें।',
     accountInactiveToBid: 'आपका खाता सक्रिय नहीं है। बोली लगाने के लिए LOAD24 सपोर्ट से संपर्क करें।',
@@ -605,7 +697,7 @@ const translations = {
     pincode: 'पिनकोड',
     city: 'शहर',
     state: 'राज्य',
-    sendOtp: 'Send OTP',
+    sendOtp: 'OTP भेजें',
     saveAndContinue: 'सेव करें और आगे बढ़ें',
     saving: 'सेव हो रहा है...',
     ok: 'ठीक है',
@@ -738,6 +830,16 @@ const translations = {
     addBankDetails: 'बैंक विवरण जोड़ें',
     bankVerified: 'बैंक वेरिफाइड',
     bankNotVerified: 'वेरिफिकेशन बाकी है',
+    bankStatusPending: 'वेरिफिकेशन बाकी है',
+    bankStatusVerified: 'वेरिफाइड',
+    bankStatusRejected: 'अस्वीकृत',
+    bankRejectionReasonLabel: 'कारण',
+    bankResubmitHint: 'ऊपर दी गई जानकारी ठीक करें और दोबारा समीक्षा के लिए भेजने हेतु सेव करें।',
+    bankBranch: 'शाखा',
+    accountType: 'खाता प्रकार',
+    accountTypeSavings: 'बचत',
+    accountTypeCurrent: 'चालू',
+    bankProofHint: 'इस खाते को वेरिफाई करने के लिए कैंसल चेक या पासबुक पेज अपलोड करें।',
     accountHolderName: 'खाता धारक',
     save: 'सेव करें',
     cancel: 'रद्द करें',
@@ -918,17 +1020,118 @@ const translations = {
     tripDocuments: 'ट्रिप दस्तावेज़',
     ewayBill: 'ई-वे बिल',
     bilty: 'बिल्टी (LR)',
+    ewayBillNumber: 'ई-वे बिल नंबर',
+    ewayBillNumberPlaceholder: '12 अंकों का नंबर दर्ज करें',
+    ewayBillNumberInvalid: 'ई-वे बिल नंबर ठीक 12 अंकों का होना चाहिए',
     uploadedByYou: 'आपके द्वारा अपलोड किया गया',
     uploadedByOtherParty: 'दूसरे पक्ष द्वारा अपलोड किया गया',
     companyName: 'कंपनी',
-    location: 'स्थान'
+    location: 'स्थान',
+
+    // Language switcher
+    language: 'भाषा',
+
+    // Bottom tab bar labels
+    tabHome: 'होम',
+    tabLoads: 'लोड',
+    tabPost: 'पोस्ट',
+    tabMyTrucks: 'गाड़ियां',
+    tabWallet: 'वॉलेट',
+    tabProfile: 'प्रोफ़ाइल',
+
+    // Post Load form
+    loadingPoint: 'लोडिंग स्थान',
+    unloadingPoint: 'अनलोडिंग स्थान',
+    landmark: 'लैंडमार्क',
+    contactName: 'संपर्क का नाम',
+    contactMobile: 'संपर्क मोबाइल',
+    unloadingDate: 'अनलोडिंग तारीख',
+    materialType: 'माल का प्रकार',
+    weightTons: 'वजन (टन)',
+    bhadaPrice: 'भाड़ा (₹)',
+    truckLengthFt: 'ट्रक लंबाई (फीट)',
+    requiredTruckType: 'आवश्यक ट्रक प्रकार',
+    fuelTypeRequired: 'आवश्यक ईंधन प्रकार',
+    specifyAxleType: 'एक्सल प्रकार बताएं',
+    specifySpecialCondition: 'विशेष स्थिति बताएं',
+    specialDemandComment: 'विशेष मांग टिप्पणी',
+    mustBeNumber: 'एक संख्या होनी चाहिए',
+    missingOrInvalid: 'गायब या अमान्य',
+    phLandmark: 'जैसे XYZ गोदाम के पास',
+    phLoadingTime: 'जैसे 14:00',
+    phMaterialType: 'जैसे सीमेंट, स्टील, कपास',
+    phSpecifyTruckType: 'जैसे बोलेरो पिकअप',
+    phSpecifyFuelType: 'जैसे पेट्रोल',
+    phSpecifyAxleType: 'जैसे ट्रिपल एक्सल',
+    phSpecifyBodyType: 'जैसे कर्टन-साइडेड',
+    phSpecifySpecialCondition: 'जैसे जीवित पशु',
+    phSpecialDemandComment: 'कोई अतिरिक्त हैंडलिंग निर्देश',
+    phCustomRequirement: 'ट्रांसपोर्टर को और क्या जानना चाहिए',
+
+    // Post Truck availability form
+    postTruckAvailability: 'गाड़ी की उपलब्धता पोस्ट करें',
+    postAvailability: 'उपलब्धता पोस्ट करें',
+    registerTruckFirst: 'पहले एक गाड़ी रजिस्टर करें',
+    whichTruckForPosting: 'यह पोस्टिंग किस गाड़ी के लिए है?',
+    whichTruckForPostingShort: 'यह पोस्टिंग किस गाड़ी के लिए है',
+    availabilityLabel: 'उपलब्धता',
+    availableNow: 'अभी उपलब्ध',
+    availableFromDate: 'इस तारीख से उपलब्ध',
+    availableFrom: 'इस तारीख से',
+    currentLocation: 'वर्तमान स्थान',
+    preferredRoutes: 'पसंदीदा रूट',
+    destinationPreference: 'गंतव्य प्राथमिकता',
+    operatingRadiusKm: 'संचालन दायरा (किमी)',
+    freight: 'भाड़ा',
+    expectedFreight: 'अपेक्षित भाड़ा (₹)',
+    minimumAcceptable: 'न्यूनतम स्वीकार्य (₹)',
+    tripPreference: 'ट्रिप प्राथमिकता',
+    tripPrefSingleTrip: 'एकल ट्रिप',
+    tripPrefReturnLoad: 'वापसी लोड',
+    tripPrefRegularLane: 'नियमित रूट',
+    repeatAvailability: 'साप्ताहिक दोहराव',
+    repeatWeekly: 'इस पोस्टिंग को हर हफ्ते दोहराएं',
+    atLeastOneRepeatDay: 'कम से कम एक दिन चुनें',
+    phPreferredRoutes: 'जैसे दिल्ली - मुंबई, दिल्ली - पुणे',
+    phDestinationPreference: 'जैसे कोई भी, या विशेष शहर',
+    dayMon: 'सोम',
+    dayTue: 'मंगल',
+    dayWed: 'बुध',
+    dayThu: 'गुरु',
+    dayFri: 'शुक्र',
+    daySat: 'शनि',
+    daySun: 'रवि',
+
+    // Misc
+    editProfile: 'प्रोफ़ाइल संपादित करें',
+    couldNotGetLocation: 'स्थान नहीं मिल सका',
+    ownerMobile: 'मालिक का संपर्क नंबर',
+    driverDetailsOptional: 'ड्राइवर विवरण वैकल्पिक हैं — अगर आपने अभी ड्राइवर तय नहीं किया है तो बाद में जोड़ें।'
   }
 };
 
 const LanguageContext = createContext(null);
 
+const LANGUAGE_KEY = 'load24:language';
+
 export function LanguageProvider({ children }) {
-  const [language, setLanguage] = useState('hi');
+  const [language, setLanguageState] = useState('hi');
+
+  // Restore the saved choice on cold start — without this the app reverts to
+  // Hindi on every launch no matter what the user picked, so a user who set
+  // English keeps landing back on a Hindi app.
+  useEffect(() => {
+    AsyncStorage.getItem(LANGUAGE_KEY)
+      .then((saved) => {
+        if (saved === 'en' || saved === 'hi') setLanguageState(saved);
+      })
+      .catch(() => {});
+  }, []);
+
+  const setLanguage = (lang) => {
+    setLanguageState(lang);
+    AsyncStorage.setItem(LANGUAGE_KEY, lang).catch(() => {});
+  };
 
   const t = (key) => translations[language]?.[key] ?? translations.en[key] ?? key;
 

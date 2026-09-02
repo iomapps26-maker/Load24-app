@@ -58,13 +58,14 @@ export default function MainTabs() {
         }
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: t('tabHome') }} />
       <Tab.Screen
         name="Loads"
         component={FindLoadsScreen}
         options={{
           headerShown: true,
-          title: 'Find Loads',
+          title: t('findLoads'),
+          tabBarLabel: t('tabLoads'),
           headerTitleStyle: { fontWeight: '800', color: '#0f172a' }
         }}
       />
@@ -75,6 +76,7 @@ export default function MainTabs() {
           options={{
             headerShown: true,
             title: t('myTrucks'),
+            tabBarLabel: t('tabMyTrucks'),
             headerTitleStyle: { fontWeight: '800', color: '#0f172a' }
           }}
         />
@@ -84,7 +86,8 @@ export default function MainTabs() {
           component={PostLoadScreen}
           options={{
             headerShown: true,
-            title: 'Post Load',
+            title: t('postLoad'),
+            tabBarLabel: t('tabPost'),
             headerTitleStyle: { fontWeight: '800', color: '#0f172a' }
           }}
         />
@@ -95,10 +98,11 @@ export default function MainTabs() {
         options={{
           headerShown: true,
           title: t('walletBalance'),
+          tabBarLabel: t('tabWallet'),
           headerTitleStyle: { fontWeight: '800', color: '#0f172a' }
         }}
       />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarLabel: t('tabProfile') }} />
     </Tab.Navigator>
   );
 }

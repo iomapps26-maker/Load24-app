@@ -20,12 +20,11 @@ import DateField from '../components/DateField';
 // unavailable/maintenance) — that lifecycle isn't editable from this form,
 // it starts every posting at 'available'.
 const TRIP_PREFERENCES = ['single_trip', 'return_load', 'regular_lane'];
-const TRIP_PREFERENCE_LABELS = { single_trip: 'Single trip', return_load: 'Return load', regular_lane: 'Regular lane' };
+const TRIP_PREFERENCE_KEYS = { single_trip: 'tripPrefSingleTrip', return_load: 'tripPrefReturnLoad', regular_lane: 'tripPrefRegularLane' };
 const RECURRING_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-const RECURRING_DAY_LABELS = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+const RECURRING_DAY_KEYS = { mon: 'dayMon', tue: 'dayTue', wed: 'dayWed', thu: 'dayThu', fri: 'dayFri', sat: 'daySat', sun: 'daySun' };
 
 const REQUIRED = ['current_pincode', 'current_city', 'current_state'];
-const REQUIRED_LABELS = { current_pincode: 'Pincode', current_city: 'City', current_state: 'State' };
 
 function Field({ label, required, ...props }) {
   return (
@@ -36,7 +35,7 @@ function Field({ label, required, ...props }) {
   );
 }
 
-function TruckPicker({ trucks, isLoading, selectedId, onSelect, navigation }) {
+function TruckPicker({ trucks, isLoading, selectedId, onSelect, navigation, t }) {
   if (isLoading) {
     return <ActivityIndicator className="my-4" color="#f97316" />;
   }
@@ -48,14 +47,14 @@ function TruckPicker({ trucks, isLoading, selectedId, onSelect, navigation }) {
         onPress={() => navigation.navigate('TruckDetails')}
       >
         <Icon source="plus" size={18} color="#f97316" />
-        <Text className="ml-2 text-sm font-bold text-brand">Register a truck first</Text>
+        <Text className="ml-2 text-sm font-bold text-brand">{t('registerTruckFirst')}</Text>
       </TouchableOpacity>
     );
   }
 
   return (
     <View className="mb-5">
-      <Text className="mb-2 text-sm text-slate-600">Which truck is this posting for? *</Text>
+      <Text className="mb-2 text-sm text-slate-600">{t('whichTruckForPosting')} *</Text>
       {trucks.map((truck) => (
         <TouchableOpacity
           key={truck.id}
@@ -131,15 +130,17 @@ export default function PostTruckScreen() {
     onError: (err) => setError(err.message)
   });
 
+  const requiredLabels = { current_pincode: t('pincode'), current_city: t('city'), current_state: t('state') };
+
   // Named per-field, same reasoning as PostLoadScreen's getValidationErrors —
   // a flat "fill all required fields" doesn't say which one on a form this
   // long, so list exactly what's missing instead.
   const getValidationErrors = () => {
     const errors = [];
-    if (!truckId) errors.push('Which truck this posting is for');
-    errors.push(...REQUIRED.filter((k) => !String(form[k]).trim()).map((k) => REQUIRED_LABELS[k]));
-    if (!availableNow && !form.available_from.trim()) errors.push('Available from date');
-    if (isRecurring && recurringDays.length === 0) errors.push('At least one repeat day');
+    if (!truckId) errors.push(t('whichTruckForPostingShort'));
+    errors.push(...REQUIRED.filter((k) => !String(form[k]).trim()).map((k) => requiredLabels[k]));
+    if (!availableNow && !form.available_from.trim()) errors.push(t('availableFromDate'));
+    if (isRecurring && recurringDays.length === 0) errors.push(t('atLeastOneRepeatDay'));
     return errors;
   };
 
@@ -148,7 +149,7 @@ export default function PostTruckScreen() {
   const handleSubmit = () => {
     setError('');
     const errors = getValidationErrors();
-    if (errors.length > 0) return setError(`Missing: ${errors.join(', ')}`);
+    if (errors.length > 0) return setError(`${t('missingLabel')}: ${errors.join(', ')}`);
     createAvailability.mutate();
   };
 
@@ -161,57 +162,58 @@ export default function PostTruckScreen() {
           selectedId={truckId}
           onSelect={setTruckId}
           navigation={navigation}
+          t={t}
         />
 
-        <Text className="mb-2 text-sm text-slate-600">Availability *</Text>
+        <Text className="mb-2 text-sm text-slate-600">{t('availabilityLabel')} *</Text>
         <View className="mb-4 flex-row gap-2">
-          <Chip selected={availableNow} onPress={() => setAvailableNow(true)} compact>Available now</Chip>
-          <Chip selected={!availableNow} onPress={() => setAvailableNow(false)} compact>Available from date</Chip>
+          <Chip selected={availableNow} onPress={() => setAvailableNow(true)} compact>{t('availableNow')}</Chip>
+          <Chip selected={!availableNow} onPress={() => setAvailableNow(false)} compact>{t('availableFromDate')}</Chip>
         </View>
         {!availableNow && (
-          <DateField label="Available from" required value={form.available_from} onChange={set('available_from')} />
+          <DateField label={t('availableFrom')} required value={form.available_from} onChange={set('available_from')} />
         )}
 
-        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Current location</Text>
+        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">{t('currentLocation')}</Text>
         <Field
-          label="Pincode" required keyboardType="number-pad" maxLength={6}
+          label={t('pincode')} required keyboardType="number-pad" maxLength={6}
           value={form.current_pincode} onChangeText={set('current_pincode')}
           right={pincodeLoading ? <TextInput.Icon icon={() => <ActivityIndicator size={16} color="#f97316" />} /> : undefined}
         />
         <View className="flex-row gap-3">
-          <View className="flex-1"><Field label="City" required value={form.current_city} onChangeText={set('current_city')} /></View>
-          <View className="flex-1"><Field label="State" required value={form.current_state} onChangeText={set('current_state')} /></View>
+          <View className="flex-1"><Field label={t('city')} required value={form.current_city} onChangeText={set('current_city')} /></View>
+          <View className="flex-1"><Field label={t('state')} required value={form.current_state} onChangeText={set('current_state')} /></View>
         </View>
-        <Field label="Preferred routes" value={form.preferred_routes} onChangeText={set('preferred_routes')} placeholder="e.g. Delhi - Mumbai, Delhi - Pune" />
-        <Field label="Destination preference" value={form.destination_preference} onChangeText={set('destination_preference')} placeholder="e.g. Any, or specific cities" />
-        <Field label="Operating radius (km)" keyboardType="number-pad" value={form.operating_radius_km} onChangeText={set('operating_radius_km')} />
+        <Field label={t('preferredRoutes')} value={form.preferred_routes} onChangeText={set('preferred_routes')} placeholder={t('phPreferredRoutes')} />
+        <Field label={t('destinationPreference')} value={form.destination_preference} onChangeText={set('destination_preference')} placeholder={t('phDestinationPreference')} />
+        <Field label={t('operatingRadiusKm')} keyboardType="number-pad" value={form.operating_radius_km} onChangeText={set('operating_radius_km')} />
 
-        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Freight</Text>
+        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">{t('freight')}</Text>
         <View className="flex-row gap-3">
-          <View className="flex-1"><Field label="Expected freight (₹)" keyboardType="number-pad" value={form.expected_freight} onChangeText={set('expected_freight')} /></View>
-          <View className="flex-1"><Field label="Minimum acceptable (₹)" keyboardType="number-pad" value={form.minimum_freight} onChangeText={set('minimum_freight')} /></View>
+          <View className="flex-1"><Field label={t('expectedFreight')} keyboardType="number-pad" value={form.expected_freight} onChangeText={set('expected_freight')} /></View>
+          <View className="flex-1"><Field label={t('minimumAcceptable')} keyboardType="number-pad" value={form.minimum_freight} onChangeText={set('minimum_freight')} /></View>
         </View>
 
-        <Text className="mb-2 text-sm text-slate-600">Trip preference *</Text>
+        <Text className="mb-2 text-sm text-slate-600">{t('tripPreference')} *</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
           {TRIP_PREFERENCES.map((pref) => (
             <Chip key={pref} selected={tripPreference === pref} onPress={() => setTripPreference(pref)} compact>
-              {TRIP_PREFERENCE_LABELS[pref]}
+              {t(TRIP_PREFERENCE_KEYS[pref])}
             </Chip>
           ))}
         </View>
 
-        <Text className="mb-2 text-sm text-slate-600">Repeat availability</Text>
+        <Text className="mb-2 text-sm text-slate-600">{t('repeatAvailability')}</Text>
         <View className="mb-2 flex-row gap-2">
           <Chip selected={isRecurring} onPress={() => setIsRecurring((v) => !v)} compact icon="repeat">
-            Repeat this posting weekly
+            {t('repeatWeekly')}
           </Chip>
         </View>
         {isRecurring && (
           <View className="mb-4 flex-row flex-wrap gap-2">
             {RECURRING_DAYS.map((day) => (
               <Chip key={day} selected={recurringDays.includes(day)} onPress={() => toggleRecurringDay(day)} compact>
-                {RECURRING_DAY_LABELS[day]}
+                {t(RECURRING_DAY_KEYS[day])}
               </Chip>
             ))}
           </View>
@@ -228,7 +230,7 @@ export default function PostTruckScreen() {
           disabled={createAvailability.isPending || !confirmed}
           onPress={handleSubmit}
         >
-          Post Availability
+          {t('postAvailability')}
         </Button>
       </ScrollView>
     </KeyboardAvoidingView>

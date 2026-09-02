@@ -983,4 +983,85 @@ describe('trip documents (E-Way Bill / Bilty)', () => {
       .send({ document_type: 'bilty', storage_path: 'someone-else/load-7-bilty.pdf' });
     expect(res.status).toBe(403);
   });
+
+  describe('POST .../documents/number — E-Way Bill number', () => {
+    it('saves a 12-digit E-Way Bill number against the trip', async () => {
+      const res = await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/number')
+        .send({ document_type: 'eway_bill', document_number: '123456789012' });
+      expect(res.status).toBe(200);
+      expect(res.body.document).toMatchObject({ document_type: 'eway_bill', document_number: '123456789012' });
+      expect(tripDocs.rows).toHaveLength(1);
+      expect(tripDocs.rows[0]).toMatchObject({ load_id: 'load-7', bid_id: 'bid-7', document_type: 'eway_bill', document_number: '123456789012' });
+    });
+
+    it('trims surrounding whitespace before validating and storing', async () => {
+      const res = await request(buildTripApp('trucker@example.com'))
+        .post('/api/load-bids/load/load-7/documents/number')
+        .send({ document_type: 'eway_bill', document_number: '  123456789012  ' });
+      expect(res.status).toBe(200);
+      expect(tripDocs.rows[0].document_number).toBe('123456789012');
+    });
+
+    it('rejects a number that is not exactly 12 digits', async () => {
+      for (const bad of ['12345', '1234567890123', '12345678901a', 'abcdefghijkl']) {
+        const res = await request(buildTripApp('poster@example.com'))
+          .post('/api/load-bids/load/load-7/documents/number')
+          .send({ document_type: 'eway_bill', document_number: bad });
+        expect(res.status).toBe(400);
+      }
+      expect(tripDocs.rows).toHaveLength(0);
+    });
+
+    it('clears the number when an empty string is sent', async () => {
+      await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/number')
+        .send({ document_type: 'eway_bill', document_number: '123456789012' });
+      const res = await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/number')
+        .send({ document_type: 'eway_bill', document_number: '' });
+      expect(res.status).toBe(200);
+      expect(tripDocs.rows).toHaveLength(1);
+      expect(tripDocs.rows[0].document_number).toBeNull();
+    });
+
+    it('rejects a caller who is neither the poster nor the approved bidder', async () => {
+      const res = await request(buildTripApp('stranger@example.com'))
+        .post('/api/load-bids/load/load-7/documents/number')
+        .send({ document_type: 'eway_bill', document_number: '123456789012' });
+      expect(res.status).toBe(403);
+    });
+
+    it('rejects an unknown document_type', async () => {
+      const res = await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/number')
+        .send({ document_type: 'invoice', document_number: '123456789012' });
+      expect(res.status).toBe(400);
+    });
+
+    it('keeps the number when a file is later uploaded, and the file when the number changes', async () => {
+      await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/number')
+        .send({ document_type: 'eway_bill', document_number: '123456789012' });
+
+      await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents')
+        .send({ document_type: 'eway_bill', storage_path: 'poster-1/load-7-eway_bill.pdf', file_name: 'bill.pdf', mime_type: 'application/pdf' });
+
+      expect(tripDocs.rows).toHaveLength(1);
+      expect(tripDocs.rows[0]).toMatchObject({
+        document_number: '123456789012',
+        storage_path: 'poster-1/load-7-eway_bill.pdf'
+      });
+
+      await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/number')
+        .send({ document_type: 'eway_bill', document_number: '999999999999' });
+
+      expect(tripDocs.rows[0]).toMatchObject({
+        document_number: '999999999999',
+        storage_path: 'poster-1/load-7-eway_bill.pdf'
+      });
+    });
+  });
 });

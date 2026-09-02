@@ -262,7 +262,7 @@ function AuthGate() {
           ) : (
             <>
               <Stack.Screen name="Main" component={MainTabs} />
-              <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
+              <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ headerShown: true, title: t('editProfile') }} />
               <Stack.Screen name="MpinSetup" component={MpinSetupScreen} options={{ headerShown: true, title: t('mpinSettings') }} />
               <Stack.Screen
                 name="LinkedAccounts"
@@ -292,7 +292,7 @@ function AuthGate() {
               <Stack.Screen
                 name="PostTruck"
                 component={PostTruckScreen}
-                options={{ headerShown: true, title: 'Post Truck Availability' }}
+                options={{ headerShown: true, title: t('postTruckAvailability') }}
               />
               <Stack.Screen
                 name="SupportTickets"

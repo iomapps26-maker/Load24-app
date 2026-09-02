@@ -73,7 +73,12 @@ export const api = {
   },
   bankDetails: {
     me: () => request('/api/bank-details/me'),
-    save: (body) => request('/api/bank-details', { method: 'POST', body })
+    save: (body) => request('/api/bank-details', { method: 'POST', body }),
+    // Cancelled cheque / passbook image — signed-upload-URL then confirm, same
+    // shape as kyc.uploadUrl/confirmDocument (see DocumentUploadRow).
+    proofUploadUrl: (_documentType, file_name) =>
+      request('/api/bank-details/proof/upload-url', { method: 'POST', body: { file_name } }),
+    confirmProof: (body) => request('/api/bank-details/proof', { method: 'POST', body })
   },
   trucks: {
     mine: () => request('/api/trucks'),
@@ -171,6 +176,10 @@ export const api = {
     tripDocumentUploadUrl: (loadId, document_type, file_name) =>
       request(`/api/load-bids/load/${loadId}/documents/upload-url`, { method: 'POST', body: { document_type, file_name } }),
     confirmTripDocument: (loadId, body) => request(`/api/load-bids/load/${loadId}/documents`, { method: 'POST', body }),
+    // The reference number printed on a trip document (the 12-digit E-Way Bill
+    // number) — kept on the same row as the file, settable independently of it.
+    // body: { document_type, document_number } — '' clears it.
+    setTripDocumentNumber: (loadId, body) => request(`/api/load-bids/load/${loadId}/documents/number`, { method: 'POST', body }),
     deliver: (loadId) => request(`/api/load-bids/load/${loadId}/deliver`, { method: 'POST' }),
     approve: (id) => request(`/api/load-bids/${id}/approve`, { method: 'POST' }),
     reject: (id) => request(`/api/load-bids/${id}/reject`, { method: 'POST' })

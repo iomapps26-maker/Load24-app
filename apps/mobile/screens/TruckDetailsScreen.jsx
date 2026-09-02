@@ -427,7 +427,7 @@ export default function TruckDetailsScreen() {
           onPress={() => navigation.navigate('PostTruck')}
         >
           <Icon source="calendar-clock-outline" size={18} color="white" />
-          <Text className="ml-2 text-sm font-bold text-white">Post Truck Availability</Text>
+          <Text className="ml-2 text-sm font-bold text-white">{t('postTruckAvailability')}</Text>
         </TouchableOpacity>
       )}
 

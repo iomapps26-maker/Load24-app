@@ -7,6 +7,15 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
+import DocumentUploadRow from '../components/DocumentUploadRow';
+
+const BANK_PROOF_BUCKET = 'bank-account-proofs';
+
+const BANK_BADGE = {
+  pending: { key: 'bankStatusPending', bg: 'bg-orange-100', text: 'text-orange-700' },
+  verified: { key: 'bankStatusVerified', bg: 'bg-green-100', text: 'text-green-700' },
+  rejected: { key: 'bankStatusRejected', bg: 'bg-red-100', text: 'text-red-700' }
+};
 
 const ROLE_LABEL_KEYS = {
   shipper: 'roleShipper',
@@ -62,16 +71,27 @@ function BankDetailsCard({ t }) {
   const queryClient = useQueryClient();
   const { data: bank } = useQuery({ queryKey: ['bankDetails'], queryFn: api.bankDetails.me });
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ account_holder_name: '', account_number: '', ifsc_code: '', bank_name: '' });
+  const [form, setForm] = useState({
+    account_holder_name: '',
+    account_number: '',
+    ifsc_code: '',
+    bank_name: '',
+    bank_branch: '',
+    account_type: 'savings'
+  });
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+
+  const refreshBank = () => queryClient.invalidateQueries({ queryKey: ['bankDetails'] });
 
   const startEdit = () => {
     setForm({
       account_holder_name: bank?.account_holder_name ?? '',
       account_number: bank?.account_number ?? '',
       ifsc_code: bank?.ifsc_code ?? '',
-      bank_name: bank?.bank_name ?? ''
+      bank_name: bank?.bank_name ?? '',
+      bank_branch: bank?.bank_branch ?? '',
+      account_type: bank?.account_type ?? 'savings'
     });
     setError('');
     setConfirmed(false);
@@ -81,7 +101,7 @@ function BankDetailsCard({ t }) {
   const saveBank = useMutation({
     mutationFn: () => api.bankDetails.save(form),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bankDetails'] });
+      refreshBank();
       setEditing(false);
     },
     onError: (err) => setError(err.message)
@@ -98,7 +118,8 @@ function BankDetailsCard({ t }) {
     return errors;
   };
 
-
+  const status = bank?.verification_status ?? 'pending';
+  const badge = BANK_BADGE[status] ?? BANK_BADGE.pending;
 
   return (
     <SectionCard>
@@ -145,8 +166,33 @@ function BankDetailsCard({ t }) {
             label={t('bank')}
             value={form.bank_name}
             onChangeText={(v) => setForm((f) => ({ ...f, bank_name: v }))}
-            className="mb-4"
+            className="mb-3"
           />
+          <TextInput
+            mode="outlined"
+            label={t('bankBranch')}
+            value={form.bank_branch}
+            onChangeText={(v) => setForm((f) => ({ ...f, bank_branch: v }))}
+            className="mb-3"
+          />
+
+          <Text className="mb-1 text-xs text-slate-400">{t('accountType')}</Text>
+          <View className="mb-4 flex-row rounded-full bg-slate-100 p-1 self-start">
+            {['savings', 'current'].map((type) => (
+              <TouchableOpacity
+                key={type}
+                className={`rounded-full px-4 py-1.5 ${form.account_type === type ? 'bg-brand' : ''}`}
+                onPress={() => setForm((f) => ({ ...f, account_type: type }))}
+              >
+                <Text
+                  className={`text-sm font-semibold ${form.account_type === type ? 'text-white' : 'text-slate-600'}`}
+                >
+                  {type === 'savings' ? t('accountTypeSavings') : t('accountTypeCurrent')}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
           {!!error && <Text className="mb-3 text-xs text-red-600">{error}</Text>}
 
           <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />
@@ -178,7 +224,7 @@ function BankDetailsCard({ t }) {
           <Text className="mb-2 text-sm font-semibold text-slate-800">{bank.account_holder_name}</Text>
           <Text className="text-xs text-slate-400">{t('accountNumber')}</Text>
           <Text className="mb-2 text-sm font-semibold text-slate-800">{bank.account_number}</Text>
-          <View className="flex-row justify-between">
+          <View className="mb-2 flex-row justify-between">
             <View>
               <Text className="text-xs text-slate-400">{t('ifscCode')}</Text>
               <Text className="text-sm font-semibold text-slate-800">{bank.ifsc_code}</Text>
@@ -188,12 +234,53 @@ function BankDetailsCard({ t }) {
               <Text className="text-sm font-semibold text-slate-800">{bank.bank_name}</Text>
             </View>
           </View>
-          <View
-            className={`mt-3 self-start rounded-full px-3 py-1 ${bank.verified ? 'bg-green-100' : 'bg-orange-100'}`}
-          >
-            <Text className={`text-xs font-bold ${bank.verified ? 'text-green-700' : 'text-orange-700'}`}>
-              {bank.verified ? `✅ ${t('bankVerified')}` : t('bankNotVerified')}
-            </Text>
+          {(!!bank.bank_branch || !!bank.account_type) && (
+            <View className="mb-1 flex-row justify-between">
+              <View>
+                <Text className="text-xs text-slate-400">{t('bankBranch')}</Text>
+                <Text className="text-sm font-semibold text-slate-800">{bank.bank_branch || '—'}</Text>
+              </View>
+              <View>
+                <Text className="text-xs text-slate-400">{t('accountType')}</Text>
+                <Text className="text-sm font-semibold text-slate-800">
+                  {bank.account_type === 'current'
+                    ? t('accountTypeCurrent')
+                    : bank.account_type === 'savings'
+                    ? t('accountTypeSavings')
+                    : '—'}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          <View className={`mt-3 self-start rounded-full px-3 py-1 ${badge.bg}`}>
+            <Text className={`text-xs font-bold ${badge.text}`}>{t(badge.key)}</Text>
+          </View>
+
+          {status === 'rejected' && (
+            <View className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3">
+              {!!bank.rejection_reason && (
+                <Text className="text-xs text-red-700">
+                  <Text className="font-bold">{t('bankRejectionReasonLabel')}: </Text>
+                  {bank.rejection_reason}
+                </Text>
+              )}
+              <Text className="mt-1 text-xs text-red-600">{t('bankResubmitHint')}</Text>
+            </View>
+          )}
+
+          <Text className="mt-4 text-xs text-slate-400">{t('bankProofHint')}</Text>
+          <View className="mt-2">
+            <DocumentUploadRow
+              bucket={BANK_PROOF_BUCKET}
+              documentType="bank_proof"
+              label={t('docBankProof')}
+              icon="file-document-outline"
+              uploadedDoc={bank.proof_path ? { storage_path: bank.proof_path } : null}
+              getUploadUrl={api.bankDetails.proofUploadUrl}
+              confirmUpload={api.bankDetails.confirmProof}
+              onUploaded={refreshBank}
+            />
           </View>
         </View>
       ) : (
@@ -247,7 +334,7 @@ function ReviewsCard({ profile, t }) {
 export default function ProfileScreen() {
   const navigation = useNavigation();
   const { user, signOut } = useAuth();
-  const { t } = useLanguage();
+  const { t, language, setLanguage } = useLanguage();
   const queryClient = useQueryClient();
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
@@ -325,6 +412,29 @@ export default function ProfileScreen() {
             <Text className="mt-1 text-xs text-slate-500">
               {Number(profile.rating_score ?? 0).toFixed(1)} · {profile.total_ratings ?? 0} {t('reviewsCount')}
             </Text>
+          </View>
+        </View>
+      </SectionCard>
+
+      <SectionCard>
+        <View className="flex-row items-center justify-between">
+          <View className="flex-row items-center">
+            <Icon source="translate" size={20} color="#334155" />
+            <Text className="ml-2 text-base font-bold text-slate-900">{t('language')}</Text>
+          </View>
+          <View className="flex-row rounded-full bg-slate-100 p-1">
+            <TouchableOpacity
+              className={`rounded-full px-4 py-1.5 ${language === 'hi' ? 'bg-brand' : ''}`}
+              onPress={() => setLanguage('hi')}
+            >
+              <Text className={`text-sm font-semibold ${language === 'hi' ? 'text-white' : 'text-slate-600'}`}>हिंदी</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className={`rounded-full px-4 py-1.5 ${language === 'en' ? 'bg-brand' : ''}`}
+              onPress={() => setLanguage('en')}
+            >
+              <Text className={`text-sm font-semibold ${language === 'en' ? 'text-white' : 'text-slate-600'}`}>English</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </SectionCard>

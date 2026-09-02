@@ -52,7 +52,7 @@ function LocationRow({ location, t, onSaved }) {
             setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
             resolve();
           },
-          (err) => reject(new Error(err.message || 'Could not get location')),
+          (err) => reject(new Error(err.message || t('couldNotGetLocation'))),
           { enableHighAccuracy: true, timeout: 15000 }
         );
       });

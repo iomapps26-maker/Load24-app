@@ -21,21 +21,6 @@ const REQUIRED = [
   'loading_date', 'loading_time'
 ];
 
-// Human-readable name for each REQUIRED key, so a failed submit can name
-// exactly what's missing instead of a blanket "fill all required fields" —
-// on a form this long (six sections, most of them off-screen at once) that
-// generic message leaves no way to tell which field is the problem.
-const REQUIRED_LABELS = {
-  loading_pincode: 'Loading pincode', loading_address: 'Loading address', loading_landmark: 'Loading landmark',
-  loading_city: 'Loading city', loading_state: 'Loading state',
-  unloading_pincode: 'Unloading pincode', unloading_address: 'Unloading address', unloading_landmark: 'Unloading landmark',
-  unloading_city: 'Unloading city', unloading_state: 'Unloading state',
-  material_type: 'Material type', weight_tons: 'Weight (tons)', bhada_price: 'Bhada price (₹)', truck_length_ft: 'Truck length (ft)',
-  loading_poc_name: 'Loading contact name', loading_poc_mobile: 'Loading contact mobile',
-  unloading_poc_name: 'Unloading contact name', unloading_poc_mobile: 'Unloading contact mobile',
-  loading_date: 'Loading date', loading_time: 'Loading time'
-};
-
 function Field({ label, value, onChangeText, required, ...props }) {
   return (
     <View className="mb-4">
@@ -70,6 +55,34 @@ export default function PostLoadScreen() {
   const [confirmed, setConfirmed] = useState(false);
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
+
+  // Human-readable name for each REQUIRED key, so a failed submit can name
+  // exactly what's missing instead of a blanket "fill all required fields" —
+  // on a form this long (six sections, most of them off-screen at once) that
+  // generic message leaves no way to tell which field is the problem. Built
+  // from t() so the error reads in the poster's chosen language.
+  const requiredLabels = {
+    loading_pincode: `${t('loading')} ${t('pincode')}`,
+    loading_address: `${t('loading')} ${t('address')}`,
+    loading_landmark: `${t('loading')} ${t('landmark')}`,
+    loading_city: `${t('loading')} ${t('city')}`,
+    loading_state: `${t('loading')} ${t('state')}`,
+    unloading_pincode: `${t('unloading')} ${t('pincode')}`,
+    unloading_address: `${t('unloading')} ${t('address')}`,
+    unloading_landmark: `${t('unloading')} ${t('landmark')}`,
+    unloading_city: `${t('unloading')} ${t('city')}`,
+    unloading_state: `${t('unloading')} ${t('state')}`,
+    material_type: t('materialType'),
+    weight_tons: t('weightTons'),
+    bhada_price: t('bhadaPrice'),
+    truck_length_ft: t('truckLengthFt'),
+    loading_poc_name: `${t('loading')} ${t('contactName')}`,
+    loading_poc_mobile: `${t('loading')} ${t('contactMobile')}`,
+    unloading_poc_name: `${t('unloading')} ${t('contactName')}`,
+    unloading_poc_mobile: `${t('unloading')} ${t('contactMobile')}`,
+    loading_date: t('loadingDate'),
+    loading_time: t('loadingTime')
+  };
 
   // Same auto-fill as account creation — a valid pincode fills in its city
   // and state instead of making the poster type them by hand.
@@ -120,15 +133,15 @@ export default function PostLoadScreen() {
   // boolean, so the error message can say exactly what's wrong instead of
   // a blanket "fill all required fields".
   const getValidationErrors = () => {
-    const errors = REQUIRED.filter((k) => !String(form[k]).trim()).map((k) => REQUIRED_LABELS[k]);
-    if (form.weight_tons.trim() && isNaN(Number(form.weight_tons))) errors.push('Weight (tons) must be a number');
-    if (form.bhada_price.trim() && isNaN(Number(form.bhada_price))) errors.push('Bhada price (₹) must be a number');
-    if (form.truck_length_ft.trim() && isNaN(Number(form.truck_length_ft))) errors.push('Truck length (ft) must be a number');
-    if (truckType === 'other' && !form.required_truck_type_other.trim()) errors.push('Specify truck type');
-    if (fuelType === 'other' && !form.fuel_type_required_other.trim()) errors.push('Specify fuel type');
-    if (axleType === 'other' && !form.axle_type_other.trim()) errors.push('Specify axle type');
-    if (bodyType === 'other' && !form.body_type_other.trim()) errors.push('Specify body type');
-    if (otherConditionSelected && !otherConditionText.trim()) errors.push('Specify special condition');
+    const errors = REQUIRED.filter((k) => !String(form[k]).trim()).map((k) => requiredLabels[k]);
+    if (form.weight_tons.trim() && isNaN(Number(form.weight_tons))) errors.push(`${t('weightTons')} ${t('mustBeNumber')}`);
+    if (form.bhada_price.trim() && isNaN(Number(form.bhada_price))) errors.push(`${t('bhadaPrice')} ${t('mustBeNumber')}`);
+    if (form.truck_length_ft.trim() && isNaN(Number(form.truck_length_ft))) errors.push(`${t('truckLengthFt')} ${t('mustBeNumber')}`);
+    if (truckType === 'other' && !form.required_truck_type_other.trim()) errors.push(t('specifyTruckType'));
+    if (fuelType === 'other' && !form.fuel_type_required_other.trim()) errors.push(t('specifyFuelType'));
+    if (axleType === 'other' && !form.axle_type_other.trim()) errors.push(t('specifyAxleType'));
+    if (bodyType === 'other' && !form.body_type_other.trim()) errors.push(t('specifyBodyType'));
+    if (otherConditionSelected && !otherConditionText.trim()) errors.push(t('specifySpecialCondition'));
     return errors;
   };
 
@@ -137,57 +150,57 @@ export default function PostLoadScreen() {
   const handleSubmit = () => {
     setError('');
     const errors = getValidationErrors();
-    if (errors.length > 0) return setError(`Missing or invalid: ${errors.join(', ')}`);
+    if (errors.length > 0) return setError(`${t('missingOrInvalid')}: ${errors.join(', ')}`);
     createLoad.mutate();
   };
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1 bg-white">
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-        <Text className="mb-4 text-lg font-bold text-slate-900">Loading point</Text>
+        <Text className="mb-4 text-lg font-bold text-slate-900">{t('loadingPoint')}</Text>
         <Field
-          label="Pincode" required keyboardType="number-pad" maxLength={6}
+          label={t('pincode')} required keyboardType="number-pad" maxLength={6}
           value={form.loading_pincode} onChangeText={set('loading_pincode')}
           right={loadingPincodeLoading ? <TextInput.Icon icon={() => <ActivityIndicator size={16} color="#f97316" />} /> : undefined}
         />
-        <Field label="Address" required value={form.loading_address} onChangeText={set('loading_address')} />
-        <Field label="Landmark" required value={form.loading_landmark} onChangeText={set('loading_landmark')} placeholder="e.g. Near XYZ warehouse" />
+        <Field label={t('address')} required value={form.loading_address} onChangeText={set('loading_address')} />
+        <Field label={t('landmark')} required value={form.loading_landmark} onChangeText={set('loading_landmark')} placeholder={t('phLandmark')} />
         <View className="flex-row gap-3">
-          <View className="flex-1"><Field label="City" required value={form.loading_city} onChangeText={set('loading_city')} /></View>
-          <View className="flex-1"><Field label="State" required value={form.loading_state} onChangeText={set('loading_state')} /></View>
+          <View className="flex-1"><Field label={t('city')} required value={form.loading_city} onChangeText={set('loading_city')} /></View>
+          <View className="flex-1"><Field label={t('state')} required value={form.loading_state} onChangeText={set('loading_state')} /></View>
         </View>
-        <Field label="Contact name" required value={form.loading_poc_name} onChangeText={set('loading_poc_name')} />
-        <Field label="Contact mobile" required keyboardType="phone-pad" value={form.loading_poc_mobile} onChangeText={set('loading_poc_mobile')} />
+        <Field label={t('contactName')} required value={form.loading_poc_name} onChangeText={set('loading_poc_name')} />
+        <Field label={t('contactMobile')} required keyboardType="phone-pad" value={form.loading_poc_mobile} onChangeText={set('loading_poc_mobile')} />
         <View className="flex-row gap-3">
-          <View className="flex-1"><Field label="Loading date" required placeholder="YYYY-MM-DD" value={form.loading_date} onChangeText={set('loading_date')} /></View>
-          <View className="flex-1"><Field label="Loading time" required placeholder="e.g. 14:00" value={form.loading_time} onChangeText={set('loading_time')} /></View>
+          <View className="flex-1"><Field label={t('loadingDate')} required placeholder="YYYY-MM-DD" value={form.loading_date} onChangeText={set('loading_date')} /></View>
+          <View className="flex-1"><Field label={t('loadingTime')} required placeholder={t('phLoadingTime')} value={form.loading_time} onChangeText={set('loading_time')} /></View>
         </View>
 
-        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Unloading point</Text>
+        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">{t('unloadingPoint')}</Text>
         <Field
-          label="Pincode" required keyboardType="number-pad" maxLength={6}
+          label={t('pincode')} required keyboardType="number-pad" maxLength={6}
           value={form.unloading_pincode} onChangeText={set('unloading_pincode')}
           right={unloadingPincodeLoading ? <TextInput.Icon icon={() => <ActivityIndicator size={16} color="#f97316" />} /> : undefined}
         />
-        <Field label="Address" required value={form.unloading_address} onChangeText={set('unloading_address')} />
-        <Field label="Landmark" required value={form.unloading_landmark} onChangeText={set('unloading_landmark')} placeholder="e.g. Near XYZ warehouse" />
+        <Field label={t('address')} required value={form.unloading_address} onChangeText={set('unloading_address')} />
+        <Field label={t('landmark')} required value={form.unloading_landmark} onChangeText={set('unloading_landmark')} placeholder={t('phLandmark')} />
         <View className="flex-row gap-3">
-          <View className="flex-1"><Field label="City" required value={form.unloading_city} onChangeText={set('unloading_city')} /></View>
-          <View className="flex-1"><Field label="State" required value={form.unloading_state} onChangeText={set('unloading_state')} /></View>
+          <View className="flex-1"><Field label={t('city')} required value={form.unloading_city} onChangeText={set('unloading_city')} /></View>
+          <View className="flex-1"><Field label={t('state')} required value={form.unloading_state} onChangeText={set('unloading_state')} /></View>
         </View>
-        <Field label="Contact name" required value={form.unloading_poc_name} onChangeText={set('unloading_poc_name')} />
-        <Field label="Contact mobile" required keyboardType="phone-pad" value={form.unloading_poc_mobile} onChangeText={set('unloading_poc_mobile')} />
-        <Field label="Unloading date" placeholder="YYYY-MM-DD" value={form.unloading_date} onChangeText={set('unloading_date')} />
+        <Field label={t('contactName')} required value={form.unloading_poc_name} onChangeText={set('unloading_poc_name')} />
+        <Field label={t('contactMobile')} required keyboardType="phone-pad" value={form.unloading_poc_mobile} onChangeText={set('unloading_poc_mobile')} />
+        <Field label={t('unloadingDate')} placeholder="YYYY-MM-DD" value={form.unloading_date} onChangeText={set('unloading_date')} />
 
-        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">Load details</Text>
-        <Field label="Material type" required value={form.material_type} onChangeText={set('material_type')} placeholder="e.g. Cement, Steel, Cotton" />
+        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">{t('loadDetails')}</Text>
+        <Field label={t('materialType')} required value={form.material_type} onChangeText={set('material_type')} placeholder={t('phMaterialType')} />
         <View className="flex-row gap-3">
-          <View className="flex-1"><Field label="Weight (tons)" required keyboardType="decimal-pad" value={form.weight_tons} onChangeText={set('weight_tons')} /></View>
-          <View className="flex-1"><Field label="Bhada price (₹)" required keyboardType="number-pad" value={form.bhada_price} onChangeText={set('bhada_price')} /></View>
+          <View className="flex-1"><Field label={t('weightTons')} required keyboardType="decimal-pad" value={form.weight_tons} onChangeText={set('weight_tons')} /></View>
+          <View className="flex-1"><Field label={t('bhadaPrice')} required keyboardType="number-pad" value={form.bhada_price} onChangeText={set('bhada_price')} /></View>
         </View>
-        <Field label="Truck length (ft)" required keyboardType="decimal-pad" value={form.truck_length_ft} onChangeText={set('truck_length_ft')} />
+        <Field label={t('truckLengthFt')} required keyboardType="decimal-pad" value={form.truck_length_ft} onChangeText={set('truck_length_ft')} />
 
-        <Text className="mb-2 text-sm text-slate-600">Required truck type *</Text>
+        <Text className="mb-2 text-sm text-slate-600">{t('requiredTruckType')} *</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
           {TRUCK_TYPES.map((type) => (
             <Chip key={type} selected={truckType === type} onPress={() => setTruckType(type)} compact>
@@ -197,15 +210,15 @@ export default function PostLoadScreen() {
         </View>
         {truckType === 'other' && (
           <Field
-            label="Specify truck type"
+            label={t('specifyTruckType')}
             required
-            placeholder="e.g. Bolero Pickup"
+            placeholder={t('phSpecifyTruckType')}
             value={form.required_truck_type_other}
             onChangeText={set('required_truck_type_other')}
           />
         )}
 
-        <Text className="mb-2 text-sm text-slate-600">Fuel type required *</Text>
+        <Text className="mb-2 text-sm text-slate-600">{t('fuelTypeRequired')} *</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
           {FUEL_TYPES.map((type) => (
             <Chip key={type} selected={fuelType === type} onPress={() => setFuelType(type)} compact>
@@ -215,15 +228,15 @@ export default function PostLoadScreen() {
         </View>
         {fuelType === 'other' && (
           <Field
-            label="Specify fuel type"
+            label={t('specifyFuelType')}
             required
-            placeholder="e.g. Petrol"
+            placeholder={t('phSpecifyFuelType')}
             value={form.fuel_type_required_other}
             onChangeText={set('fuel_type_required_other')}
           />
         )}
 
-        <Text className="mb-2 text-sm text-slate-600">Axle type *</Text>
+        <Text className="mb-2 text-sm text-slate-600">{t('axleType')} *</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
           {AXLE_TYPES.map((type) => (
             <Chip key={type} selected={axleType === type} onPress={() => setAxleType(type)} compact>
@@ -233,15 +246,15 @@ export default function PostLoadScreen() {
         </View>
         {axleType === 'other' && (
           <Field
-            label="Specify axle type"
+            label={t('specifyAxleType')}
             required
-            placeholder="e.g. Triple Axle"
+            placeholder={t('phSpecifyAxleType')}
             value={form.axle_type_other}
             onChangeText={set('axle_type_other')}
           />
         )}
 
-        <Text className="mb-2 text-sm text-slate-600">Body type *</Text>
+        <Text className="mb-2 text-sm text-slate-600">{t('bodyType')} *</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
           {BODY_TYPES.map((type) => (
             <Chip key={type} selected={bodyType === type} onPress={() => setBodyType(type)} compact>
@@ -251,15 +264,15 @@ export default function PostLoadScreen() {
         </View>
         {bodyType === 'other' && (
           <Field
-            label="Specify body type"
+            label={t('specifyBodyType')}
             required
-            placeholder="e.g. Curtain-sided"
+            placeholder={t('phSpecifyBodyType')}
             value={form.body_type_other}
             onChangeText={set('body_type_other')}
           />
         )}
 
-        <Text className="mb-2 text-sm text-slate-600">Special conditions</Text>
+        <Text className="mb-2 text-sm text-slate-600">{t('specialConditions')}</Text>
         <View className="mb-4 flex-row flex-wrap gap-2">
           {SPECIAL_CONDITIONS.map((condition) => (
             <Chip key={condition} selected={specialConditions.includes(condition)} onPress={() => toggleSpecialCondition(condition)} compact>
@@ -267,21 +280,21 @@ export default function PostLoadScreen() {
             </Chip>
           ))}
           <Chip selected={otherConditionSelected} onPress={() => setOtherConditionSelected((v) => !v)} compact>
-            {language === 'hi' ? 'अन्य' : 'Other'}
+            {t('other')}
           </Chip>
         </View>
         {otherConditionSelected && (
           <Field
-            label="Specify special condition"
+            label={t('specifySpecialCondition')}
             required
-            placeholder="e.g. Live animals"
+            placeholder={t('phSpecifySpecialCondition')}
             value={otherConditionText}
             onChangeText={setOtherConditionText}
           />
         )}
 
-        <Field label="Special demand comment" value={form.special_demand_comment} onChangeText={set('special_demand_comment')} placeholder="Any additional handling instructions" />
-        <Field label="Custom requirement" value={form.custom_requirement} onChangeText={set('custom_requirement')} placeholder="Anything else the transporter should know" />
+        <Field label={t('specialDemandComment')} value={form.special_demand_comment} onChangeText={set('special_demand_comment')} placeholder={t('phSpecialDemandComment')} />
+        <Field label={t('customRequirement')} value={form.custom_requirement} onChangeText={set('custom_requirement')} placeholder={t('phCustomRequirement')} />
 
         <HelperText type="error" visible={!!error}>{error}</HelperText>
 
@@ -294,7 +307,7 @@ export default function PostLoadScreen() {
           disabled={createLoad.isPending || !confirmed}
           onPress={handleSubmit}
         >
-          Post Load
+          {t('postLoad')}
         </Button>
       </ScrollView>
     </KeyboardAvoidingView>

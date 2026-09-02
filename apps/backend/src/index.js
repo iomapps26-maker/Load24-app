@@ -14,6 +14,7 @@ import onboardingRouter from './routes/onboarding.js';
 import authRouter from './routes/auth.js';
 import whatsappAuthRouter from './routes/whatsappAuth.js';
 import bankDetailsRouter from './routes/bankDetails.js';
+import bankAccountsRouter from './routes/bankAccounts.js';
 import trucksRouter from './routes/trucks.js';
 import truckAvailabilityRouter from './routes/truckAvailability.js';
 import reviewsRouter from './routes/reviews.js';
@@ -153,6 +154,11 @@ app.use('/api/master-data', publicMasterDataRouter);
 // setup and terms acceptance necessarily have to happen pre-consent.
 app.use('/api/profile', requireAuth, profileRouter);
 app.use('/api/profile/kyc', requireAuth, kycRouter);
+// Staff-only payout bank-account review (per-route requireRole, like kyc.js /
+// wallet.js). Mounted under /api/profile like kyc so it sits outside
+// requireConsents — staff accounts never went through the shipper/driver
+// terms flow. profileRouter above only matches /me and / so this falls through.
+app.use('/api/profile/bank-accounts', requireAuth, bankAccountsRouter);
 app.use('/api/onboarding', requireAuth, onboardingRouter);
 app.use('/api/auth', requireAuth, authRouter);
 

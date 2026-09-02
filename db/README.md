@@ -163,6 +163,33 @@ SQL Editor (no migration runner wired up yet).
   winning bidder's eligibility (`lib/bidEligibility.js`) and that their §5
   security hold is still active *before* it locks the load — spec §8 steps
   2-4, previously only checked at bid-placement time.
+- `migrations/050_add_trip_document_number.sql` — `trip_documents.document_number`
+  (nullable): the reference number printed on a trip document — today the
+  12-digit E-Way Bill number, captured on the Trip Details screen below the
+  E-Way Bill upload via `POST /api/load-bids/load/:load_id/documents/number` and
+  returned inside `trip-details`' `trip_documents` alongside `has_file`. Kept on
+  the same `(load_id, document_type)` row as the file so it can be set before,
+  after, or without an upload — which is why `storage_path` becomes nullable. A
+  `char_length <= 40` check is the only DB-level guard; the exact 12-digit rule
+  lives in the route (it is E-Way-Bill-specific, the column is generic).
+- `migrations/051_add_bank_account_verification.sql` — payout bank-account
+  verification for the admin portal (`/admin/bank-accounts`). Extends the
+  existing `bank_details` table (006) rather than adding a new one — it's
+  already the single per-user store the withdrawal flow snapshots into
+  `withdrawal_requests.bank_*`. Adds `bank_branch`, `account_type`
+  (`savings`/`current`), `proof_path`, `rejection_reason`, `reviewed_by`,
+  `reviewed_at`, and replaces the old boolean `verified`/`verified_at` with a
+  three-state `verification_status` (`pending`/`verified`/`rejected`, matching
+  `kyc_cases.status`). Staff review at `GET /api/profile/bank-accounts/pending`
+  and `POST /api/profile/bank-accounts/:id/{verify,reject}`
+  (`routes/bankAccounts.js`) — same three staff roles, same
+  `requireRole → logAction` audit trail as the KYC review endpoints. Any
+  submit/edit of bank details (`routes/bankDetails.js`) resets
+  `verification_status` to `pending`. The cancelled-cheque / passbook image
+  lives in the private `bank-account-proofs` Storage bucket, same
+  signed-upload-URL-then-confirm pattern as `kyc-documents` (008); the app
+  reads `verification_status` + `rejection_reason` for the Profile-screen
+  badge and re-submit flow.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.

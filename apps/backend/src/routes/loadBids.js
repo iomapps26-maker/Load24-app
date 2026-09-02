@@ -186,14 +186,32 @@ async function profileForEmail(email) {
 async function tripDocumentsForLoad(loadId) {
   const { data: rows } = await supabaseAdmin
     .from('trip_documents')
-    .select('document_type, file_name, mime_type, storage_path, uploaded_by_email, updated_at')
+    .select('document_type, file_name, mime_type, storage_path, document_number, uploaded_by_email, updated_at')
     .eq('load_id', loadId);
   if (!rows?.length) return {};
 
   const entries = await Promise.all(
-    rows.map(async ({ document_type, file_name, mime_type, storage_path, uploaded_by_email, updated_at }) => {
-      const { data } = await supabaseAdmin.storage.from(TRIP_DOCS_BUCKET).createSignedUrl(storage_path, TRIP_DOC_URL_TTL_SECONDS);
-      return [document_type, { document_type, file_name, mime_type, uploaded_by_email, updated_at, url: data?.signedUrl ?? null }];
+    rows.map(async ({ document_type, file_name, mime_type, storage_path, document_number, uploaded_by_email, updated_at }) => {
+      // A row can carry just a document number (migration 050) with no file
+      // uploaded yet — nothing to sign in that case.
+      let url = null;
+      if (storage_path) {
+        const { data } = await supabaseAdmin.storage.from(TRIP_DOCS_BUCKET).createSignedUrl(storage_path, TRIP_DOC_URL_TTL_SECONDS);
+        url = data?.signedUrl ?? null;
+      }
+      return [
+        document_type,
+        {
+          document_type,
+          file_name,
+          mime_type,
+          document_number: document_number ?? null,
+          has_file: !!storage_path,
+          uploaded_by_email,
+          updated_at,
+          url
+        }
+      ];
     })
   );
   return Object.fromEntries(entries);
@@ -661,6 +679,45 @@ router.post('/load/:load_id/documents', async (req, res) => {
     .select('document_type, file_name')
     .single();
   if (error) return dbError(res, error, 'Could not save this document');
+
+  res.status(200).json({ ok: true, document: data });
+});
+
+// POST /api/load-bids/load/:load_id/documents/number { document_type, document_number }
+// — the reference number on one of this trip's documents (the 12-digit E-Way
+// Bill number today). Stored on the same trip_documents row as the file
+// (upsert on load_id+document_type) so it can be set before, after, or without
+// an upload; an empty string clears it. The upsert only names the columns it
+// changes, so a later file upload — which doesn't send document_number — keeps
+// the number, and vice versa. Same party gate as the upload routes above.
+router.post('/load/:load_id/documents/number', async (req, res) => {
+  const { document_type, document_number } = req.body;
+  if (!TRIP_DOCUMENT_TYPES.includes(document_type)) {
+    return res.status(400).json({ error: 'document_type must be eway_bill or bilty' });
+  }
+  const raw = typeof document_number === 'string' ? document_number.trim() : '';
+  if (raw !== '' && !/^\d{12}$/.test(raw)) {
+    return res.status(400).json({ error: 'E-Way Bill number must be exactly 12 digits' });
+  }
+
+  const trip = await resolveTripForParty(req);
+  if (trip.error) return res.status(trip.status).json({ error: trip.error });
+
+  const { data, error } = await supabaseAdmin
+    .from('trip_documents')
+    .upsert(
+      {
+        load_id: trip.load.id,
+        bid_id: trip.bid.id,
+        document_type,
+        document_number: raw || null,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'load_id,document_type' }
+    )
+    .select('document_type, document_number')
+    .single();
+  if (error) return dbError(res, error, 'Could not save the document number');
 
   res.status(200).json({ ok: true, document: data });
 });

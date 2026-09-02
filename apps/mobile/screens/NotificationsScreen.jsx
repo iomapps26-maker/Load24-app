@@ -20,6 +20,8 @@ const TYPE_STYLE = {
   withdrawal_paid: { icon: 'cash-check', bg: 'bg-green-100', color: '#16a34a' },
   kyc_verified: { icon: 'shield-check-outline', bg: 'bg-green-100', color: '#16a34a' },
   kyc_rejected: { icon: 'shield-alert-outline', bg: 'bg-red-100', color: '#dc2626' },
+  bank_account_verified: { icon: 'bank-check', bg: 'bg-green-100', color: '#16a34a' },
+  bank_account_rejected: { icon: 'bank-off-outline', bg: 'bg-red-100', color: '#dc2626' },
   truck_verified: { icon: 'truck-check-outline', bg: 'bg-green-100', color: '#16a34a' },
   truck_availability_offered: { icon: 'truck-fast-outline', bg: 'bg-blue-100', color: '#2563eb' },
   truck_available_nearby: { icon: 'truck-outline', bg: 'bg-blue-100', color: '#2563eb' },

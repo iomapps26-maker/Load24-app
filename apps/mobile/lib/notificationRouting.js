@@ -12,6 +12,9 @@ export function navigateForNotification(navigation, notification) {
   }
   if (type.startsWith('wallet') || type.startsWith('withdrawal')) return navigation.navigate('Wallet');
   if (type.startsWith('kyc')) return navigation.navigate('KycVerification');
+  // Payout bank-account verify/reject (backend routes/bankAccounts.js) — the
+  // Bank Details card lives on the Profile tab.
+  if (type.startsWith('bank_account')) return navigation.navigate('Profile');
   // truck_available_nearby is for shippers/transporters/brokers, not the
   // owner — there's no "Find Trucks" browse screen yet to send them to, so
   // it's left unrouted (tap just marks it read / opens to wherever the app

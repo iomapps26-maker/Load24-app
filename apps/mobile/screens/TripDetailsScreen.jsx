@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, Linking, Alert } from 'react-native';
-import { Icon } from 'react-native-paper';
+import { Icon, Button, TextInput, HelperText } from 'react-native-paper';
 import { useRoute } from '@react-navigation/native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -11,9 +12,15 @@ import DocumentUploadRow from '../components/DocumentUploadRow';
 // The two paperwork slots either trip party can attach once a bid is approved
 // (backend: POST /api/load-bids/load/:id/documents — see routes/loadBids.js).
 const TRIP_DOC_TYPES = [
-  { type: 'eway_bill', labelKey: 'ewayBill', icon: 'file-document-outline' },
+  // `numberField` adds the "E-Way Bill Number" input under the upload row
+  // (POST /api/load-bids/load/:id/documents/number) — E-Way Bill only for now.
+  { type: 'eway_bill', labelKey: 'ewayBill', icon: 'file-document-outline', numberField: true },
   { type: 'bilty', labelKey: 'bilty', icon: 'clipboard-text-outline' }
 ];
+
+// The 12-digit GST E-Way Bill number. '' is allowed through so a wrong number
+// can be cleared; the backend applies the same rule.
+const EWAY_BILL_NUMBER_RE = /^\d{12}$/;
 
 // bookings.status (spec §8) -> i18n key for the label shown next to the ref.
 const BOOKING_STATUS_TKEY = {
@@ -58,16 +65,80 @@ function PartyCard({ title, party, t }) {
   );
 }
 
+// The E-Way Bill number printed on the bill, entered below its upload row.
+// Persisted on the same trip document (either party can set/clear it) so it
+// survives independently of whether a file has been attached yet.
+function EwayBillNumberRow({ label, value, onSave, onSaved, t }) {
+  const [text, setText] = useState(value);
+  const [busy, setBusy] = useState(false);
+
+  // Re-seed when the saved value changes under us (e.g. after onChanged refetch,
+  // or the other party sets it).
+  useEffect(() => setText(value), [value]);
+
+  const trimmed = text.trim();
+  const invalid = trimmed !== '' && !EWAY_BILL_NUMBER_RE.test(trimmed);
+  const dirty = trimmed !== value;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave(trimmed);
+      onSaved();
+    } catch (err) {
+      Alert.alert(t('uploadFailed'), err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View className="-mt-1 mb-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+      <Text className="mb-2 text-xs font-semibold text-slate-500">{label}</Text>
+      <TextInput
+        mode="outlined"
+        dense
+        keyboardType="number-pad"
+        maxLength={12}
+        placeholder={t('ewayBillNumberPlaceholder')}
+        value={text}
+        onChangeText={setText}
+      />
+      {invalid && (
+        <HelperText type="error" visible padding="none">
+          {t('ewayBillNumberInvalid')}
+        </HelperText>
+      )}
+      <View className="mt-2 flex-row">
+        <Button
+          mode="contained"
+          buttonColor="#f97316"
+          compact
+          loading={busy}
+          disabled={busy || !dirty || invalid}
+          onPress={save}
+        >
+          {t('save')}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
 // E-Way Bill + Bilty upload slots, shown to both trip parties. Each row is an
 // upload/replace control; once a file is on record it also gets a View button
-// that opens the (short-lived, signed) URL from the trip-details payload.
+// that opens the (short-lived, signed) URL from the trip-details payload. The
+// E-Way Bill row also carries a number field (see EwayBillNumberRow).
 function TripDocumentsCard({ loadId, documents, viewerEmail, onChanged, t }) {
   return (
     <View className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
       <Text className="mb-3 text-base font-bold text-slate-900">{t('tripDocuments')}</Text>
-      {TRIP_DOC_TYPES.map(({ type, labelKey, icon }) => {
+      {TRIP_DOC_TYPES.map(({ type, labelKey, icon, numberField }) => {
         const doc = documents?.[type];
-        const byYou = doc?.uploaded_by_email && doc.uploaded_by_email === viewerEmail;
+        // A doc entry can exist with only a number and no file yet — the upload
+        // row's "uploaded" state must track the file, not the entry.
+        const fileDoc = doc?.has_file ? doc : null;
+        const byYou = fileDoc?.uploaded_by_email && fileDoc.uploaded_by_email === viewerEmail;
         return (
           <View key={type}>
             <DocumentUploadRow
@@ -75,16 +146,27 @@ function TripDocumentsCard({ loadId, documents, viewerEmail, onChanged, t }) {
               documentType={type}
               label={t(labelKey)}
               icon={icon}
-              uploadedDoc={doc}
+              uploadedDoc={fileDoc}
               getUploadUrl={(documentType, fileName) => api.loadBids.tripDocumentUploadUrl(loadId, documentType, fileName)}
               confirmUpload={(body) => api.loadBids.confirmTripDocument(loadId, body)}
               onUploaded={onChanged}
-              onView={() => doc?.url && Linking.openURL(doc.url)}
+              onView={() => fileDoc?.url && Linking.openURL(fileDoc.url)}
             />
-            {!!doc && (
+            {!!fileDoc && (
               <Text className="-mt-2 mb-3 ml-1 text-xs text-slate-400">
                 {byYou ? t('uploadedByYou') : t('uploadedByOtherParty')}
               </Text>
+            )}
+            {numberField && (
+              <EwayBillNumberRow
+                label={t('ewayBillNumber')}
+                value={doc?.document_number ?? ''}
+                onSave={(document_number) =>
+                  api.loadBids.setTripDocumentNumber(loadId, { document_type: type, document_number })
+                }
+                onSaved={onChanged}
+                t={t}
+              />
             )}
           </View>
         );
