@@ -41,9 +41,18 @@ function TruckChips({ trucks, selectedId, onSelect, t }) {
   );
 }
 
-// Bids move in ₹500 steps off the asking price rather than free typing — a
-// faster, thumb-friendly way to counter-offer than the keyboard.
-const BID_STEP = 500;
+// Bids move in fixed steps off the asking price rather than free typing — a
+// faster, thumb-friendly way to counter-offer than the keyboard. The step
+// scales with the bid size so a counter-offer stays one or two taps whatever
+// the load is worth: ₹200 below ₹20k, ₹300 through ₹40k, ₹500 above. The
+// backend only checks amount > 0 (loadBids.js POST /), so these are purely a
+// UI convenience — nothing rejects an "off-step" amount.
+const MIN_BID = 200;
+function bidStepFor(amount) {
+  if (amount < 20000) return 200;
+  if (amount <= 40000) return 300;
+  return 500;
+}
 
 // "Today"/"Tomorrow" reads faster than a bare date on a bidding screen —
 // mirrors the same helper in LoadRouteSummary.
@@ -97,10 +106,10 @@ function RoutePoint({ color, icon, title, address }) {
   );
 }
 
-// Mirrors the backend's lib/bidEligibility.js truck checks so the button can
-// disable (and say why) before the server's coded 403 comes back. Only
-// consulted for vehicle_owner / driver bidders — every other role bids with
-// no vehicle at all.
+// Mirrors the backend's lib/bidEligibility.js vehicle checks — same order,
+// same reasons — so the bid button can disable *and say exactly why* before
+// the server's coded 403 comes back. Only consulted for vehicle_owner /
+// driver bidders; every other role bids with no vehicle at all.
 function docExpired(dateStr) {
   if (!dateStr) return false;
   const d = new Date(dateStr);
@@ -110,10 +119,16 @@ function docExpired(dateStr) {
   return d < today;
 }
 
-function isTruckEligibleForLoad(truck, load) {
-  if (!truck || !load) return false;
-  if (!truck.verified) return false;
-  if (docExpired(truck.permit_expiry) || docExpired(truck.puc_expiry) || docExpired(truck.insurance_expiry)) return false;
+// null when the truck may bid on this load, otherwise { key, params } — `key`
+// names the t() string for the specific reason and `params` fills its
+// {placeholders}. Ordered to match checkBidEligibility() so the pre-submit
+// hint and the server's 403 always agree on which check failed first.
+function truckIneligibility(truck, load) {
+  if (!truck || !load) return null;
+  if (!truck.verified) return { key: 'vehicleVerificationPendingToBid' };
+  if (docExpired(truck.permit_expiry)) return { key: 'vehiclePermitExpiredToBid' };
+  if (docExpired(truck.puc_expiry)) return { key: 'vehiclePucExpiredToBid' };
+  if (docExpired(truck.insurance_expiry)) return { key: 'vehicleInsuranceExpiredToBid' };
 
   const required = load.required_truck_type;
   const typeOk =
@@ -121,26 +136,32 @@ function isTruckEligibleForLoad(truck, load) {
       ? !!(load.required_truck_type_other || '').trim() &&
         (load.required_truck_type_other || '').trim().toLowerCase() === (truck.truck_type_other || '').trim().toLowerCase()
       : required === truck.truck_type;
-  if (!typeOk) return false;
+  if (!typeOk) return { key: 'vehicleTypeMismatchToBid' };
 
   const capacity = truck.capacity_tons == null ? NaN : Number(truck.capacity_tons);
   const weight = Number(load.weight_tons);
-  if (Number.isNaN(capacity)) return false;
-  if (weight > 0 && capacity < weight) return false;
-  return true;
+  if (Number.isNaN(capacity)) return { key: 'vehicleCapacityMissingToBid' };
+  if (weight > 0 && capacity < weight) {
+    return { key: 'vehicleCapacityInsufficientToBid', params: { required: weight, capacity } };
+  }
+  return null;
 }
 
 // Full-page bid entry, opened either from LoadCard's "Let's Bidding" button
 // (which already has the whole load object on hand) or from a WhatsApp
 // "View Load"/"Bid" deep link (App.jsx's Linking handling — loads/:loadId),
 // which only carries an id. Shows the whole load (route, distance, loading
-// time, required truck) with a step-by-500 rate picker pinned to the bottom
+// time, required truck) with a stepped rate picker pinned to the bottom
 // so a bidder can review everything before committing.
 export default function PlaceBidScreen() {
   const route = useRoute();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
   const { language, t } = useLanguage();
+  // t() is a bare key lookup — tf() adds {placeholder} substitution from a
+  // params object for the few strings that interpolate a value.
+  const tf = (key, params) =>
+    Object.entries(params ?? {}).reduce((s, [k, v]) => s.replace(`{${k}}`, String(v)), t(key));
   const { load: loadParam, loadId } = route.params;
 
   // Only fires for the deep-link entry point — LoadCard's in-app navigation
@@ -165,8 +186,13 @@ export default function PlaceBidScreen() {
   // `load` starts out undefined for the deep-link entry point until its
   // fetch resolves, so the "not found yet" branch has to come after all
   // hooks are declared, not as an early return partway through them.
-  const basePrice = Math.round((Number(load?.bhada_price) || 0) / BID_STEP) * BID_STEP;
-  const [amount, setAmount] = useState(basePrice || BID_STEP);
+  // The load poster's asking price, to the rupee. The stepper starts here, the
+  // "win instantly" hint fires when the bid is exactly this, and the
+  // "Confirm ₹…" shortcut below snaps back to it. No longer rounded to the
+  // nearest ₹500 (the old flat step needed that) — the step is dynamic now and
+  // a dedicated button offers the exact price in one tap.
+  const basePrice = Math.max(0, Math.round(Number(load?.bhada_price) || 0));
+  const [amount, setAmount] = useState(basePrice || MIN_BID);
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [truckId, setTruckId] = useState(null);
@@ -179,11 +205,11 @@ export default function PlaceBidScreen() {
   // useState's initializer only runs once on mount — fine for LoadCard's
   // in-app navigation (load is already there on the first render), but the
   // deep-link entry point mounts with load still undefined (basePrice 0,
-  // amount defaulting to BID_STEP) until its fetch resolves. This resyncs
+  // amount defaulting to MIN_BID) until its fetch resolves. This resyncs
   // amount once the real basePrice is known instead of leaving the stepper
-  // stuck at ₹500 for a bid opened from WhatsApp.
+  // stuck at the floor for a bid opened from WhatsApp.
   useEffect(() => {
-    if (!loadParam && loadId) setAmount(basePrice || BID_STEP);
+    if (!loadParam && loadId) setAmount(basePrice || MIN_BID);
   }, [basePrice, loadParam, loadId]);
 
   // Same resync for the deep-link entry point: `load` (and its loading_date)
@@ -196,10 +222,13 @@ export default function PlaceBidScreen() {
   }, [load?.loading_date, loadParam, loadId]);
 
   const bidMutation = useMutation({
-    mutationFn: () =>
+    // `mutate()` from the stepper's "Confirm this rate" button passes nothing
+    // and bids the adjusted `amount`; the "Confirm ₹…" shortcut passes the
+    // poster's asking price so it never depends on where the stepper landed.
+    mutationFn: (bidAmount = amount) =>
       api.loadBids.place({
         load_id: load?.id,
-        amount,
+        amount: bidAmount,
         bid_by_type: profile?.user_type,
         truck_id: selectedTruck?.id,
         truck_number: selectedTruck?.registration_number,
@@ -213,7 +242,9 @@ export default function PlaceBidScreen() {
     onError: (err) => setError(err.message)
   });
 
-  const adjust = (delta) => setAmount((a) => Math.max(BID_STEP, a + delta));
+  // `dir` is +1 / −1; the actual rupee step is chosen from the current amount
+  // so it changes as the bid crosses the ₹20k / ₹40k slab lines.
+  const adjust = (dir) => setAmount((a) => Math.max(MIN_BID, a + dir * bidStepFor(a)));
 
   // Payment breakup. chargePercent / the deposit slab table fall back to the
   // same defaults the backend seeds (052_bidding_security_deposit_slabs.sql)
@@ -252,9 +283,11 @@ export default function PlaceBidScreen() {
   const notRestricted =
     !profile?.bidding_restricted_until || new Date(profile.bidding_restricted_until) <= new Date();
   // vehicle_owner / driver must bid with a truck that clears every vehicle
-  // check; other roles never need one.
+  // check; other roles never need one. `vehicleIssue` carries the specific
+  // failing reason (null once no truck is picked — that's its own message).
   const needsVehicle = ['vehicle_owner', 'driver'].includes(profile?.user_type);
-  const vehicleEligible = !needsVehicle || isTruckEligibleForLoad(selectedTruck, load);
+  const vehicleIssue = needsVehicle && selectedTruck ? truckIneligibility(selectedTruck, load) : null;
+  const vehicleEligible = !needsVehicle || (!!selectedTruck && !!load && !vehicleIssue);
   const eligibleToBid = accountActive && mobileVerified && notRestricted && kycVerified && vehicleEligible;
 
   if (!load) {
@@ -277,6 +310,15 @@ export default function PlaceBidScreen() {
   const loadingWhen = loadingWhenLabel(load.loading_date, t);
   const unloadingWhen = unloadingDateLabel(load.unloading_date);
 
+  // The exact line the vehicle hint shows: "pick a vehicle" when none is
+  // selected, the specific failing check when one is, and a generic fallback
+  // if some future check lands here without its own key.
+  let vehicleIssueMessage = '';
+  if (needsVehicle && !vehicleEligible) {
+    if (!selectedTruck) vehicleIssueMessage = t('selectVehicleToBid');
+    else vehicleIssueMessage = tf((vehicleIssue ?? { key: 'vehicleNotEligibleToBid' }).key, vehicleIssue?.params);
+  }
+
   return (
     <View className="flex-1 bg-slate-50">
       <ScrollView
@@ -284,6 +326,7 @@ export default function PlaceBidScreen() {
           padding: 16,
           paddingBottom:
             240 +
+            (basePrice > 0 && amount !== basePrice ? 68 : 0) +
             (meetsSecurityDeposit ? 0 : 60) +
             (kycVerified ? 0 : 60) +
             (accountActive && mobileVerified && notRestricted && vehicleEligible ? 0 : 60)
@@ -379,14 +422,14 @@ export default function PlaceBidScreen() {
       <View className="absolute bottom-0 left-0 right-0 rounded-t-3xl border border-slate-100 bg-white p-5 pb-8">
         <View className="mb-3 flex-row items-center justify-between rounded-2xl border border-green-200 bg-green-50 px-4 py-3">
           <TouchableOpacity
-            onPress={() => adjust(-BID_STEP)}
+            onPress={() => adjust(-1)}
             className="h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white"
           >
             <Text className="text-xl font-bold text-slate-700">−</Text>
           </TouchableOpacity>
           <Text className="text-2xl font-extrabold text-slate-900">₹ {amount.toLocaleString('en-IN')}</Text>
           <TouchableOpacity
-            onPress={() => adjust(BID_STEP)}
+            onPress={() => adjust(1)}
             className="h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white"
           >
             <Text className="text-xl font-bold text-slate-700">+</Text>
@@ -450,9 +493,7 @@ export default function PlaceBidScreen() {
         {accountActive && needsVehicle && !vehicleEligible && (
           <View className="mb-3 flex-row items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2">
             <Icon source="truck-alert-outline" size={16} color="#f97316" />
-            <Text className="flex-1 text-xs text-orange-800">
-              {selectedTruck ? t('vehicleNotEligibleToBid') : t('selectVehicleToBid')}
-            </Text>
+            <Text className="flex-1 text-xs text-orange-800">{vehicleIssueMessage}</Text>
           </View>
         )}
 
@@ -466,8 +507,33 @@ export default function PlaceBidScreen() {
           className="items-center rounded-2xl bg-green-600 py-4"
           style={bidMutation.isPending || !confirmed || !meetsSecurityDeposit || !eligibleToBid ? { opacity: 0.6 } : undefined}
         >
-          <Text className="text-base font-bold text-white">{t('confirmThisRate')}</Text>
+          <Text className="text-base font-bold text-white">
+            {bidMutation.isPending ? t('placingBid') : t('confirmThisRate')}
+          </Text>
         </TouchableOpacity>
+
+        {/* One-tap "just take the poster's price" — same bid flow and same
+            gates as the button above, only the amount is fixed to the asking
+            price. Snaps the stepper there too so the payment breakup above
+            matches if the bid errors out. Hidden once the stepper is already
+            sitting on that price (the "win instantly" hint covers that case). */}
+        {basePrice > 0 && amount !== basePrice && (
+          <TouchableOpacity
+            onPress={() => {
+              setAmount(basePrice);
+              bidMutation.mutate(basePrice);
+            }}
+            disabled={bidMutation.isPending || !confirmed || !meetsSecurityDeposit || !eligibleToBid}
+            className="mt-3 items-center rounded-2xl border-2 border-green-600 bg-white py-4"
+            style={bidMutation.isPending || !confirmed || !meetsSecurityDeposit || !eligibleToBid ? { opacity: 0.6 } : undefined}
+          >
+            <Text className="text-base font-bold text-green-700">
+              {bidMutation.isPending
+                ? t('placingBid')
+                : tf('confirmPosterPrice', { amount: basePrice.toLocaleString('en-IN') })}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );

@@ -200,6 +200,15 @@ SQL Editor (no migration runner wired up yet).
   signed-upload-URL-then-confirm pattern as `kyc-documents` (008); the app
   reads `verification_status` + `rejection_reason` for the Profile-screen
   badge and re-submit flow.
+- `migrations/053_relax_bid_by_type_check.sql` — drops the
+  `load_bids_bid_by_type_check` / `load_likes_liked_by_type_check` CHECK
+  constraints. They hard-coded a snapshot of `user_profiles.user_type` that
+  kept drifting (already patched by `016` and `018`) and never included
+  `shipper`, so a shipper who reached `PlaceBidScreen` got the opaque "Could
+  not place your bid" on INSERT. The columns stay; they're display-only labels
+  and gate nothing (RLS `load_bids_insert_own` + `lib/bidEligibility.js` are
+  the real boundaries). `routes/loadBids.js` also now surfaces the SQLSTATE
+  class (check violation / missing column) instead of the blanket fallback.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.

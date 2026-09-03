@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { notifyEmail } from '../lib/notify.js';
 import { applyWalletAdjustment, getOrCreateWallet, getAvailableBalance } from '../lib/wallet.js';
-import { getBiddingSettings } from '../lib/platformSettings.js';
+import { getBiddingSettingsCached } from '../lib/platformSettings.js';
 import { computeBidSecurityHold } from '../lib/bidSecurityDeposit.js';
 import { checkBidEligibility, TRUCK_REQUIRED_ROLES } from '../lib/bidEligibility.js';
 import { placeBidSecurityHold, releaseBidSecurityHold, sweepExpiredBidHolds } from '../lib/bidSecurityHold.js';
@@ -34,6 +34,46 @@ function dbError(res, error, fallbackMessage) {
   return res.status(400).json({ error: fallbackMessage });
 }
 
+// Like dbError, but for writes where the *class* of failure is safe and
+// useful to tell the client: a CHECK/NOT-NULL violation means the payload
+// was wrong, a missing column/table means this server is running against a
+// database that hasn't had its migrations applied. The raw error.message can
+// leak schema internals, but the SQLSTATE code and constraint name can't, and
+// without them a failed bid is just an opaque "could not place your bid".
+function writeError(res, error, fallbackMessage) {
+  console.error('[load-bids]', error);
+  const code = error?.code;
+  if (code === '23514') {
+    return res.status(400).json({
+      error: `${fallbackMessage}: a value was rejected by a database rule (${error.constraint || 'check constraint'}).`,
+      code: 'check_violation',
+      constraint: error.constraint ?? null
+    });
+  }
+  if (code === '23502') {
+    return res.status(400).json({ error: `${fallbackMessage}: a required field was missing.`, code: 'not_null_violation' });
+  }
+  if (code === '23503') {
+    return res.status(400).json({
+      error: `${fallbackMessage}: it referenced something that no longer exists (${error.constraint || 'foreign key'}).`,
+      code: 'foreign_key_violation'
+    });
+  }
+  if (code === '42501') {
+    return res.status(403).json({
+      error: `${fallbackMessage}: the database blocked the write (row-level security). Your account may not be eligible to bid.`,
+      code: 'rls_denied'
+    });
+  }
+  if (code === '42703' || code === '42P01') {
+    return res.status(500).json({
+      error: `${fallbackMessage}: the server's database is missing a required migration — contact support.`,
+      code: 'schema_out_of_date'
+    });
+  }
+  return res.status(400).json({ error: fallbackMessage });
+}
+
 // Any pending bid whose 1-minute window has passed but hasn't been acted on
 // yet is treated as rejected — checked lazily whenever bids are read, same
 // approach as the WhatsApp OTP expires_at column (see whatsappAuth.js)
@@ -62,6 +102,15 @@ async function autoRejectExpired(supabase, load_id) {
     await releaseBidSecurityHold(bid, { reason: 'bid expired' }).catch((err) =>
       console.error('[load-bids] expired hold release failed for bid', bid.id, err)
     );
+    // Until now an unanswered bid just silently flipped to 'rejected' — the
+    // bidder got nothing. Tell them (and that their hold is back). Same
+    // fire-and-forget treatment as every other notify in this file.
+    notifyEmail(bid.bid_by_email, {
+      type: 'bid_rejected',
+      title: 'Your bid expired',
+      body: 'The load poster did not respond in time — your security hold has been released',
+      data: { load_id, bid_id: bid.id }
+    }).catch((err) => console.error('[load-bids] expiry notify failed for bid', bid.id, err));
   }
 }
 
@@ -94,7 +143,10 @@ async function rejectSiblingBids(supabase, load_id, approvedBidId) {
     await releaseBidSecurityHold(sib, { reason: 'another bid was approved' }).catch((err) =>
       console.error('[load-bids] sibling hold release failed for bid', sib.id, err)
     );
-    await notifyEmail(sib.bid_by_email, {
+    // Fire-and-forget — the caller (POST /:id/approve) is holding its HTTP
+    // response open until this whole function returns, and a notify round-trip
+    // per losing bidder shouldn't be on that path.
+    notifyEmail(sib.bid_by_email, {
       type: 'bid_rejected',
       title: 'Your bid was not selected',
       body: 'This load was awarded to another bidder',
@@ -347,7 +399,7 @@ router.get('/mine', async (req, res) => {
 // Staff change these from the admin panel (PATCH /api/admin/platform-settings/bidding).
 router.get('/config', async (req, res) => {
   try {
-    res.json(await getBiddingSettings());
+    res.json(await getBiddingSettingsCached());
   } catch (error) {
     return dbError(res, error, 'Could not load bidding settings');
   }
@@ -378,18 +430,24 @@ router.post('/', async (req, res) => {
   // this is the friendly per-reason path, and the only place the vehicle
   // conditions are enforced. user_profiles / loads / trucks RLS each let the
   // caller read their own row.
-  const { data: bidderProfile, error: bidderProfileError } = await req.supabase
-    .from('user_profiles')
-    .select('kyc_status, is_active, mobile_verified, user_type, bidding_restricted_until, bidding_restriction_reason')
-    .eq('user_id', req.user.id)
-    .maybeSingle();
+  // The profile and load reads don't depend on each other — run them together
+  // so the bid path pays one round-trip here, not two.
+  const [
+    { data: bidderProfile, error: bidderProfileError },
+    { data: load, error: loadError }
+  ] = await Promise.all([
+    req.supabase
+      .from('user_profiles')
+      .select('kyc_status, is_active, mobile_verified, user_type, bidding_restricted_until, bidding_restriction_reason')
+      .eq('user_id', req.user.id)
+      .maybeSingle(),
+    req.supabase
+      .from('loads')
+      .select('posted_by, status, required_truck_type, required_truck_type_other, weight_tons')
+      .eq('id', load_id)
+      .single()
+  ]);
   if (bidderProfileError) return dbError(res, bidderProfileError, 'Could not verify your account');
-
-  const { data: load, error: loadError } = await req.supabase
-    .from('loads')
-    .select('posted_by, status, required_truck_type, required_truck_type_other, weight_tons')
-    .eq('id', load_id)
-    .single();
   if (loadError) return dbError(res, loadError, 'Could not find this load');
   if (load.posted_by === req.user.email) {
     return res.status(403).json({ error: 'You cannot bid on your own posted load' });
@@ -430,7 +488,7 @@ router.post('/', async (req, res) => {
   // bid is declined/expires or the resulting trip completes/cancels; the
   // amount is snapshotted on the bid so a later slab-table change doesn't
   // retro-alter it.
-  const { security_deposit } = await getBiddingSettings();
+  const { security_deposit } = await getBiddingSettingsCached();
   const depositAmount = computeBidSecurityHold(amount, security_deposit);
   let holdTxn = null;
   if (depositAmount > 0) {
@@ -479,17 +537,20 @@ router.post('/', async (req, res) => {
         notes: 'Security release — bid could not be saved'
       }).catch((releaseErr) => console.error('[load-bids] hold rollback failed', releaseErr));
     }
-    return dbError(res, error, 'Could not place your bid');
+    return writeError(res, error, 'Could not place your bid');
   }
 
-  await notifyEmail(load.posted_by, {
+  // Respond to the bidder first; notifying the poster (in-app row + push) is a
+  // side effect that shouldn't sit on the bid's response time. The poster gets
+  // a real-time notification either way — it just lands a beat later.
+  res.status(201).json(data);
+
+  notifyEmail(load.posted_by, {
     type: 'bid_placed',
     title: 'New bid on your load',
-    body: `₹${Number(amount).toLocaleString('en-IN')} bid received`,
+    body: `₹${Number(amount).toLocaleString('en-IN')} bid — confirm or decline it within 1 minute`,
     data: { load_id, bid_id: data.id }
-  });
-
-  res.status(201).json(data);
+  }).catch((err) => console.error('[load-bids] bid_placed notify failed', err));
 });
 
 // GET /api/load-bids/load/:load_id — poster-only "See Bidding" view: the load
@@ -784,14 +845,14 @@ router.post('/load/:load_id/deliver', async (req, res) => {
     console.error('[load-bids] hold release on delivery failed for bid', bid.id, err)
   );
 
-  await notifyEmail(isPoster ? bid.bid_by_email : load.posted_by, {
+  res.json(data);
+
+  notifyEmail(isPoster ? bid.bid_by_email : load.posted_by, {
     type: 'trip_delivered',
     title: 'Trip marked delivered',
     body: `${load.material_type ? `${load.material_type} — ` : ''}trip marked as delivered by ${isPoster ? 'the poster' : 'the accepter'}`,
     data: { load_id: load.id, bid_id: bid.id }
-  });
-
-  res.json(data);
+  }).catch((err) => console.error('[load-bids] trip_delivered notify failed', err));
 });
 
 // POST /api/load-bids/:id/approve — poster-only via RLS (load_bids_update_poster).
@@ -905,17 +966,21 @@ router.post('/:id/approve', async (req, res) => {
   }
 
   // Spec §9 "reject further bids": now this load is booked, drop every other
-  // pending bid on it and return each bidder's security hold.
+  // pending bid on it and return each bidder's security hold. Kept on the
+  // response path — the poster's next screen lists these bids — but its own
+  // per-bidder notifications are fire-and-forget (see rejectSiblingBids).
   await rejectSiblingBids(req.supabase, data.load_id, data.id);
 
-  await notifyEmail(data.bid_by_email, {
+  res.json({ ...data, booking });
+
+  // The winning bidder's notification lands a beat after the poster's confirm
+  // response rather than blocking it — the booking is already committed.
+  notifyEmail(data.bid_by_email, {
     type: 'bid_approved',
     title: 'Your bid was approved',
     body: `₹${Number(data.amount).toLocaleString('en-IN')}${booking ? ` · Booking ${booking.booking_ref}` : ''} — trip details are ready`,
     data: { load_id: data.load_id, bid_id: data.id, booking_ref: booking?.booking_ref ?? null }
-  });
-
-  res.json({ ...data, booking });
+  }).catch((err) => console.error('[load-bids] bid_approved notify failed', err));
 });
 
 // POST /api/load-bids/:id/reject — poster-only via RLS (load_bids_update_poster).
@@ -936,14 +1001,14 @@ router.post('/:id/reject', async (req, res) => {
     console.error('[load-bids] hold release on reject failed for bid', data.id, err)
   );
 
-  await notifyEmail(data.bid_by_email, {
-    type: 'bid_rejected',
-    title: 'Your bid was rejected',
-    body: `₹${Number(data.amount).toLocaleString('en-IN')} bid on a load was declined`,
-    data: { load_id: data.load_id, bid_id: data.id }
-  });
-
   res.json(data);
+
+  notifyEmail(data.bid_by_email, {
+    type: 'bid_rejected',
+    title: 'Your bid was declined',
+    body: `₹${Number(data.amount).toLocaleString('en-IN')} bid was declined — your security hold has been released`,
+    data: { load_id: data.load_id, bid_id: data.id }
+  }).catch((err) => console.error('[load-bids] bid_rejected notify failed', err));
 });
 
 export default router;

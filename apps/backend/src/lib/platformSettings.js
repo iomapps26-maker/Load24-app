@@ -20,6 +20,8 @@ export const BIDDING_SETTINGS_DEFAULTS = Object.freeze({
 // (the value isn't caller-scoped) and merged over BIDDING_SETTINGS_DEFAULTS
 // so a fresh DB without the seed row still returns sensible numbers rather
 // than throwing. Staff change these via routes/admin/platformSettings.js.
+// Always a fresh read — the admin screen that edits these must never see a
+// stale value. The bid hot path uses getBiddingSettingsCached() below.
 export async function getBiddingSettings() {
   const { data, error } = await supabaseAdmin
     .from('platform_settings')
@@ -36,4 +38,26 @@ export async function getBiddingSettings() {
   }
   delete merged.security_deposit_amount;
   return merged;
+}
+
+// A short in-process cache in front of getBiddingSettings for the bid hot
+// path (loadBids.js POST /), which would otherwise re-read platform_settings
+// on every single bid. These values change maybe a few times a year, so a few
+// seconds of staleness is harmless; the admin write path calls
+// clearBiddingSettingsCache() right after a save so a change is live on the
+// next bid rather than up to a TTL later.
+let biddingCache = null;
+let biddingCacheAt = 0;
+const BIDDING_CACHE_TTL_MS = 30_000;
+
+export function clearBiddingSettingsCache() {
+  biddingCache = null;
+  biddingCacheAt = 0;
+}
+
+export async function getBiddingSettingsCached() {
+  if (biddingCache && Date.now() - biddingCacheAt < BIDDING_CACHE_TTL_MS) return biddingCache;
+  biddingCache = await getBiddingSettings();
+  biddingCacheAt = Date.now();
+  return biddingCache;
 }

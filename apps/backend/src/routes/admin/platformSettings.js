@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../../lib/supabase.js';
-import { getBiddingSettings } from '../../lib/platformSettings.js';
+import { getBiddingSettings, clearBiddingSettingsCache } from '../../lib/platformSettings.js';
 
 const router = Router();
 
@@ -105,6 +105,9 @@ router.patch('/bidding', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    // The bid hot path caches these for 30s — drop it now so this change is
+    // live on the next bid rather than up to a TTL later.
+    clearBiddingSettingsCache();
     res.json(data.value);
   } catch (err) {
     res.status(400).json({ error: err.message });

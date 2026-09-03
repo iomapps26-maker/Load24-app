@@ -24,9 +24,13 @@ const DEFAULT_DEPOSIT = {
 const getBiddingSettings = vi.fn(() =>
   Promise.resolve({ load24_charge_percent: 4, security_deposit: DEFAULT_DEPOSIT })
 );
+// The bid path reads through getBiddingSettingsCached (a 30s in-process cache
+// in front of getBiddingSettings) — point both at the same mock so these
+// tests drive the security-deposit gate regardless of which one the route calls.
 vi.mock('../lib/platformSettings.js', async (importOriginal) => ({
   ...(await importOriginal()),
-  getBiddingSettings: (...args) => getBiddingSettings(...args)
+  getBiddingSettings: (...args) => getBiddingSettings(...args),
+  getBiddingSettingsCached: (...args) => getBiddingSettings(...args)
 }));
 
 const getAvailableBalance = vi.fn(() => Promise.resolve(0));
