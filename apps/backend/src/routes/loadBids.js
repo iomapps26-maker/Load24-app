@@ -74,8 +74,9 @@ function writeError(res, error, fallbackMessage) {
   return res.status(400).json({ error: fallbackMessage });
 }
 
-// Any pending bid whose 1-minute window has passed but hasn't been acted on
-// yet is treated as rejected — checked lazily whenever bids are read, same
+// Any pending bid whose confirmation window (load_bids.expires_at — 10 min
+// from creation, migration 054) has passed without the poster acting is
+// treated as rejected — checked lazily whenever bids are read, same
 // approach as the WhatsApp OTP expires_at column (see whatsappAuth.js)
 // rather than a background job. Each bid it rejects gets its §5 security
 // hold released back to the bidder (best-effort — a release failure must
@@ -116,7 +117,7 @@ async function autoRejectExpired(supabase, load_id) {
 
 // Prevent double booking (spec §9): the moment one bid on a load is accepted,
 // every other still-pending bid on that load is out. Flip them 'rejected' right
-// away — rather than leaving them for the 1-minute lazy expiry
+// away — rather than leaving them for the lazy expiry-on-read
 // (autoRejectExpired) — and hand each bidder back their §5 security hold.
 // Best-effort: the approval this follows is already committed, so a failure
 // here just means a sibling hold frees a little later (its own lazy expiry
@@ -371,7 +372,7 @@ router.get('/mine', async (req, res) => {
 
   if (error) return dbError(res, error, 'Could not load your bids');
 
-  // Free any §5 security hold stuck on a bid whose 1-minute window lapsed
+  // Free any §5 security hold stuck on a bid whose confirmation window lapsed
   // without the poster ever opening "See Bidding" (the only other place
   // expired bids get swept). Best-effort — never block the bidder's list on it.
   await sweepExpiredBidHolds(data).catch((err) => console.error('[load-bids] expired hold sweep failed', err));
@@ -548,7 +549,7 @@ router.post('/', async (req, res) => {
   notifyEmail(load.posted_by, {
     type: 'bid_placed',
     title: 'New bid on your load',
-    body: `₹${Number(amount).toLocaleString('en-IN')} bid — confirm or decline it within 1 minute`,
+    body: `₹${Number(amount).toLocaleString('en-IN')} bid — confirm or decline it soon`,
     data: { load_id, bid_id: data.id }
   }).catch((err) => console.error('[load-bids] bid_placed notify failed', err));
 });
@@ -914,8 +915,8 @@ router.post('/:id/approve', async (req, res) => {
     return res.status(409).json({ error: 'This load is already booked', code: 'load_already_booked' });
   }
 
-  // Now accept the bid. Still guarded — the 1-minute window can lapse in the
-  // gap above; if it has, put the load back so it isn't stranded 'matched'
+  // Now accept the bid. Still guarded — the confirmation window can lapse in
+  // the gap above; if it has, put the load back so it isn't stranded 'matched'
   // with no accepted bid.
   const { data, error } = await req.supabase
     .from('load_bids')

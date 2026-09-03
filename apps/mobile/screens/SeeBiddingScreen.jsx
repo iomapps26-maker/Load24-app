@@ -30,11 +30,14 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
 
   const stillOpen = bid.status === 'pending' && remainingMs > 0;
   const seconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  // The confirmation window is minutes, not seconds (migration 054) — show
+  // M:SS, not the old 0:SS that assumed under a minute.
+  const countdown = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
   const statusStyle = {
     approved: { bg: 'bg-green-100', text: 'text-green-700', label: t('bidApproved') },
     rejected: { bg: 'bg-red-100', text: 'text-red-700', label: t('bidRejected') },
-    pending: { bg: 'bg-orange-100', text: 'text-orange-700', label: stillOpen ? `${t('bidPending')} · 0:${String(seconds).padStart(2, '0')}` : t('bidRejected') }
+    pending: { bg: 'bg-orange-100', text: 'text-orange-700', label: stillOpen ? `${t('bidPending')} · ${countdown}` : t('bidRejected') }
   }[bid.status] ?? { bg: 'bg-slate-100', text: 'text-slate-700', label: bid.status };
 
   return (
@@ -58,15 +61,18 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
             onPress={() => onReject(bid.id)}
             disabled={approving || rejecting}
             className="flex-1 items-center rounded-xl border-2 border-red-500 py-2.5"
+            style={approving || rejecting ? { opacity: 0.5 } : undefined}
           >
-            <Text className="text-sm font-bold text-red-600">{t('reject')}</Text>
+            <Text className="text-sm font-bold text-red-600">{rejecting ? t('rejecting') : t('reject')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => onApprove(bid.id)}
             disabled={approving || rejecting}
-            className="flex-1 items-center rounded-xl bg-green-600 py-2.5"
+            className="flex-1 flex-row items-center justify-center gap-2 rounded-xl bg-green-600 py-2.5"
+            style={approving || rejecting ? { opacity: 0.5 } : undefined}
           >
-            <Text className="text-sm font-bold text-white">{t('approve')}</Text>
+            {approving && <ActivityIndicator size="small" color="#ffffff" />}
+            <Text className="text-sm font-bold text-white">{approving ? t('approving') : t('approve')}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -75,10 +81,11 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
 }
 
 // Poster-only screen: shows one load exactly as it appears on the load feed,
-// plus every bid placed against it. Bids auto-reject 1 minute after being
-// placed if the poster hasn't approved/rejected — GET /api/load-bids/load/:id
-// flips any expired pending bid on the server on every read, so a short
-// refetchInterval here is enough to reflect that without a client-side write.
+// plus every bid placed against it. Bids auto-reject 10 minutes after being
+// placed if the poster hasn't approved/rejected (migration 054) —
+// GET /api/load-bids/load/:id flips any expired pending bid on the server on
+// every read, so a short refetchInterval here reflects that without a
+// client-side write.
 export default function SeeBiddingScreen() {
   const route = useRoute();
   const navigation = useNavigation();
@@ -96,21 +103,29 @@ export default function SeeBiddingScreen() {
   const approveMutation = useMutation({
     mutationFn: (id) => api.loadBids.approve(id),
     onSuccess: invalidate,
-    // Confirmation can fail for a few reasons, all 409 — surface the right one
-    // and refresh so the list reflects reality. `load_already_booked` is the
-    // racing-confirmation case; the rest (winning bidder no longer eligible,
-    // their security deposit hold gone, the 1-minute window lapsed mid-tap)
-    // carry a specific server message worth showing verbatim.
+    // Every failure gets an alert, not just 409 — a silent refetch after a
+    // timed-out request (Render cold start) or a 4xx/5xx just looked like the
+    // Approve button did nothing. `load_already_booked` is the racing-
+    // confirmation case with its own copy; everything else (bidder no longer
+    // eligible, security hold gone, the window lapsed mid-tap, the server
+    // waking up) shows the server's own message verbatim.
     onError: (err) => {
       invalidate();
       if (err?.code === 'load_already_booked') {
         Alert.alert(t('loadAlreadyBookedTitle'), t('loadAlreadyBooked'));
-      } else if (err?.status === 409) {
-        Alert.alert(t('couldNotConfirmTitle'), err?.message || t('loadAlreadyBooked'));
+      } else {
+        Alert.alert(t('couldNotConfirmTitle'), err?.message || t('couldNotConfirmTitle'));
       }
     }
   });
-  const rejectMutation = useMutation({ mutationFn: (id) => api.loadBids.reject(id), onSuccess: invalidate });
+  const rejectMutation = useMutation({
+    mutationFn: (id) => api.loadBids.reject(id),
+    onSuccess: invalidate,
+    onError: (err) => {
+      invalidate();
+      Alert.alert(t('couldNotRejectTitle'), err?.message || t('couldNotRejectTitle'));
+    }
+  });
 
   if (isLoading) {
     return (

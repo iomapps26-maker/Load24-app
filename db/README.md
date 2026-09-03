@@ -209,6 +209,14 @@ SQL Editor (no migration runner wired up yet).
   and gate nothing (RLS `load_bids_insert_own` + `lib/bidEligibility.js` are
   the real boundaries). `routes/loadBids.js` also now surfaces the SQLSTATE
   class (check violation / missing column) instead of the blanket fallback.
+- `migrations/054_extend_bid_confirmation_window.sql` — changes
+  `load_bids.expires_at`'s default from `now() + 1 minute` to `now() + 10
+  minutes`. One minute was far too short for a poster to receive the push,
+  open the app, wait on a cold backend, and confirm — bids expired before
+  they could be accepted (and `SeeBidding` was swallowing the resulting 409,
+  so Approve looked like it did nothing). Only affects bids placed after it
+  runs. `autoRejectExpired` / `POST /:id/approve` already read the column, so
+  no code change beyond comments + the `SeeBidding` countdown going `M:SS`.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.
