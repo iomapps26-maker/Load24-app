@@ -1,0 +1,26 @@
+-- Index user_profiles.user_email.
+--
+-- 001_init.sql only indexed user_profiles.user_id (via the UNIQUE on that
+-- column). But lookups by user_email are on hot paths that run per request:
+--
+--   lib/notify.js      userIdForEmail()   — every notifyEmail() call
+--   routes/loadBids.js profileForEmail()  — trip-details, commission apply
+--   routes/loadBids.js assertConfirmable()— every POST /:id/approve
+--   lib/bidSecurityHold.js                — every security-hold release
+--
+-- Each of those was a sequential scan of user_profiles. Cheap at a few
+-- hundred rows, a growing per-request tax as the user base scales, and it
+-- sits inside bid confirmation.
+--
+-- Plain btree (not lower(user_email)): every caller does an exact
+-- .eq('user_email', ...) with a value that originates from req.user.email
+-- (Supabase auth emails are already normalised), so the equality index is
+-- what the planner can actually use. Not UNIQUE — user_email is nullable and
+-- historically unconstrained; a plain index makes no correctness claim.
+--
+-- CONCURRENTLY so applying this to a live database doesn't take a write lock
+-- on user_profiles. Note: create index concurrently cannot run inside a
+-- transaction block — if your migration runner wraps statements in BEGIN/
+-- COMMIT, run this file on its own.
+create index concurrently if not exists user_profiles_user_email_idx
+  on public.user_profiles (user_email);

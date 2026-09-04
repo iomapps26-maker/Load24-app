@@ -18,6 +18,18 @@ function pickupLabel(value) {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 }
 
+// The bidder stays anonymous to the poster until a bid is approved — no email
+// (the WhatsApp-login ones are the bidder's phone number in disguise) and no
+// vehicle registration. Their role is all the poster sees while deciding;
+// TripDetails does the full contact reveal once a bid is confirmed.
+const BID_TYPE_KEY = {
+  vehicle_owner: 'roleVehicleOwner',
+  transporter: 'roleTransporter',
+  broker: 'roleBroker',
+  driver: 'roleDriver',
+  shipper: 'roleShipper'
+};
+
 function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
   const { t } = useLanguage();
   const [remainingMs, setRemainingMs] = useState(() => msRemaining(bid));
@@ -45,7 +57,10 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
       <View className="flex-row items-center justify-between">
         <View>
           <Text className="text-xl font-extrabold text-slate-900">₹{Number(bid.amount).toLocaleString('en-IN')}</Text>
-          <Text className="text-xs text-slate-400">{bid.bid_by_email}{bid.truck_number ? ` · ${bid.truck_number}` : ''}</Text>
+          <Text className="text-xs text-slate-400">
+            {BID_TYPE_KEY[bid.bid_by_type] ? t(BID_TYPE_KEY[bid.bid_by_type]) : t('bidderGeneric')}
+            {bid.status === 'approved' && bid.truck_number ? ` · ${bid.truck_number}` : ''}
+          </Text>
           {!!pickupLabel(bid.expected_pickup_at) && (
             <Text className="mt-0.5 text-xs text-slate-500">{t('expectedPickupShort')}: {pickupLabel(bid.expected_pickup_at)}</Text>
           )}
@@ -83,9 +98,10 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
 // Poster-only screen: shows one load exactly as it appears on the load feed,
 // plus every bid placed against it. Bids auto-reject 10 minutes after being
 // placed if the poster hasn't approved/rejected (migration 054) —
-// GET /api/load-bids/load/:id flips any expired pending bid on the server on
-// every read, so a short refetchInterval here reflects that without a
-// client-side write.
+// GET /api/load-bids/load/:id flips any expired pending bid on the server
+// (rate-limited to one sweep per load per 30s), so a 10s refetchInterval here
+// keeps the list fresh without hammering that endpoint. The per-bid countdown
+// in BidRow ticks every second locally regardless.
 export default function SeeBiddingScreen() {
   const route = useRoute();
   const navigation = useNavigation();
@@ -96,7 +112,7 @@ export default function SeeBiddingScreen() {
   const { data, isLoading } = useQuery({
     queryKey: ['loadBids', loadId],
     queryFn: () => api.loadBids.forLoad(loadId),
-    refetchInterval: 5000
+    refetchInterval: 10000
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['loadBids', loadId] });

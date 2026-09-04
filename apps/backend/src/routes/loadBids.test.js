@@ -165,7 +165,7 @@ vi.mock('../lib/supabase.js', () => ({
   }
 }));
 
-const { default: loadBidsRouter } = await import('./loadBids.js');
+const { default: loadBidsRouter, __resetExpirySweepCooldown } = await import('./loadBids.js');
 
 // Row-aware stand-in for req.supabase covering the tables POST /:id/approve
 // touches: it reads the target bid, claims the load ('active' -> 'matched'),
@@ -652,7 +652,7 @@ describe('GET /api/load-bids/mine — attaches the booking to approved bids', ()
       req.supabase = {
         from(table) {
           if (table === 'load_bids') {
-            return { select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: bids, error: null }) }) }) };
+            return { select: () => ({ eq: () => ({ order: () => ({ range: () => Promise.resolve({ data: bids, error: null }) }) }) }) };
           }
           if (table === 'bookings') {
             return { select: () => ({ in: (_f, ids) => Promise.resolve({ data: bookings.filter((b) => ids.includes(b.bid_id)), error: null }) }) };
@@ -857,6 +857,9 @@ describe('autoRejectExpired (via GET /load/:load_id) — releases expired-bid ho
   beforeEach(() => {
     notifyEmail.mockClear();
     releaseBidSecurityHold.mockClear();
+    // These tests all hit GET /load/load-1; clear the per-load sweep cooldown
+    // so each one actually runs autoRejectExpired.
+    __resetExpirySweepCooldown();
   });
 
   function seeBiddingApp({ load, bids }) {

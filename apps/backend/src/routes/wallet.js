@@ -3,6 +3,13 @@ import { supabaseAdmin } from '../lib/supabase.js';
 import { generateTransactionId, getOrCreateWallet, getAvailableBalance, getHeldBalance, applyWalletAdjustment } from '../lib/wallet.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { notifyUser } from '../lib/notify.js';
+import { dbError } from '../lib/httpErrors.js';
+
+// Raw PostgREST/Postgres error.message strings can carry schema internals —
+// log them, send the client a generic message. Hand-written user-facing
+// messages elsewhere in this file (e.g. "Insufficient available balance") are
+// intentional and left as-is.
+const LOG = '[wallet]';
 
 const STAFF_ROLES = ['admin', 'support_executive', 'support_manager', 'accounts_executive', 'accounts_manager'];
 const ADJUSTABLE_TYPES = ['credit', 'debit', 'refund', 'commission', 'service_charge', 'security_hold', 'security_release'];
@@ -29,7 +36,7 @@ router.get('/', async (req, res) => {
     ]);
     res.json({ balance: Number(wallet.balance), available_balance, held_balance });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    dbError(res, err, 'Wallet request failed', { log: LOG });
   }
 });
 
@@ -45,7 +52,7 @@ router.get('/transactions', async (req, res) => {
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   res.json(data);
 });
 
@@ -59,7 +66,7 @@ router.get('/statement', async (req, res) => {
   if (to) query = query.lte('created_at', to);
 
   const { data, error } = await query;
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
 
   const header = 'transaction_id,type,amount,status,created_at,notes';
   const rows = (data || []).map((t) =>
@@ -115,7 +122,7 @@ router.post('/topup-requests', async (req, res) => {
 
     res.status(201).json(data);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    dbError(res, err, 'Wallet request failed', { log: LOG });
   }
 });
 
@@ -130,7 +137,7 @@ router.get('/topup-requests/mine', async (req, res) => {
     .select('*')
     .eq('user_id', req.user.id)
     .order('created_at', { ascending: false });
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   res.json(data);
 });
 
@@ -147,7 +154,7 @@ router.post('/topup-requests/:id/proof/upload-url', async (req, res) => {
     .eq('id', req.params.id)
     .eq('user_id', req.user.id)
     .maybeSingle();
-  if (fetchError) return res.status(400).json({ error: fetchError.message });
+  if (fetchError) return dbError(res, fetchError, 'Could not load that record', { log: LOG });
   if (!reqRow) return res.status(404).json({ error: 'Top-up request not found' });
   if (!['awaiting_payment', 'pending_verification'].includes(reqRow.status)) {
     return res.status(400).json({ error: `Cannot attach proof to a request that is already ${reqRow.status}` });
@@ -158,7 +165,7 @@ router.post('/topup-requests/:id/proof/upload-url', async (req, res) => {
 
   await supabaseAdmin.storage.from(TOPUP_BUCKET).remove([storage_path]);
   const { data, error } = await supabaseAdmin.storage.from(TOPUP_BUCKET).createSignedUploadUrl(storage_path);
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
 
   res.status(200).json({ storage_path, signed_url: data.signedUrl, token: data.token });
 });
@@ -181,7 +188,7 @@ router.post('/topup-requests/:id/proof', async (req, res) => {
     .in('status', ['awaiting_payment', 'pending_verification'])
     .select()
     .maybeSingle();
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   if (!data) return res.status(404).json({ error: 'Top-up request not found' });
 
   res.status(200).json(data);
@@ -189,12 +196,18 @@ router.post('/topup-requests/:id/proof', async (req, res) => {
 
 // GET /api/wallet/withdrawals/mine — the caller's own withdrawal requests.
 router.get('/withdrawals/mine', async (req, res) => {
+  // Optional paging with a high default cap — bounded response, no change for
+  // the mobile app (which sends no params).
+  const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 200);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
   const { data, error } = await req.supabase
     .from('withdrawal_requests')
     .select('*')
     .eq('user_id', req.user.id)
-    .order('created_at', { ascending: false });
-  if (error) return res.status(400).json({ error: error.message });
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   res.json(data);
 });
 
@@ -236,7 +249,15 @@ router.post('/withdraw', async (req, res) => {
 
     res.status(201).json(data);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    // The 056 balance-guard trigger raises check_violation when a concurrent
+    // request already claimed the balance between our getAvailableBalance()
+    // read and this insert. Surface it as the same "insufficient balance"
+    // message the pre-check uses rather than a generic failure.
+    if (err?.code === '23514') {
+      console.error(LOG, 'withdrawal balance guard tripped', err);
+      return res.status(400).json({ error: 'Insufficient available balance' });
+    }
+    dbError(res, err, 'Wallet request failed', { log: LOG });
   }
 });
 
@@ -249,7 +270,7 @@ router.get('/withdrawals/pending', requireRole(STAFF_ROLES), async (req, res) =>
     .select('*')
     .eq('status', 'pending')
     .order('created_at', { ascending: true });
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   res.json(data);
 });
 
@@ -261,7 +282,7 @@ router.post('/withdrawals/:id/approve', requireRole(STAFF_ROLES), async (req, re
     .eq('status', 'pending')
     .select()
     .single();
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   if (!data) return res.status(400).json({ error: 'Request is not pending' });
 
   await notifyUser(data.user_id, {
@@ -288,7 +309,7 @@ router.post('/withdrawals/:id/reject', requireRole(STAFF_ROLES), async (req, res
     .in('status', ['pending', 'approved'])
     .select()
     .single();
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   if (!data) return res.status(400).json({ error: 'Request cannot be rejected from its current status' });
 
   await notifyUser(data.user_id, {
@@ -312,7 +333,7 @@ router.post('/withdrawals/:id/pay', requireRole(STAFF_ROLES), async (req, res) =
     .eq('id', req.params.id)
     .eq('status', 'approved')
     .maybeSingle();
-  if (fetchError) return res.status(400).json({ error: fetchError.message });
+  if (fetchError) return dbError(res, fetchError, 'Could not load that record', { log: LOG });
   if (!wr) return res.status(400).json({ error: 'Request must be approved before it can be paid' });
 
   const transaction_id = generateTransactionId();
@@ -329,7 +350,7 @@ router.post('/withdrawals/:id/pay', requireRole(STAFF_ROLES), async (req, res) =
     })
     .select()
     .single();
-  if (txError) return res.status(400).json({ error: txError.message });
+  if (txError) return dbError(res, txError, 'Could not record the wallet transaction', { log: LOG });
 
   const { data: paid, error: payError } = await supabaseAdmin
     .from('withdrawal_requests')
@@ -337,7 +358,7 @@ router.post('/withdrawals/:id/pay', requireRole(STAFF_ROLES), async (req, res) =
     .eq('id', wr.id)
     .select()
     .single();
-  if (payError) return res.status(400).json({ error: payError.message });
+  if (payError) return dbError(res, payError, 'Could not mark the withdrawal paid', { log: LOG });
 
   await notifyUser(paid.user_id, {
     type: 'withdrawal_paid',
@@ -370,7 +391,7 @@ router.post('/adjust', requireRole(STAFF_ROLES), async (req, res) => {
     const data = await applyWalletAdjustment({ user_id, type, amount: parsedAmount, notes, reference_load_id });
     res.status(201).json(data);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    dbError(res, err, 'Wallet request failed', { log: LOG });
   }
 });
 
@@ -385,7 +406,7 @@ router.get('/topup-requests/pending', requireRole(STAFF_ROLES), async (req, res)
     .select('*')
     .eq('status', 'pending_verification')
     .order('created_at', { ascending: true });
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   if (!data || data.length === 0) return res.json([]);
 
   const userIds = [...new Set(data.map((r) => r.user_id))];
@@ -393,7 +414,7 @@ router.get('/topup-requests/pending', requireRole(STAFF_ROLES), async (req, res)
     .from('user_profiles')
     .select('user_id, full_name, mobile')
     .in('user_id', userIds);
-  if (profilesError) return res.status(400).json({ error: profilesError.message });
+  if (profilesError) return dbError(res, profilesError, 'Could not load requester profiles', { log: LOG });
   const profileByUserId = new Map((profiles || []).map((p) => [p.user_id, p]));
 
   const withUrls = await Promise.all(
@@ -421,7 +442,7 @@ router.post('/topup-requests/:id/verify', requireRole(STAFF_ROLES), async (req, 
     .eq('id', req.params.id)
     .eq('status', 'pending_verification')
     .maybeSingle();
-  if (fetchError) return res.status(400).json({ error: fetchError.message });
+  if (fetchError) return dbError(res, fetchError, 'Could not load that record', { log: LOG });
   if (!reqRow) return res.status(409).json({ error: 'No pending top-up request awaiting review with this id' });
 
   const { data: tx, error: txError } = await supabaseAdmin
@@ -437,7 +458,7 @@ router.post('/topup-requests/:id/verify', requireRole(STAFF_ROLES), async (req, 
     })
     .select()
     .single();
-  if (txError) return res.status(400).json({ error: txError.message });
+  if (txError) return dbError(res, txError, 'Could not record the wallet transaction', { log: LOG });
 
   const { data: verified, error: verifyError } = await supabaseAdmin
     .from('wallet_topup_requests')
@@ -446,7 +467,7 @@ router.post('/topup-requests/:id/verify', requireRole(STAFF_ROLES), async (req, 
     .eq('status', 'pending_verification')
     .select()
     .maybeSingle();
-  if (verifyError) return res.status(400).json({ error: verifyError.message });
+  if (verifyError) return dbError(res, verifyError, 'Could not verify the top-up', { log: LOG });
 
   await notifyUser(reqRow.user_id, {
     type: 'wallet_credited',
@@ -468,7 +489,7 @@ router.post('/topup-requests/:id/reject', requireRole(STAFF_ROLES), async (req, 
     .eq('status', 'pending_verification')
     .select()
     .maybeSingle();
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   if (!data) return res.status(409).json({ error: 'No pending top-up request awaiting review with this id' });
 
   await notifyUser(data.user_id, {

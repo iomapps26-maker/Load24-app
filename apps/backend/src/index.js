@@ -1,10 +1,12 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import compression from 'compression';
 import { requireAuth } from './middleware/auth.js';
 import { requireConsents } from './middleware/requireConsents.js';
 import { requireRole } from './middleware/requireRole.js';
-import { apiRateLimiter } from './middleware/rateLimit.js';
+import { apiRateLimiter, apiIpBackstopRateLimiter, tripLocationPingRateLimiter } from './middleware/rateLimit.js';
 import profileRouter from './routes/profile.js';
 import kycRouter from './routes/kyc.js';
 import loadsRouter from './routes/loads.js';
@@ -53,8 +55,24 @@ const ADMIN_STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
 const CRM_STAFF_ROLES = ['admin', 'sales_executive', 'sales_team_lead', 'sales_manager'];
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// Behind Render's load balancer: trust the first proxy hop so req.ip resolves
+// to the real client address (from X-Forwarded-For) instead of the balancer's.
+// Without this every IP-keyed rate limiter shares one bucket across all users
+// and the whole API 429s after a few hundred requests total.
+app.set('trust proxy', 1);
+
+app.use(compression());
+app.use(cors({
+  // Native app traffic carries no Origin and is unaffected either way. Set
+  // CORS_ALLOWED_ORIGINS (comma-separated) to restrict the browser-based
+  // admin site; left unset this reflects the request origin — the previous
+  // behaviour — so this is a no-op until the env var is configured.
+  origin: process.env.CORS_ALLOWED_ORIGINS
+    ? process.env.CORS_ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+    : true
+}));
+app.use(express.json({ limit: '256kb' }));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -134,7 +152,27 @@ app.get('/loads/:id', (req, res) => {
 </html>`);
 });
 
-app.use('/api', apiRateLimiter);
+// helmet's security headers, scoped to the JSON API only — the public HTML
+// pages above (/loads/:id's inline redirect script, the assetlinks file) are
+// served from the root and must stay untouched. The cross-origin isolation
+// headers (CSP / CORP / COOP / COEP) are turned off deliberately: they carry
+// no benefit for a pure JSON API and CORP/COEP in particular would break the
+// browser-based admin site's cross-origin calls to /api/admin/*. What stays
+// on is the useful, non-breaking set — HSTS, X-Content-Type-Options: nosniff,
+// X-Frame-Options, Referrer-Policy, etc.
+// Then two rate limiters, coarsest first: a high per-IP backstop against a
+// single host flooding the API, then the real per-user budget (rateLimit.js).
+app.use(
+  '/api',
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginEmbedderPolicy: false
+  }),
+  apiIpBackstopRateLimiter,
+  apiRateLimiter
+);
 
 // WhatsApp OTP login is the login step itself, so it runs with no session at
 // all — mounted at the more specific /api/auth/whatsapp path *before* the
@@ -181,7 +219,7 @@ app.use('/api/notifications', requireAuth, requireConsents, notificationsRouter)
 // required consents to reach) and obviously not admin-gated. Authorization
 // (caller must be a party to the specific trip) is enforced in the route
 // itself — see routes/tripLocationPings.js for why that can't be RLS.
-app.use('/api/trip-location-pings', requireAuth, tripLocationPingsRouter);
+app.use('/api/trip-location-pings', requireAuth, tripLocationPingRateLimiter, tripLocationPingsRouter);
 
 // /api/admin/* — role-checked once at the router level, unlike kyc.js's/
 // wallet.js's per-route requireRole(STAFF_ROLES) calls, since every route
@@ -213,7 +251,28 @@ app.use((err, req, res, next) => {
 });
 
 const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`LOAD24 API listening on :${port}`));
+const server = app.listen(port, () => console.log(`LOAD24 API listening on :${port}`));
+
+// The API runs as a single instance — a stray unhandled rejection or
+// exception must not silently wedge it for every user. Log with context; on
+// an uncaughtException (genuinely unknown state) exit so Render restarts a
+// clean instance rather than keeping a half-broken one in rotation.
+process.on('unhandledRejection', (reason) => {
+  console.error('[process] unhandledRejection', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[process] uncaughtException', err);
+  server.close(() => process.exit(1));
+  setTimeout(() => process.exit(1), 10_000).unref();
+});
+
+// Render sends SIGTERM on every deploy and scale-down. Stop taking new
+// connections and let in-flight requests finish instead of dropping them.
+process.on('SIGTERM', () => {
+  console.log('[process] SIGTERM — draining connections');
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 10_000).unref();
+});
 
 // Render's free tier spins the service down after ~15 min with no inbound
 // HTTP traffic. A self-ping only counts as "inbound" if it hits the public
@@ -226,30 +285,34 @@ if (selfPingUrl) {
   }, 10 * 60 * 1000);
 }
 
-// "Simple scheduled job" per crm.js's spec: an in-process setInterval, same
-// mechanism as the self-ping above, rather than standing up separate
-// scheduler infrastructure (no cron/queue exists anywhere in this repo).
-// Runs once at startup so suggestions aren't empty for the first hour, then
-// hourly — POST /api/admin/crm/generate (crm.js) runs the same function on
-// demand. Known limitation of the in-process approach: if this service is
-// ever scaled to multiple instances, each would run this redundantly (the
-// upsert makes that harmless, just wasteful) — fine at this project's
-// current single-instance scale, not fine to leave unexamined if that changes.
-generateMatchSuggestions().catch((err) => console.error('[crm] generateMatchSuggestions failed (startup run)', err));
-setInterval(() => {
-  generateMatchSuggestions().catch((err) => console.error('[crm] generateMatchSuggestions failed', err));
-}, 60 * 60 * 1000);
+// In-process scheduled jobs. These run on the same event loop as request
+// handling, and on every instance if the service is ever scaled out (the
+// upserts/de-dup checks make redundant runs harmless, just wasteful).
+//
+// Set RUN_INPROCESS_JOBS=false once these are moved to Render Cron Jobs
+// (which would hit POST /api/admin/crm/generate and
+// POST /api/admin/incentives/evaluate — the same functions, already exposed
+// as on-demand endpoints). Then one dedicated schedule runs them instead of
+// every web instance.
+const runInProcessJobs = process.env.RUN_INPROCESS_JOBS !== 'false';
 
-// Same in-process-interval mechanism as generateMatchSuggestions above, but
-// deliberately no startup run: this one moves real money
-// (evaluateIncentiveRules pays out via applyWalletAdjustment), and while
-// its de-dup check (lib/incentiveEvaluation.js's payoutNotes) makes running
-// it redundantly harmless, "every deploy immediately triggers a payout
-// evaluation pass" isn't a surprise worth risking for a job that isn't
-// time-sensitive — trips_completed is a lifetime milestone, not something
-// that needs checking within seconds of a threshold being crossed. Every 6
-// hours; POST /api/admin/incentives/evaluate (incentives.js) runs it
-// on demand.
-setInterval(() => {
-  evaluateIncentiveRules().catch((err) => console.error('[incentives] evaluateIncentiveRules failed', err));
-}, 6 * 60 * 60 * 1000);
+if (runInProcessJobs) {
+  // Runs once at startup so suggestions aren't empty for the first hour, then
+  // hourly — POST /api/admin/crm/generate (crm.js) runs the same function on
+  // demand.
+  generateMatchSuggestions().catch((err) => console.error('[crm] generateMatchSuggestions failed (startup run)', err));
+  setInterval(() => {
+    generateMatchSuggestions().catch((err) => console.error('[crm] generateMatchSuggestions failed', err));
+  }, 60 * 60 * 1000);
+
+  // Deliberately no startup run: this one moves real money
+  // (evaluateIncentiveRules pays out via applyWalletAdjustment), and while
+  // its de-dup check (lib/incentiveEvaluation.js's payoutNotes) makes running
+  // it redundantly harmless, "every deploy immediately triggers a payout
+  // evaluation pass" isn't a surprise worth risking for a job that isn't
+  // time-sensitive — trips_completed is a lifetime milestone. Every 6 hours;
+  // POST /api/admin/incentives/evaluate (incentives.js) runs it on demand.
+  setInterval(() => {
+    evaluateIncentiveRules().catch((err) => console.error('[incentives] evaluateIncentiveRules failed', err));
+  }, 6 * 60 * 60 * 1000);
+}

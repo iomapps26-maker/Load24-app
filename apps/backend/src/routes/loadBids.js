@@ -74,6 +74,22 @@ function writeError(res, error, fallbackMessage) {
   return res.status(400).json({ error: fallbackMessage });
 }
 
+// Per-load cooldown for autoRejectExpired: the poster's "See Bidding" screen
+// polls GET /api/load-bids/load/:id every few seconds, and without this each
+// poll (times however many devices are watching one hot load) re-runs the
+// SELECT+UPDATE+hold-release sweep below. A bid's confirmation window is 10
+// minutes, so sweeping a given load at most once every 30s still rejects an
+// expired bid promptly while collapsing the redundant work. In-process only —
+// good enough; the worst case on a fresh instance is one extra sweep.
+const lastSweepByLoad = new Map();
+const SWEEP_COOLDOWN_MS = 30 * 1000;
+
+// Test hook: the cooldown is process-global and keyed by load_id, so a test
+// file that hits the same load twice would see the second sweep skipped.
+export function __resetExpirySweepCooldown() {
+  lastSweepByLoad.clear();
+}
+
 // Any pending bid whose confirmation window (load_bids.expires_at — 10 min
 // from creation, migration 054) has passed without the poster acting is
 // treated as rejected — checked lazily whenever bids are read, same
@@ -81,7 +97,17 @@ function writeError(res, error, fallbackMessage) {
 // rather than a background job. Each bid it rejects gets its §5 security
 // hold released back to the bidder (best-effort — a release failure must
 // not stop the others or the read that triggered this).
-async function autoRejectExpired(supabase, load_id) {
+async function autoRejectExpired(supabase, load_id, { force = false } = {}) {
+  const lastSweep = lastSweepByLoad.get(load_id) || 0;
+  if (!force && Date.now() - lastSweep < SWEEP_COOLDOWN_MS) return;
+  lastSweepByLoad.set(load_id, Date.now());
+  // Keep the map from growing without bound on a long-lived instance.
+  if (lastSweepByLoad.size > 5000) {
+    for (const [k, t] of lastSweepByLoad) {
+      if (Date.now() - t > SWEEP_COOLDOWN_MS) lastSweepByLoad.delete(k);
+    }
+  }
+
   const nowIso = new Date().toISOString();
 
   const { data: expiring } = await supabase
@@ -364,11 +390,17 @@ async function applyCommissionForCompletedTrip(load, bid) {
 // it's matched (that endpoint only lists status='active'), so this is their
 // only remaining way to see it.
 router.get('/mine', async (req, res) => {
+  // Optional paging; a high default cap so the response can't be made
+  // unbounded but the mobile app (which sends no params) is unaffected.
+  const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 200);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
   const { data, error } = await req.supabase
     .from('load_bids')
     .select('*, load:loads(*)')
     .eq('bid_by_email', req.user.email)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (error) return dbError(res, error, 'Could not load your bids');
 

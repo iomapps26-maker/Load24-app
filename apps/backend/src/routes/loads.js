@@ -124,13 +124,18 @@ async function notifyNearbyTruckOwners(req, load) {
 // FindLoads.jsx's query, filtering on the same fields PostLoadScreen collects
 // GET /api/loads?mine=true — the caller's own posted loads, any status (for the home dashboard)
 router.get('/', async (req, res) => {
-  const { truck_type, location, material_type, mine, limit = 50 } = req.query;
+  const { truck_type, location, material_type, mine } = req.query;
+
+  // Clamp the page size — a client asking for ?limit=100000 shouldn't be able
+  // to pull the whole table in one response. Same guard as
+  // wallet.js's /transactions.
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
 
   let query = req.supabase
     .from('loads')
     .select('*')
     .order('created_at', { ascending: false })
-    .limit(Number(limit));
+    .limit(limit);
 
   if (mine === 'true') {
     query = query.eq('posted_by', req.user.email);

@@ -16,7 +16,12 @@ export async function drivingDistanceKm(originAddress, destinationAddress) {
   url.searchParams.set('key', apiKey);
 
   try {
-    const res = await fetch(url);
+    // POST /api/loads awaits this before responding, and Node's fetch has no
+    // default timeout — a slow or hanging Distance Matrix response would
+    // otherwise stall the load-posting request (and hold a worker) until the
+    // client gives up. A timeout here just falls through to the null return,
+    // exactly like an unroutable address.
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
     const payload = await res.json();
     const element = payload?.rows?.[0]?.elements?.[0];
 
