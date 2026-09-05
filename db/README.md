@@ -232,6 +232,19 @@ SQL Editor (no migration runner wired up yet).
   `now() + 5 minutes`. 10 min proved longer than needed and left a bid's §5
   security-deposit hold tying up the bidder's wallet balance longer than
   necessary. Only affects bids placed after it runs.
+- `migrations/058_fix_has_role_recursion.sql` — **critical, run this first.**
+  `user_roles`'s own RLS policies (003) inlined a subquery against
+  `user_roles` from within a policy on `user_roles` itself, and `has_role()`
+  queried `user_roles` directly (not `SECURITY DEFINER`) — so any policy
+  anywhere that calls `has_role()` from a caller-scoped client re-triggers
+  that self-referential policy and Postgres raises "infinite recursion
+  detected in policy for relation user_roles" (`42P17`). Confirmed live on
+  KYC document upload; almost certainly also the unexplained "Could not
+  place your bid" / "Could not confirm this load" failures, since both write
+  through `loads`/`load_bids` policies that call `has_role()`. Fix: `has_role()`
+  becomes `SECURITY DEFINER` (bypasses RLS internally instead of re-entering
+  it), and `user_roles`'s four policies call it instead of inlining the
+  recursive subquery.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.
