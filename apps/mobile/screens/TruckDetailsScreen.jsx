@@ -125,9 +125,26 @@ function indexDocuments(documents) {
   return Object.fromEntries((documents || []).map((d) => [d.document_type, d]));
 }
 
+// owner_name/owner_mobile/tyre_count/body_type/fuel_type/axle_type/length_ft/
+// width_ft/*_other were all added to trucks via later migrations as nullable
+// columns with no backfill, and POST /api/trucks only actually requires
+// registration_number + truck_type server-side — so an existing truck can
+// have any of these as null even though this form treats them as required.
+// Left as null they render as the literal string "null" (every field below
+// gets String()'d for display) and crash Save the moment getValidationErrors
+// calls .trim() on one, so fold every null/undefined back to EMPTY_FORM's ''
+// before it ever reaches state.
+function mergeFormState(initial) {
+  const merged = { ...EMPTY_FORM, ...initial };
+  for (const key of Object.keys(EMPTY_FORM)) {
+    if (merged[key] == null) merged[key] = EMPTY_FORM[key];
+  }
+  return merged;
+}
+
 function TruckForm({ initial, onCancel, onSaved, t, language }) {
   const [truckId, setTruckId] = useState(initial?.id ?? null);
-  const [form, setForm] = useState({ ...EMPTY_FORM, ...initial });
+  const [form, setForm] = useState(() => mergeFormState(initial));
   const [documentsByType, setDocumentsByType] = useState(indexDocuments(initial?.documents));
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
@@ -172,22 +189,26 @@ function TruckForm({ initial, onCancel, onSaved, t, language }) {
   // optional. "other" picks additionally require their free-text detail.
   // Named per-field (not just a boolean) so a failed Save can say exactly
   // what's missing instead of leaving the button silently greyed out.
+  // String(value || '') everywhere a field gets trimmed — never call .trim()
+  // on the raw form value directly, since a null/undefined here (see
+  // mergeFormState above) would throw and crash the app instead of showing
+  // "what's missing".
   const getValidationErrors = () => {
     const errors = [];
-    if (!form.registration_number.trim()) errors.push(t('registrationNumber'));
+    if (!String(form.registration_number || '').trim()) errors.push(t('registrationNumber'));
     if (!form.truck_type) errors.push(t('truckType'));
-    else if (form.truck_type === 'other' && !form.truck_type_other.trim()) errors.push(t('specifyTruckType'));
-    if (!String(form.tyre_count).trim()) errors.push(t('vehicleTyres'));
+    else if (form.truck_type === 'other' && !String(form.truck_type_other || '').trim()) errors.push(t('specifyTruckType'));
+    if (!String(form.tyre_count || '').trim()) errors.push(t('vehicleTyres'));
     if (!form.body_type) errors.push(t('bodyType'));
-    else if (form.body_type === 'other' && !form.body_type_other.trim()) errors.push(t('specifyBodyType'));
-    if (!String(form.capacity_tons).trim()) errors.push(t('capacityTons'));
-    if (!String(form.length_ft).trim()) errors.push(t('length'));
-    if (!String(form.width_ft).trim()) errors.push(t('width'));
+    else if (form.body_type === 'other' && !String(form.body_type_other || '').trim()) errors.push(t('specifyBodyType'));
+    if (!String(form.capacity_tons || '').trim()) errors.push(t('capacityTons'));
+    if (!String(form.length_ft || '').trim()) errors.push(t('length'));
+    if (!String(form.width_ft || '').trim()) errors.push(t('width'));
     if (!form.fuel_type) errors.push(t('fuelType'));
-    else if (form.fuel_type === 'other' && !form.fuel_type_other.trim()) errors.push(t('specifyFuelType'));
+    else if (form.fuel_type === 'other' && !String(form.fuel_type_other || '').trim()) errors.push(t('specifyFuelType'));
     if (!form.axle_type) errors.push(t('axleType'));
-    if (!form.owner_name.trim()) errors.push(t('ownerName'));
-    if (!form.owner_mobile.trim()) errors.push(t('ownerMobile'));
+    if (!String(form.owner_name || '').trim()) errors.push(t('ownerName'));
+    if (!String(form.owner_mobile || '').trim()) errors.push(t('ownerMobile'));
     return errors;
   };
 
