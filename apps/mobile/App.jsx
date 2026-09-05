@@ -38,6 +38,7 @@ import TripDetailsScreen from './screens/TripDetailsScreen';
 import PlaceBidScreen from './screens/PlaceBidScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import PostedLoadsScreen from './screens/PostedLoadsScreen';
+import TripHistoryScreen from './screens/TripHistoryScreen';
 import MainTabs from './navigation/MainTabs';
 import { isExternalPickerActive } from './lib/pickerGuard';
 
@@ -312,6 +313,11 @@ function AuthGate() {
                 name="PostedLoads"
                 component={PostedLoadsScreen}
                 options={{ headerShown: true, title: t('yourPostedLoads') }}
+              />
+              <Stack.Screen
+                name="TripHistory"
+                component={TripHistoryScreen}
+                options={{ headerShown: true, title: t('tripHistory') }}
               />
             </>
           )
