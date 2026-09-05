@@ -21,6 +21,22 @@ const REQUIRED = [
   'loading_date', 'loading_time'
 ];
 
+// PostLoadScreen is a bottom-tab screen ("Create"), not a stack screen pushed
+// on top of another one — it stays mounted for the life of the app session
+// (same as every other tab, see HomeScreen's useFocusEffect comment), so its
+// useState form never resets on its own between visits. Kept as a constant
+// (rather than inlined in useState) so a successful post can reset back to
+// exactly this instead of stale field values reappearing next time the
+// poster opens this tab.
+const INITIAL_FORM = {
+  loading_pincode: '', loading_address: '', loading_landmark: '', loading_city: '', loading_state: '',
+  unloading_pincode: '', unloading_address: '', unloading_landmark: '', unloading_city: '', unloading_state: '',
+  material_type: '', weight_tons: '', bhada_price: '', truck_length_ft: '',
+  loading_poc_name: '', loading_poc_mobile: '', unloading_poc_name: '', unloading_poc_mobile: '',
+  loading_date: '', loading_time: '', unloading_date: '', special_demand_comment: '', custom_requirement: '',
+  required_truck_type_other: '', fuel_type_required_other: '', axle_type_other: '', body_type_other: ''
+};
+
 function Field({ label, value, onChangeText, required, ...props }) {
   return (
     <View className="mb-4">
@@ -36,14 +52,7 @@ export default function PostLoadScreen() {
   const { language, t } = useLanguage();
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
 
-  const [form, setForm] = useState({
-    loading_pincode: '', loading_address: '', loading_landmark: '', loading_city: '', loading_state: '',
-    unloading_pincode: '', unloading_address: '', unloading_landmark: '', unloading_city: '', unloading_state: '',
-    material_type: '', weight_tons: '', bhada_price: '', truck_length_ft: '',
-    loading_poc_name: '', loading_poc_mobile: '', unloading_poc_name: '', unloading_poc_mobile: '',
-    loading_date: '', loading_time: '', unloading_date: '', special_demand_comment: '', custom_requirement: '',
-    required_truck_type_other: '', fuel_type_required_other: '', axle_type_other: '', body_type_other: ''
-  });
+  const [form, setForm] = useState(INITIAL_FORM);
   const [truckType, setTruckType] = useState('tata_407');
   const [fuelType, setFuelType] = useState('any');
   const [axleType, setAxleType] = useState('any');
@@ -124,7 +133,24 @@ export default function PostLoadScreen() {
       queryClient.invalidateQueries({ queryKey: ['myLoads'] });
       queryClient.invalidateQueries({ queryKey: ['loads'] });
       queryClient.invalidateQueries({ queryKey: ['recentLoads'] });
-      navigation.goBack();
+      // Clear the form back to blank now that it's posted — this tab stays
+      // mounted (see INITIAL_FORM above), so without this the next visit
+      // would silently reopen with the just-submitted load's details still
+      // sitting in every field.
+      setForm(INITIAL_FORM);
+      setTruckType('tata_407');
+      setFuelType('any');
+      setAxleType('any');
+      setBodyType('any');
+      setSpecialConditions([]);
+      setOtherConditionSelected(false);
+      setOtherConditionText('');
+      setConfirmed(false);
+      // goBack() lands on whichever tab was focused before "Create" (usually
+      // Home, since bottom tabs remember tab-switch history) — jump to Find
+      // Loads instead so the poster sees their new load live in the
+      // marketplace right away.
+      navigation.navigate('Loads');
     },
     onError: (err) => setError(err.message)
   });
