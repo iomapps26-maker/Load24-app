@@ -30,6 +30,14 @@ export function AuthProvider({ children }) {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setIsLoadingAuth(false);
+      // Cold start with an already-persisted session (the common case —
+      // sessions outlive any single app open by weeks) skips the SIGNED_IN
+      // branch below entirely, so without this, a permission denied/
+      // dismissed or a token fetch that failed at the one-time original
+      // sign-in would never get retried again for the life of the install.
+      // registerPushToken() is idempotent and best-effort (see
+      // pushNotifications.js), so re-running it on every cold start is safe.
+      if (data.session) registerPushToken();
     });
 
     const { data: subscription } = supabase.auth.onAuthStateChange((event, newSession) => {
