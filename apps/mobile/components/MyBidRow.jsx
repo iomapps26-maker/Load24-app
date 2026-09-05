@@ -1,5 +1,6 @@
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Icon } from 'react-native-paper';
+import { BOOKING_STATUS_BADGE } from '../lib/tripStatus';
 
 // Same status pill styling SeeBiddingScreen uses for a bid row (poster's
 // view of one bid) — kept in sync by hand since this is the accepter's
@@ -10,6 +11,14 @@ const STATUS_BADGE = {
   pending: { bg: 'bg-orange-100', text: 'text-orange-700', key: 'bidPending' }
 };
 
+// bid.status only ever moves pending -> approved/rejected — an approved bid
+// stays "approved" forever even once the trip itself has moved on to
+// in_transit or completed, so that alone can't tell "still in process" apart
+// from "done". bid.booking.status (attached by GET /api/load-bids/mine for
+// approved bids) is what actually carries the trip's current lifecycle stage
+// (see lib/tripStatus.js) — so this list never looks frozen on "Approved"
+// after a trip has moved on.
+
 // One row of TripHistoryScreen — a bid the caller placed as the accepter,
 // whatever it ended up as. Mirrors MyLoadRow's card for the poster side, but
 // the load only comes along embedded on the bid (see GET /api/load-bids/mine)
@@ -17,7 +26,14 @@ const STATUS_BADGE = {
 // never got a booking.
 export default function MyBidRow({ bid, t, navigation }) {
   const load = bid.load;
-  const badge = STATUS_BADGE[bid.status] ?? STATUS_BADGE.pending;
+  // Falls back to the plain "Approved" pill when there's no booking yet (the
+  // booking is created best-effort right after approval — see
+  // routes/loadBids.js's approve handler — so a brand-new approval can
+  // briefly have bid.status === 'approved' with bid.booking still null).
+  const badge =
+    (bid.status === 'approved' && BOOKING_STATUS_BADGE[bid.booking?.status]) ||
+    STATUS_BADGE[bid.status] ||
+    STATUS_BADGE.pending;
 
   return (
     <View className="mb-3 rounded-2xl border border-slate-200 bg-white p-4">

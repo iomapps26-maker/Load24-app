@@ -168,6 +168,27 @@ router.get('/', async (req, res) => {
 
   const { data, error } = await query;
   if (error) return res.status(400).json({ error: error.message });
+
+  // For ?mine=true, attach each load's booking (spec §8) once it has one —
+  // i.e. once it's an actual trip, not just an open posting. Mirrors
+  // load-bids.js's /mine, which does the same in the other direction (bid ->
+  // booking) so TripHistoryScreen can show "who's on the other side of this
+  // trip and what state it's in" for a load the caller posted, not just one
+  // they bid on. RLS (bookings_select_parties_or_staff) already lets a
+  // poster read their own via poster_email, same trust boundary as any other
+  // read on this route.
+  if (mine === 'true') {
+    const tripLoadIds = data.filter((l) => ['matched', 'in_transit', 'completed', 'cancelled'].includes(l.status)).map((l) => l.id);
+    if (tripLoadIds.length) {
+      const { data: bookings } = await req.supabase
+        .from('bookings')
+        .select('load_id, booking_ref, status, accepter_email, amount')
+        .in('load_id', tripLoadIds);
+      const byLoadId = new Map((bookings || []).map((bk) => [bk.load_id, bk]));
+      for (const load of data) load.booking = byLoadId.get(load.id) ?? null;
+    }
+  }
+
   res.json(data);
 });
 
