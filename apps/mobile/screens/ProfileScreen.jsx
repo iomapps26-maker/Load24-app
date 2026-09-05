@@ -446,6 +446,13 @@ export default function ProfileScreen() {
         onPress={() => navigation.navigate('PostedLoads')}
       />
 
+      <NavRow
+        icon="truck-fast-outline"
+        iconColor="#2563eb"
+        label={t('tripHistory')}
+        onPress={() => navigation.navigate('TripHistory')}
+      />
+
       <SectionCard>
         <View className="mb-3 flex-row items-center justify-between">
           <View className="flex-row items-center">
