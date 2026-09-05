@@ -96,8 +96,8 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
 }
 
 // Poster-only screen: shows one load exactly as it appears on the load feed,
-// plus every bid placed against it. Bids auto-reject 10 minutes after being
-// placed if the poster hasn't approved/rejected (migration 054) —
+// plus every bid placed against it. Bids auto-reject 5 minutes after being
+// placed if the poster hasn't approved/rejected (migration 057) —
 // GET /api/load-bids/load/:id flips any expired pending bid on the server
 // (rate-limited to one sweep per load per 30s), so a 10s refetchInterval here
 // keeps the list fresh without hammering that endpoint. The per-bid countdown

@@ -217,6 +217,21 @@ SQL Editor (no migration runner wired up yet).
   so Approve looked like it did nothing). Only affects bids placed after it
   runs. `autoRejectExpired` / `POST /:id/approve` already read the column, so
   no code change beyond comments + the `SeeBidding` countdown going `M:SS`.
+- `migrations/055_add_user_profiles_email_index.sql` — index on
+  `user_profiles.user_email` (`create index concurrently`) — the column
+  `assertConfirmable()` (every `POST /api/load-bids/:id/approve`) and several
+  other routes filter bidder/poster profiles by, previously unindexed.
+- `migrations/056_withdrawal_balance_guard.sql` — a before-insert trigger on
+  `withdrawal_requests` that takes `FOR UPDATE` on the wallet row and rejects
+  (via a check violation) a withdrawal that would take the balance negative —
+  closes a race where two concurrent withdrawal requests could both pass the
+  balance check before either inserted. `routes/wallet.js` maps the resulting
+  `23514` to a clean 400.
+- `migrations/057_shorten_bid_confirmation_window.sql` — pulls
+  `load_bids.expires_at`'s default back in from `now() + 10 minutes` (054) to
+  `now() + 5 minutes`. 10 min proved longer than needed and left a bid's §5
+  security-deposit hold tying up the bidder's wallet balance longer than
+  necessary. Only affects bids placed after it runs.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.

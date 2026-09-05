@@ -90,8 +90,8 @@ export function __resetExpirySweepCooldown() {
   lastSweepByLoad.clear();
 }
 
-// Any pending bid whose confirmation window (load_bids.expires_at — 10 min
-// from creation, migration 054) has passed without the poster acting is
+// Any pending bid whose confirmation window (load_bids.expires_at — 5 min
+// from creation, migration 057) has passed without the poster acting is
 // treated as rejected — checked lazily whenever bids are read, same
 // approach as the WhatsApp OTP expires_at column (see whatsappAuth.js)
 // rather than a background job. Each bid it rejects gets its §5 security
@@ -926,7 +926,7 @@ router.post('/:id/approve', async (req, res) => {
     .select('posted_by, required_truck_type, required_truck_type_other, weight_tons')
     .eq('id', bid.load_id)
     .maybeSingle();
-  if (loadCheckError) return dbError(res, loadCheckError, 'Could not confirm this load');
+  if (loadCheckError) return writeError(res, loadCheckError, 'Could not confirm this load');
   if (!loadForCheck) return res.status(404).json({ error: 'Load not found' });
 
   const blocked = await assertConfirmable(bid, loadForCheck);
@@ -942,7 +942,7 @@ router.post('/:id/approve', async (req, res) => {
     .eq('status', 'active')
     .select('id')
     .maybeSingle();
-  if (claimError) return dbError(res, claimError, 'Could not confirm this load');
+  if (claimError) return writeError(res, claimError, 'Could not confirm this load');
   if (!claimedLoad) {
     return res.status(409).json({ error: 'This load is already booked', code: 'load_already_booked' });
   }
