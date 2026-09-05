@@ -82,6 +82,18 @@ const adminCalls = [];
 // remove()/createSignedUploadUrl() calls.
 const tripDocs = { rows: [], storageOps: [] };
 
+// POST /:id/approve and /:id/reject now read+write 'loads'/'load_bids' via
+// supabaseAdmin instead of req.supabase (see loadBids.js — RLS's
+// posted_by = auth.jwt() ->> 'email' match is no longer the authorization
+// boundary for those two routes, an explicit isPoster/isBidReviewStaff check
+// in JS is). `approveStore` is pointed at the current test's row-aware store
+// by makeApproveSupabase below, so supabaseAdmin.from('loads'|'load_bids')
+// and req.supabase.from(...) both read/write the same underlying rows.
+// `staffRoles` seeds supabaseAdmin.from('user_roles') for isBidReviewStaff —
+// empty (not staff) unless a test sets it.
+let approveStore = null;
+let staffRoles = [];
+
 // Bidder rows returned by the service-role reads POST /:id/approve now does to
 // re-verify the winning bidder at confirmation time (spec §8, assertConfirmable).
 // Default: a fully-eligible transporter with no truck. The approve tests mutate
@@ -134,6 +146,13 @@ vi.mock('../lib/supabase.js', () => ({
       }
       if (table === 'trucks') {
         return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: approveBidder.truck, error: null }) }) }) };
+      }
+      if (table === 'loads' || table === 'load_bids') {
+        if (!approveStore) throw new Error(`no approveStore set for admin table ${table} — call makeApproveSupabase first`);
+        return approveStore.from(table);
+      }
+      if (table === 'user_roles') {
+        return { select: () => ({ eq: () => ({ in: () => Promise.resolve({ data: staffRoles, error: null }) }) }) };
       }
       if (table === 'trip_documents') {
         const q = { _filters: {} };
@@ -213,15 +232,24 @@ function makeApproveSupabase({ loads = [], load_bids = [], beforeApproveUpdate }
     };
     return b;
   };
-  return { store, from: builder };
+  const supabase = { store, from: builder };
+  // POST /:id/approve and /:id/reject read+write 'loads'/'load_bids' through
+  // supabaseAdmin, not req.supabase (see the comment above approveStore) —
+  // point the shared slot at this same store/builder so both clients agree.
+  approveStore = supabase;
+  return supabase;
 }
 
 function buildApproveApp(seed, callerEmail = 'poster@example.com') {
   // POST /:id/approve now re-checks that the winning bid's §5 security hold is
   // still active before locking the load (spec §8). Give every seeded bid an
-  // active hold unless the test set the fields itself.
+  // active hold unless the test set the fields itself. Every seeded load
+  // defaults posted_by to the caller so the isPoster authorization check in
+  // POST /:id/approve and /:id/reject passes without every test having to set
+  // it — a test exercising the poster-mismatch/staff paths overrides it.
   const withHoldDefaults = {
     ...seed,
+    loads: (seed.loads || []).map((l) => ({ posted_by: callerEmail, ...l })),
     load_bids: (seed.load_bids || []).map((b) => ({
       security_hold_txn_id: 'hold-default',
       security_hold_released_at: null,
@@ -333,6 +361,7 @@ describe('POST /api/load-bids/:id/approve', () => {
       bidding_restriction_reason: null
     };
     approveBidder.truck = null;
+    staffRoles = [];
   });
 
   it('accepts a pending bid, locks the load to matched, and books the truck', async () => {
@@ -554,6 +583,40 @@ describe('POST /api/load-bids/:id/approve', () => {
         }
       ]
     });
+
+    const res = await request(app).post('/api/load-bids/bid-1/approve').send({});
+    expect(res.status).toBe(200);
+    expect(app.locals.store.loads[0].status).toBe('matched');
+  });
+
+  it('403s a caller who is neither the load poster nor review staff, without touching the load', async () => {
+    const app = buildApproveApp(
+      {
+        loads: [{ id: 'load-1', status: 'active', posted_by: 'poster@example.com' }],
+        load_bids: [
+          { id: 'bid-1', load_id: 'load-1', status: 'pending', expires_at: futureIso(), truck_id: null, bid_by_email: 'trucker@example.com', amount: 5000 }
+        ]
+      },
+      'stranger@example.com'
+    );
+
+    const res = await request(app).post('/api/load-bids/bid-1/approve').send({});
+    expect(res.status).toBe(403);
+    expect(app.locals.store.loads[0].status).toBe('active');
+    expect(app.locals.store.load_bids[0].status).toBe('pending');
+  });
+
+  it('lets review staff approve a bid on a load they did not post', async () => {
+    staffRoles = [{ role: 'sales_manager' }];
+    const app = buildApproveApp(
+      {
+        loads: [{ id: 'load-1', status: 'active', posted_by: 'poster@example.com' }],
+        load_bids: [
+          { id: 'bid-1', load_id: 'load-1', status: 'pending', expires_at: futureIso(), truck_id: null, bid_by_email: 'trucker@example.com', amount: 5000 }
+        ]
+      },
+      'staffer@example.com'
+    );
 
     const res = await request(app).post('/api/load-bids/bid-1/approve').send({});
     expect(res.status).toBe(200);
@@ -818,38 +881,59 @@ describe('POST /api/load-bids/:id/reject — releases the security hold', () => 
   });
 
   it("releases the rejected bid's hold back to the bidder", async () => {
-    const bidRow = {
-      id: 'bid-3',
-      load_id: 'load-1',
-      bid_by_email: 'trucker@example.com',
-      amount: 5000,
-      security_hold_txn_id: 'hold-txn-1',
-      security_hold_amount: 1000,
-      security_hold_released_at: null
-    };
-    const app = express();
-    app.use(express.json());
-    app.use((req, res, next) => {
-      req.user = { id: 'poster-1', email: 'poster@example.com' };
-      req.supabase = {
-        from: (table) => {
-          if (table === 'load_bids') {
-            return {
-              update: () => ({
-                eq: () => ({ eq: () => ({ select: () => ({ single: () => Promise.resolve({ data: bidRow, error: null }) }) }) })
-              })
-            };
-          }
-          throw new Error(`unexpected table ${table}`);
+    const app = buildApproveApp({
+      loads: [{ id: 'load-1', status: 'matched' }],
+      load_bids: [
+        {
+          id: 'bid-3',
+          load_id: 'load-1',
+          status: 'pending',
+          bid_by_email: 'trucker@example.com',
+          amount: 5000,
+          security_hold_txn_id: 'hold-txn-1',
+          security_hold_amount: 1000,
+          security_hold_released_at: null
         }
-      };
-      next();
+      ]
     });
-    app.use('/api/load-bids', loadBidsRouter);
 
     const res = await request(app).post('/api/load-bids/bid-3/reject').send({});
     expect(res.status).toBe(200);
-    expect(releaseBidSecurityHold).toHaveBeenCalledWith(bidRow, { reason: 'bid rejected' });
+    expect(releaseBidSecurityHold).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'bid-3' }),
+      { reason: 'bid rejected' }
+    );
+  });
+
+  it('403s a caller who is neither the load poster nor review staff', async () => {
+    staffRoles = [];
+    const app = buildApproveApp(
+      {
+        loads: [{ id: 'load-1', status: 'active', posted_by: 'poster@example.com' }],
+        load_bids: [{ id: 'bid-3', load_id: 'load-1', status: 'pending', bid_by_email: 'trucker@example.com', amount: 5000 }]
+      },
+      'stranger@example.com'
+    );
+
+    const res = await request(app).post('/api/load-bids/bid-3/reject').send({});
+    expect(res.status).toBe(403);
+    expect(app.locals.store.load_bids[0].status).toBe('pending');
+  });
+
+  it('lets review staff reject a bid on a load they did not post', async () => {
+    staffRoles = [{ role: 'sales_executive' }];
+    const app = buildApproveApp(
+      {
+        loads: [{ id: 'load-1', status: 'active', posted_by: 'poster@example.com' }],
+        load_bids: [{ id: 'bid-3', load_id: 'load-1', status: 'pending', bid_by_email: 'trucker@example.com', amount: 5000 }]
+      },
+      'staffer@example.com'
+    );
+
+    const res = await request(app).post('/api/load-bids/bid-3/reject').send({});
+    expect(res.status).toBe(200);
+    expect(app.locals.store.load_bids[0].status).toBe('rejected');
+    staffRoles = [];
   });
 });
 

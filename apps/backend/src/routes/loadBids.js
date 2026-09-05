@@ -24,6 +24,11 @@ const TRIP_DOC_URL_TTL_SECONDS = 300;
 // a bid is approved (see migrations/044_add_trip_documents.sql).
 const TRIP_DOCUMENT_TYPES = ['eway_bill', 'bilty'];
 
+// Mirrors the role list in loads_update_own_or_staff / load_bids_update_poster
+// (db/migrations/001_init.sql, 015_add_load_bids.sql) — kept in sync by hand,
+// same as TRUCK_REQUIRED_ROLES above.
+const BID_REVIEW_STAFF_ROLES = ['admin', 'sales_executive', 'sales_team_lead', 'sales_manager'];
+
 const router = Router();
 
 // Supabase/PostgREST error.message can be raw internal detail (missing
@@ -285,6 +290,17 @@ async function profileForEmail(email) {
     .eq('user_email', email)
     .maybeSingle();
   return data;
+}
+
+// Application-level mirror of has_role(BID_REVIEW_STAFF_ROLES) (requireRole.js
+// does the same thing for the /admin/* routes) — used by approve/reject below
+// so "is this caller allowed to review bids on this load" is decided in JS,
+// logged, and returned as a clear 403 instead of leaning on the
+// loads_update_own_or_staff / load_bids_update_poster RLS policies to reject
+// the write with an opaque 42501 when it doesn't match.
+async function isBidReviewStaff(userId) {
+  const { data } = await supabaseAdmin.from('user_roles').select('role').eq('user_id', userId).in('role', BID_REVIEW_STAFF_ROLES);
+  return !!data?.length;
 }
 
 // The E-Way Bill / Bilty attached to this trip, keyed by document_type, each
@@ -915,7 +931,19 @@ router.post('/load/:load_id/deliver', async (req, res) => {
   }).catch((err) => console.error('[load-bids] trip_delivered notify failed', err));
 });
 
-// POST /api/load-bids/:id/approve — poster-only via RLS (load_bids_update_poster).
+// POST /api/load-bids/:id/approve — poster-or-staff, checked in JS (isPoster /
+// isBidReviewStaff below) rather than left to the loads_update_own_or_staff /
+// load_bids_update_poster RLS policies. Those RLS policies match on
+// `posted_by = auth.jwt() ->> 'email'`, which is fine as a backstop but a bad
+// primary gate: it silently 403s with an opaque 42501 "row-level security"
+// error the moment anything about that string match doesn't line up (a
+// WhatsApp-OTP account's synthetic email vs. whatever posted_by was stamped
+// with, a stale JWT, a staff role that legitimately doesn't qualify) with no
+// way for the caller — or us, from the logs — to tell which. Reads and writes
+// below go through supabaseAdmin once the explicit check below has passed, same
+// trust model as trip-details/deliver above (isPoster/isAccepter in JS, then
+// supabaseAdmin for the actual mutation).
+//
 // Confirming a load (spec §8 "Load Confirmation" / §9 "prevent double booking"):
 //
 //   1. winning bid still pending and within its window   (guard below)
@@ -934,7 +962,7 @@ router.post('/load/:load_id/deliver', async (req, res) => {
 router.post('/:id/approve', async (req, res) => {
   const nowIso = new Date().toISOString();
 
-  const { data: bid, error: bidError } = await req.supabase
+  const { data: bid, error: bidError } = await supabaseAdmin
     .from('load_bids')
     .select('id, load_id, status, expires_at, bid_by_email, truck_id, security_hold_txn_id, security_hold_amount, security_hold_released_at')
     .eq('id', req.params.id)
@@ -948,7 +976,7 @@ router.post('/:id/approve', async (req, res) => {
   // Spec §8 steps 2-4: re-verify the bidder still qualifies and their §5
   // security hold is still active *before* anything is locked. A failure here
   // leaves the load open for other bids.
-  const { data: loadForCheck, error: loadCheckError } = await req.supabase
+  const { data: loadForCheck, error: loadCheckError } = await supabaseAdmin
     .from('loads')
     .select('posted_by, required_truck_type, required_truck_type_other, weight_tons')
     .eq('id', bid.load_id)
@@ -956,13 +984,25 @@ router.post('/:id/approve', async (req, res) => {
   if (loadCheckError) return writeError(res, loadCheckError, 'Could not confirm this load');
   if (!loadForCheck) return res.status(404).json({ error: 'Load not found' });
 
+  const callerEmail = req.user.email;
+  const isPoster = callerEmail === loadForCheck.posted_by;
+  if (!isPoster && !(await isBidReviewStaff(req.user.id))) {
+    console.error('[load-bids] approve denied: caller is neither the poster nor review staff', {
+      bidId: bid.id,
+      loadId: bid.load_id,
+      callerEmail,
+      postedBy: loadForCheck.posted_by
+    });
+    return res.status(403).json({ error: 'Not authorized to approve bids on this load' });
+  }
+
   const blocked = await assertConfirmable(bid, loadForCheck);
   if (blocked) return res.status(blocked.status).json(blocked.body);
 
   // Claim the load. Only one approve can move it out of 'active'; a racing
   // confirmation of another bid — or a double-tap — gets 409 right here,
   // before any second bid can be flipped to 'approved'.
-  const { data: claimedLoad, error: claimError } = await req.supabase
+  const { data: claimedLoad, error: claimError } = await supabaseAdmin
     .from('loads')
     .update({ status: 'matched' })
     .eq('id', bid.load_id)
@@ -977,7 +1017,7 @@ router.post('/:id/approve', async (req, res) => {
   // Now accept the bid. Still guarded — the confirmation window can lapse in
   // the gap above; if it has, put the load back so it isn't stranded 'matched'
   // with no accepted bid.
-  const { data, error } = await req.supabase
+  const { data, error } = await supabaseAdmin
     .from('load_bids')
     .update({ status: 'approved', reviewed_at: nowIso })
     .eq('id', bid.id)
@@ -987,7 +1027,7 @@ router.post('/:id/approve', async (req, res) => {
     .single();
 
   if (error || !data) {
-    await req.supabase
+    await supabaseAdmin
       .from('loads')
       .update({ status: 'active' })
       .eq('id', bid.load_id)
@@ -1029,7 +1069,7 @@ router.post('/:id/approve', async (req, res) => {
   // pending bid on it and return each bidder's security hold. Kept on the
   // response path — the poster's next screen lists these bids — but its own
   // per-bidder notifications are fire-and-forget (see rejectSiblingBids).
-  await rejectSiblingBids(req.supabase, data.load_id, data.id);
+  await rejectSiblingBids(supabaseAdmin, data.load_id, data.id);
 
   res.json({ ...data, booking });
 
@@ -1043,9 +1083,39 @@ router.post('/:id/approve', async (req, res) => {
   }).catch((err) => console.error('[load-bids] bid_approved notify failed', err));
 });
 
-// POST /api/load-bids/:id/reject — poster-only via RLS (load_bids_update_poster).
+// POST /api/load-bids/:id/reject — poster-or-staff, same explicit-check /
+// supabaseAdmin-write model as approve above (see the comment there for why
+// this isn't left to the load_bids_update_poster RLS policy alone).
 router.post('/:id/reject', async (req, res) => {
-  const { data, error } = await req.supabase
+  const { data: bid, error: bidError } = await supabaseAdmin
+    .from('load_bids')
+    .select('id, load_id, status')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (bidError) return dbError(res, bidError, 'Could not reject this bid');
+  if (!bid) return res.status(404).json({ error: 'Bid not found' });
+
+  const { data: load, error: loadError } = await supabaseAdmin
+    .from('loads')
+    .select('posted_by')
+    .eq('id', bid.load_id)
+    .maybeSingle();
+  if (loadError) return dbError(res, loadError, 'Could not reject this bid');
+  if (!load) return res.status(404).json({ error: 'Load not found' });
+
+  const callerEmail = req.user.email;
+  const isPoster = callerEmail === load.posted_by;
+  if (!isPoster && !(await isBidReviewStaff(req.user.id))) {
+    console.error('[load-bids] reject denied: caller is neither the poster nor review staff', {
+      bidId: bid.id,
+      loadId: bid.load_id,
+      callerEmail,
+      postedBy: load.posted_by
+    });
+    return res.status(403).json({ error: 'Not authorized to reject bids on this load' });
+  }
+
+  const { data, error } = await supabaseAdmin
     .from('load_bids')
     .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
     .eq('id', req.params.id)
