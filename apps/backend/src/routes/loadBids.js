@@ -31,7 +31,18 @@ const router = Router();
 // the real error for debugging and send a generic message instead.
 function dbError(res, error, fallbackMessage) {
   console.error('[load-bids]', error);
-  return res.status(400).json({ error: fallbackMessage });
+  // TEMP (remove once the "Could not place your bid" / "Could not confirm
+  // this load" reports are root-caused): this function otherwise always
+  // returns the same generic text no matter what actually failed, which is
+  // exactly why both of those bug reports had no real signal to go on. Surface
+  // the SQLSTATE/code and a truncated message so the next occurrence is
+  // diagnosable from the app's own error banner. Not something to leave in
+  // permanently (raw Postgrest messages can name columns/constraints) — revert
+  // this hunk once we've seen the code.
+  const debugDetail = error?.code
+    ? `${error.code}: ${String(error?.message || '').slice(0, 200)}`
+    : String(error?.message || error).slice(0, 200);
+  return res.status(400).json({ error: `${fallbackMessage} [debug: ${debugDetail}]`, code: 'unclassified', debug: debugDetail });
 }
 
 // Like dbError, but for writes where the *class* of failure is safe and
@@ -71,7 +82,23 @@ function writeError(res, error, fallbackMessage) {
       code: 'schema_out_of_date'
     });
   }
-  return res.status(400).json({ error: fallbackMessage });
+  // PostgREST's own JWT check (distinct from this server's auth middleware,
+  // which already let the request through) rejecting the token — e.g. an
+  // access token that's gone stale on a long-lived app session. Was falling
+  // through to the opaque generic message with no path forward for the user;
+  // this at least tells them the one thing that actually fixes it.
+  if (code === 'PGRST301' || /jwt|json web token/i.test(error?.message || '')) {
+    return res.status(401).json({
+      error: `${fallbackMessage}: your session has expired — sign out and sign back in, then try again.`,
+      code: 'session_expired'
+    });
+  }
+  // TEMP (remove once the "Could not place your bid" / "Could not confirm
+  // this load" reports are root-caused) — see the matching note in dbError
+  // just above. Every specific case above already returns safe, targeted
+  // text; reaching here means it's a code this list has never seen.
+  const debugDetail = `${code || 'no-code'}: ${String(error?.message || error).slice(0, 200)}`;
+  return res.status(400).json({ error: `${fallbackMessage} [debug: ${debugDetail}]`, code: 'unclassified', debug: debugDetail });
 }
 
 // Per-load cooldown for autoRejectExpired: the poster's "See Bidding" screen
