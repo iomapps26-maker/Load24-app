@@ -120,11 +120,24 @@ async function notifyNearbyTruckOwners(req, load) {
   });
 }
 
-// GET /api/loads?truck_type=tata_407&location=110001&material_type=cement — mirrors
-// FindLoads.jsx's query, filtering on the same fields PostLoadScreen collects
+// GET /api/loads?loading_location=Delhi&unloading_location=Mumbai — the pickup
+// and drop points filtered separately so a search reads as a route ("loads
+// FROM x TO y"). FindLoadsScreen sends these two.
+// GET /api/loads?truck_type=tata_407&location=110001&material_type=cement —
+// the older combined filter (one box, matched against every city/pincode
+// field); still honoured for app builds shipped before the split.
 // GET /api/loads?mine=true — the caller's own posted loads, any status (for the home dashboard)
 router.get('/', async (req, res) => {
-  const { truck_type, location, material_type, mine } = req.query;
+  const { truck_type, location, loading_location, unloading_location, material_type, mine } = req.query;
+
+  // Comma/parens are PostgREST's own or() filter syntax — strip them from
+  // every pick so a value containing one can't break or hijack the filter
+  // expression. A single pick arrives as a string, several as an array
+  // (repeated ?param= keys).
+  const sanitizePicks = (value) =>
+    (Array.isArray(value) ? value : value != null && value !== '' ? [value] : [])
+      .map((loc) => String(loc).replace(/[,()]/g, '').trim())
+      .filter(Boolean);
 
   // Clamp the page size — a client asking for ?limit=100000 shouldn't be able
   // to pull the whole table in one response. Same guard as
@@ -142,27 +155,40 @@ router.get('/', async (req, res) => {
   } else {
     query = query.eq('status', 'active');
     if (truck_type && truck_type !== 'all') query = query.eq('required_truck_type', truck_type);
-    // One box, multiple picks: each entry is a pincode (matched anywhere in
-    // either pincode field) or a city name (matched anywhere in either city
-    // field, case-insensitive) — the mobile picker lets the caller select
-    // several cities/pincodes at once (repeated ?location= params, so
-    // req.query.location is an array once there's more than one), and a
-    // load matching ANY of them should show up. There's no reference table
-    // mapping pincodes to city names (pincode_centroids only has lat/lng/
-    // state — see db/migrations/030_add_pincode_centroids.sql), so this only
-    // knows what each load's own poster typed into its city fields, not a
-    // canonical city grouping.
-    const locations = (Array.isArray(location) ? location : location ? [location] : [])
-      // Comma/parens are PostgREST's own or() filter syntax — strip them so
-      // a value containing one can't break or hijack the filter expression.
-      .map((loc) => String(loc).replace(/[,()]/g, '').trim())
-      .filter(Boolean);
+
+    // Legacy combined box: each pick is a pincode or city name matched
+    // anywhere in either pincode field or either city field
+    // (case-insensitive), and a load matching ANY pick shows up. There's no
+    // reference table mapping pincodes to city names (pincode_centroids only
+    // has lat/lng/state — see db/migrations/030_add_pincode_centroids.sql),
+    // so this only knows what each load's own poster typed into its city
+    // fields, not a canonical city grouping.
+    const locations = sanitizePicks(location);
     if (locations.length) {
-      const orFilter = locations
-        .map((loc) => `loading_pincode.ilike.%${loc}%,unloading_pincode.ilike.%${loc}%,loading_city.ilike.%${loc}%,unloading_city.ilike.%${loc}%`)
-        .join(',');
-      query = query.or(orFilter);
+      query = query.or(
+        locations
+          .map((loc) => `loading_pincode.ilike.%${loc}%,unloading_pincode.ilike.%${loc}%,loading_city.ilike.%${loc}%,unloading_city.ilike.%${loc}%`)
+          .join(',')
+      );
     }
+
+    // Route-aware filter: the pickup point and the drop point each get their
+    // own OR group (pincode OR city on that side only). Separate .or() calls
+    // AND together, so ?loading_location=Delhi&unloading_location=Mumbai
+    // returns only loads that go from Delhi to Mumbai.
+    const loadingPicks = sanitizePicks(loading_location);
+    if (loadingPicks.length) {
+      query = query.or(
+        loadingPicks.map((loc) => `loading_pincode.ilike.%${loc}%,loading_city.ilike.%${loc}%`).join(',')
+      );
+    }
+    const unloadingPicks = sanitizePicks(unloading_location);
+    if (unloadingPicks.length) {
+      query = query.or(
+        unloadingPicks.map((loc) => `unloading_pincode.ilike.%${loc}%,unloading_city.ilike.%${loc}%`).join(',')
+      );
+    }
+
     if (material_type) query = query.ilike('material_type', `%${material_type}%`);
   }
 

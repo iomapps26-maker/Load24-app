@@ -12,6 +12,7 @@ import {
 import { useLanguage } from '../lib/i18n';
 import { usePincodeAutofill } from '../lib/usePincodeAutofill';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
+import DateField from '../components/DateField';
 
 const REQUIRED = [
   'loading_pincode', 'loading_address', 'loading_landmark', 'loading_city', 'loading_state',
@@ -198,7 +199,7 @@ export default function PostLoadScreen() {
         <Field label={t('contactName')} required value={form.loading_poc_name} onChangeText={set('loading_poc_name')} />
         <Field label={t('contactMobile')} required keyboardType="phone-pad" value={form.loading_poc_mobile} onChangeText={set('loading_poc_mobile')} />
         <View className="flex-row gap-3">
-          <View className="flex-1"><Field label={t('loadingDate')} required placeholder="YYYY-MM-DD" value={form.loading_date} onChangeText={set('loading_date')} /></View>
+          <View className="flex-1"><DateField label={t('loadingDate')} required value={form.loading_date} onChange={set('loading_date')} /></View>
           <View className="flex-1"><Field label={t('loadingTime')} required placeholder={t('phLoadingTime')} value={form.loading_time} onChangeText={set('loading_time')} /></View>
         </View>
 
@@ -216,7 +217,7 @@ export default function PostLoadScreen() {
         </View>
         <Field label={t('contactName')} required value={form.unloading_poc_name} onChangeText={set('unloading_poc_name')} />
         <Field label={t('contactMobile')} required keyboardType="phone-pad" value={form.unloading_poc_mobile} onChangeText={set('unloading_poc_mobile')} />
-        <Field label={t('unloadingDate')} placeholder="YYYY-MM-DD" value={form.unloading_date} onChangeText={set('unloading_date')} />
+        <DateField label={t('unloadingDate')} value={form.unloading_date} onChange={set('unloading_date')} />
 
         <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">{t('loadDetails')}</Text>
         <Field label={t('materialType')} required value={form.material_type} onChangeText={set('material_type')} placeholder={t('phMaterialType')} />

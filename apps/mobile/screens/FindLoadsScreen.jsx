@@ -1,31 +1,24 @@
 import { useState } from 'react';
-import { View, Text, FlatList, Pressable, RefreshControl } from 'react-native';
-import { ActivityIndicator, Button, Menu, TextInput } from 'react-native-paper';
+import { View, Text, FlatList, Pressable, TouchableOpacity, RefreshControl } from 'react-native';
+import { ActivityIndicator, Icon } from 'react-native-paper';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
-import { TRUCK_TYPES as ALL_TRUCK_TYPES, TRUCK_TYPE_LABELS } from '../lib/loadOptions';
 import LoadCard from '../components/LoadCard';
 import LocationPickerModal from '../components/LocationPickerModal';
 
-// Same enum PostLoadScreen posts with, plus "all" — every filter here mirrors
-// a field collected on the Post Load form so shippers/vehicle owners can
-// search by exactly what was posted.
-const TRUCK_TYPES = ['all', ...ALL_TRUCK_TYPES];
-
-// Mobile port of src/pages/FindLoads.jsx: same three queries (loads, my likes,
-// profile) plus an optimistic like/unlike mutation, now via the Express API.
+// Mobile port of src/pages/FindLoads.jsx. The pickup and drop points are
+// filtered separately — each field opens the same city/pincode picker, and
+// the backend ANDs the two (see routes/loads.js) so a search reads as a
+// route: "loads FROM here TO there".
 export default function FindLoadsScreen() {
   const queryClient = useQueryClient();
-  const { language, t } = useLanguage();
-  const [truckType, setTruckType] = useState('all');
-  // Multiple cities/pincodes can be picked at once — the backend ORs every
-  // entry together (see routes/loads.js), so a load matching ANY of them
-  // shows up.
-  const [locations, setLocations] = useState([]);
-  const [materialType, setMaterialType] = useState('');
-  const [filterMenuVisible, setFilterMenuVisible] = useState(false);
-  const [locationPickerVisible, setLocationPickerVisible] = useState(false);
+  const { t } = useLanguage();
+  // One city or pincode per side; null means "any" for that side.
+  const [loadingLocation, setLoadingLocation] = useState(null);
+  const [unloadingLocation, setUnloadingLocation] = useState(null);
+  // Which field the full-screen picker is editing: 'loading' | 'unloading' | null.
+  const [pickerTarget, setPickerTarget] = useState(null);
 
   const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
 
@@ -35,11 +28,10 @@ export default function FindLoadsScreen() {
     isRefetching,
     refetch
   } = useQuery({
-    queryKey: ['loads', truckType, locations, materialType],
+    queryKey: ['loads', loadingLocation, unloadingLocation],
     queryFn: () => api.loads.list({
-      truck_type: truckType,
-      location: locations.length ? locations : undefined,
-      material_type: materialType || undefined
+      loading_location: loadingLocation || undefined,
+      unloading_location: unloadingLocation || undefined
     })
   });
 
@@ -70,63 +62,46 @@ export default function FindLoadsScreen() {
     queryFn: api.loadBids.mine
   });
 
-  // "Pune" for one pick, "Pune +2" for several — the field itself is too
-  // narrow to list every pick, and the picker's own chips already show the
-  // full set once it's open.
-  const locationSummary = locations.length > 1 ? `${locations[0]} +${locations.length - 1}` : locations[0] ?? '';
+  const renderPoint = (target, value, onClear, markerIcon, markerColor, placeholder) => (
+    <Pressable
+      className="flex-1 flex-row items-center gap-1.5 px-3 py-2.5"
+      onPress={() => setPickerTarget(target)}
+    >
+      <Icon source={markerIcon} size={16} color={markerColor} />
+      <Text
+        numberOfLines={1}
+        className={`flex-1 text-sm ${value ? 'font-semibold text-slate-900' : 'text-slate-400'}`}
+      >
+        {value || placeholder}
+      </Text>
+      {value ? (
+        <TouchableOpacity onPress={onClear} hitSlop={8}>
+          <Icon source="close-circle" size={15} color="#94a3b8" />
+        </TouchableOpacity>
+      ) : null}
+    </Pressable>
+  );
 
   return (
     <View className="flex-1 bg-slate-50 px-4 pt-3">
-      <View className="mb-3 flex-row gap-2">
-        <Pressable style={{ flex: 1 }} onPress={() => setLocationPickerVisible(true)}>
-          <View pointerEvents="none">
-            <TextInput
-              mode="outlined"
-              placeholder={t('searchByPincodeOrCity')}
-              value={locationSummary}
-              editable={false}
-              dense
-            />
-          </View>
-        </Pressable>
-        <TextInput
-          mode="outlined"
-          placeholder={t('material')}
-          value={materialType}
-          onChangeText={setMaterialType}
-          dense
-          style={{ flex: 1 }}
-        />
-      </View>
-      <View className="mb-4">
-        <Menu
-          visible={filterMenuVisible}
-          onDismiss={() => setFilterMenuVisible(false)}
-          anchor={
-            <Button
-              mode="outlined"
-              onPress={() => setFilterMenuVisible(true)}
-              icon="chevron-down"
-              contentStyle={{ flexDirection: 'row-reverse' }}
-              textColor="#334155"
-              style={{ borderColor: '#e2e8f0', alignSelf: 'flex-start' }}
-            >
-              {truckType === 'all' ? t('allTrucks') : (TRUCK_TYPE_LABELS[language]?.[truckType] ?? truckType.replace(/_/g, ' '))}
-            </Button>
-          }
-        >
-          {TRUCK_TYPES.map((item) => (
-            <Menu.Item
-              key={item}
-              onPress={() => {
-                setTruckType(item);
-                setFilterMenuVisible(false);
-              }}
-              title={item === 'all' ? t('allTrucks') : (TRUCK_TYPE_LABELS[language]?.[item] ?? item.replace(/_/g, ' '))}
-              titleStyle={truckType === item ? { color: '#f97316', fontWeight: '700' } : undefined}
-            />
-          ))}
-        </Menu>
+      <View className="mb-4 flex-row items-center rounded-xl border border-slate-300 bg-white">
+        {renderPoint(
+          'loading',
+          loadingLocation,
+          () => setLoadingLocation(null),
+          'map-marker-outline',
+          '#16a34a',
+          t('loadingPoint')
+        )}
+        <Icon source="arrow-right" size={16} color="#f97316" />
+        {renderPoint(
+          'unloading',
+          unloadingLocation,
+          () => setUnloadingLocation(null),
+          'map-marker-check-outline',
+          '#dc2626',
+          t('unloadingPoint')
+        )}
       </View>
 
       {isLoading ? (
@@ -151,10 +126,13 @@ export default function FindLoadsScreen() {
       )}
 
       <LocationPickerModal
-        visible={locationPickerVisible}
-        initialValues={locations}
-        onApply={setLocations}
-        onClose={() => setLocationPickerVisible(false)}
+        visible={pickerTarget !== null}
+        title={pickerTarget === 'unloading' ? t('selectUnloadingPoint') : t('selectLoadingPoint')}
+        initialValue={pickerTarget === 'unloading' ? unloadingLocation : loadingLocation}
+        onApply={(value) =>
+          (pickerTarget === 'unloading' ? setUnloadingLocation : setLoadingLocation)(value)
+        }
+        onClose={() => setPickerTarget(null)}
         t={t}
       />
     </View>
