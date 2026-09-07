@@ -11,27 +11,23 @@ const PINCODE_LOOKUP_DEBOUNCE_MS = 400;
 // short query ("a", "ka") is just scroll, and FlatList stays cheap either way.
 const MAX_CITY_SUGGESTIONS = 40;
 
-// Full-screen "select locations" step for FindLoadsScreen's location filter —
-// tapping the search-by-pincode-or-city field opens this instead of typing
-// straight into it. Supports picking several cities/pincodes at once (the
-// backend ORs every pick together — see routes/loads.js), plus a distinct
-// pincode row (with a live city/state lookup) when the typed query is
-// numeric, instead of lumping it in with the generic free-text search.
-export default function LocationPickerModal({ visible, initialValues, onApply, onClose, t }) {
+// Full-screen "select a location" step for FindLoadsScreen's pickup and drop
+// filters — tapping either the loading-point or the unloading-point field
+// opens this instead of typing straight into it. Single pick: choosing a
+// city/pincode applies it and closes immediately; "All Locations" clears the
+// side. A numeric query gets a distinct pincode row (with a live city/state
+// lookup) instead of being lumped in with the generic free-text search.
+export default function LocationPickerModal({ visible, initialValue, onApply, onClose, t, title }) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState([]);
   const [pincodeInfo, setPincodeInfo] = useState(null);
   const [pincodeLoading, setPincodeLoading] = useState(false);
 
-  // Re-seed picks from whatever's already applied each time this opens, and
-  // start with a blank search box — nothing to prefill a multi-select with.
+  // Start every open with a blank search box — the applied value is shown on
+  // the field behind this modal, not prefilled into the search.
   useEffect(() => {
-    if (visible) {
-      setSelected(initialValues || []);
-      setQuery('');
-    }
-  }, [visible, initialValues]);
+    if (visible) setQuery('');
+  }, [visible]);
 
   const trimmedQuery = query.trim();
   const isNumericQuery = /^\d+$/.test(trimmedQuery);
@@ -85,51 +81,20 @@ export default function LocationPickerModal({ visible, initialValues, onApply, o
     [filteredCities, trimmedQuery]
   );
 
-  const toggle = (value) => {
-    setSelected((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
-  };
-
-  const addFromSearch = (value) => {
-    toggle(value);
-    setQuery('');
-  };
-
-  const apply = (values) => {
-    onApply(values);
+  const apply = (value) => {
+    onApply(value);
     onClose();
   };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View className="flex-1 bg-white" style={{ paddingTop: insets.top }}>
-        <View className="flex-row items-center justify-between border-b border-slate-200 px-4 py-3">
-          <View className="flex-row items-center gap-2">
-            <TouchableOpacity onPress={onClose} hitSlop={8}>
-              <Icon source="arrow-left" size={22} color="#334155" />
-            </TouchableOpacity>
-            <Text className="text-base font-bold text-slate-900">{t('selectLocation')}</Text>
-          </View>
-          <TouchableOpacity onPress={() => apply(selected)} hitSlop={8}>
-            <Text className="text-sm font-bold text-brand">
-              {t('done')}{selected.length ? ` (${selected.length})` : ''}
-            </Text>
+        <View className="flex-row items-center gap-2 border-b border-slate-200 px-4 py-3">
+          <TouchableOpacity onPress={onClose} hitSlop={8}>
+            <Icon source="arrow-left" size={22} color="#334155" />
           </TouchableOpacity>
+          <Text className="text-base font-bold text-slate-900">{title || t('selectLocation')}</Text>
         </View>
-
-        {selected.length > 0 && (
-          <View className="flex-row flex-wrap gap-2 px-4 pt-3">
-            {selected.map((value) => (
-              <TouchableOpacity
-                key={value}
-                className="flex-row items-center gap-1 rounded-full bg-brand px-3 py-1.5"
-                onPress={() => toggle(value)}
-              >
-                <Text className="text-xs font-semibold text-white">{value}</Text>
-                <Icon source="close" size={14} color="#fff" />
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
 
         <View className="px-4 pt-3">
           <TextInput
@@ -155,7 +120,7 @@ export default function LocationPickerModal({ visible, initialValues, onApply, o
             <>
               <TouchableOpacity
                 className="mb-3 flex-row items-center gap-2 rounded-xl bg-slate-100 px-4 py-3"
-                onPress={() => apply([])}
+                onPress={() => apply(null)}
               >
                 <Icon source="map-marker-radius-outline" size={18} color="#f97316" />
                 <Text className="font-semibold text-slate-700">{t('allLocations')}</Text>
@@ -163,16 +128,10 @@ export default function LocationPickerModal({ visible, initialValues, onApply, o
 
               {!!trimmedQuery && isNumericQuery && (
                 <TouchableOpacity
-                  className={`mb-4 flex-row items-center gap-2 rounded-xl border px-4 py-3 ${
-                    selected.includes(trimmedQuery) ? 'border-brand bg-orange-100' : 'border-brand bg-orange-50'
-                  }`}
-                  onPress={() => addFromSearch(trimmedQuery)}
+                  className="mb-4 flex-row items-center gap-2 rounded-xl border border-brand bg-orange-50 px-4 py-3"
+                  onPress={() => apply(trimmedQuery)}
                 >
-                  <Icon
-                    source={selected.includes(trimmedQuery) ? 'check-circle' : 'map-marker-outline'}
-                    size={18}
-                    color="#f97316"
-                  />
+                  <Icon source="map-marker-outline" size={18} color="#f97316" />
                   <View className="flex-1">
                     <Text className="font-semibold text-brand">{trimmedQuery}</Text>
                     {pincodeLoading && (
@@ -188,12 +147,10 @@ export default function LocationPickerModal({ visible, initialValues, onApply, o
 
               {!!trimmedQuery && !isNumericQuery && !hasExactCityMatch && (
                 <TouchableOpacity
-                  className={`mb-4 flex-row items-center gap-2 rounded-xl border px-4 py-3 ${
-                    selected.includes(trimmedQuery) ? 'border-brand bg-orange-100' : 'border-brand bg-orange-50'
-                  }`}
-                  onPress={() => addFromSearch(trimmedQuery)}
+                  className="mb-4 flex-row items-center gap-2 rounded-xl border border-brand bg-orange-50 px-4 py-3"
+                  onPress={() => apply(trimmedQuery)}
                 >
-                  <Icon source={selected.includes(trimmedQuery) ? 'check-circle' : 'magnify'} size={18} color="#f97316" />
+                  <Icon source="magnify" size={18} color="#f97316" />
                   <Text className="flex-1 font-semibold text-brand" numberOfLines={1}>
                     {t('useThisSearch')} "{trimmedQuery}"
                   </Text>
@@ -210,13 +167,13 @@ export default function LocationPickerModal({ visible, initialValues, onApply, o
           numColumns={2}
           columnWrapperStyle={{ gap: 10 }}
           renderItem={({ item: city }) => {
-            const isSelected = selected.includes(city);
+            const isSelected = initialValue === city;
             return (
               <TouchableOpacity
                 className={`mb-3 flex-1 flex-row items-center gap-2 rounded-xl border px-4 py-3 ${
                   isSelected ? 'border-brand bg-orange-50' : 'border-slate-200'
                 }`}
-                onPress={() => toggle(city)}
+                onPress={() => apply(city)}
               >
                 <Icon
                   source={isSelected ? 'check-circle' : 'city-variant-outline'}

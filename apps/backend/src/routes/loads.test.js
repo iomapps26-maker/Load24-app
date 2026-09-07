@@ -291,4 +291,38 @@ describe('GET /api/loads location filter', () => {
     expect(res.status).toBe(200);
     expect(calls.or).toEqual([]);
   });
+
+  it('matches loading_location against the pickup fields only', async () => {
+    const { calls, supabase } = mockListSupabase();
+    const res = await request(buildApp(supabase)).get('/api/loads?loading_location=Delhi');
+    expect(res.status).toBe(200);
+    expect(calls.or).toEqual(['loading_pincode.ilike.%Delhi%,loading_city.ilike.%Delhi%']);
+  });
+
+  it('matches unloading_location against the drop fields only', async () => {
+    const { calls, supabase } = mockListSupabase();
+    const res = await request(buildApp(supabase)).get('/api/loads?unloading_location=Mumbai');
+    expect(res.status).toBe(200);
+    expect(calls.or).toEqual(['unloading_pincode.ilike.%Mumbai%,unloading_city.ilike.%Mumbai%']);
+  });
+
+  it('ANDs the pickup and drop filters into two separate OR groups', async () => {
+    const { calls, supabase } = mockListSupabase();
+    const res = await request(buildApp(supabase))
+      .get('/api/loads?loading_location=Delhi&unloading_location=Mumbai');
+    expect(res.status).toBe(200);
+    // Two .or() calls — PostgREST ANDs them, so only Delhi -> Mumbai loads match.
+    expect(calls.or).toEqual([
+      'loading_pincode.ilike.%Delhi%,loading_city.ilike.%Delhi%',
+      'unloading_pincode.ilike.%Mumbai%,unloading_city.ilike.%Mumbai%'
+    ]);
+  });
+
+  it('strips or() syntax characters from the route-aware picks too', async () => {
+    const { calls, supabase } = mockListSupabase();
+    const res = await request(buildApp(supabase))
+      .get(`/api/loads?loading_location=${encodeURIComponent('Delhi,(x)')}`);
+    expect(res.status).toBe(200);
+    expect(calls.or).toEqual(['loading_pincode.ilike.%Delhix%,loading_city.ilike.%Delhix%']);
+  });
 });
