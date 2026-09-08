@@ -323,6 +323,17 @@ export default function PostLoadScreen() {
         <Field label={t('specialDemandComment')} value={form.special_demand_comment} onChangeText={set('special_demand_comment')} placeholder={t('phSpecialDemandComment')} />
         <Field label={t('customRequirement')} value={form.custom_requirement} onChangeText={set('custom_requirement')} placeholder={t('phCustomRequirement')} />
 
+        {/* Advance payment — fixed platform policy shown to the poster for
+            information only. Not editable and never submitted with the load. */}
+        <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">{t('advancePayment')}</Text>
+        <Field
+          label={t('advancePaymentTerms')}
+          value={t('advancePaymentInfo')}
+          editable={false}
+          multiline
+          right={<TextInput.Icon icon="lock" forceTextInputFocus={false} />}
+        />
+
         <HelperText type="error" visible={!!error}>{error}</HelperText>
 
         <ConfirmDetailsCheckbox checked={confirmed} onChange={setConfirmed} t={t} />

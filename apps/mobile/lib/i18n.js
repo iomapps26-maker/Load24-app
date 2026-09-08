@@ -44,6 +44,10 @@ const translations = {
     lookingUpPincode: 'Looking up pincode…',
     noCitiesFound: 'No matching cities',
     noActiveLoads: 'No active loads right now',
+    loadsForMyVehicle: 'Loads for my vehicle',
+    showAllLoads: 'Show all',
+    showingLoadsForVehicle: 'Showing loads this vehicle can carry',
+    noLoadsForVehicle: 'No loads match this vehicle right now',
     from: 'From',
     to: 'To',
     material: 'Material',
@@ -543,6 +547,11 @@ const translations = {
     phSpecialDemandComment: 'Any additional handling instructions',
     phCustomRequirement: 'Anything else the transporter should know',
 
+    // Advance payment (display-only, fixed platform policy)
+    advancePayment: 'Advance Payment',
+    advancePaymentTerms: 'Payment terms',
+    advancePaymentInfo: '90% advance payment on E-Way Bill verification',
+
     // Post Truck availability form
     postTruckAvailability: 'Post Truck Availability',
     postAvailability: 'Post Availability',
@@ -623,6 +632,10 @@ const translations = {
     lookingUpPincode: 'पिनकोड खोजा जा रहा है…',
     noCitiesFound: 'कोई मेल खाता शहर नहीं मिला',
     noActiveLoads: 'अभी कोई सक्रिय लोड नहीं है',
+    loadsForMyVehicle: 'मेरी गाड़ी के लिए लोड',
+    showAllLoads: 'सभी दिखाएं',
+    showingLoadsForVehicle: 'इस गाड़ी के लिए उपयुक्त लोड दिखाए जा रहे हैं',
+    noLoadsForVehicle: 'अभी इस गाड़ी से मेल खाता कोई लोड नहीं',
     from: 'से',
     to: 'तक',
     material: 'माल',
@@ -1117,6 +1130,11 @@ const translations = {
     phSpecifySpecialCondition: 'जैसे जीवित पशु',
     phSpecialDemandComment: 'कोई अतिरिक्त हैंडलिंग निर्देश',
     phCustomRequirement: 'ट्रांसपोर्टर को और क्या जानना चाहिए',
+
+    // Advance payment (display-only, fixed platform policy)
+    advancePayment: 'अग्रिम भुगतान',
+    advancePaymentTerms: 'भुगतान शर्तें',
+    advancePaymentInfo: 'ई-वे बिल सत्यापन पर 90% अग्रिम भुगतान',
 
     // Post Truck availability form
     postTruckAvailability: 'गाड़ी की उपलब्धता पोस्ट करें',
