@@ -71,6 +71,7 @@ const translations = {
     bidAmountLabel: 'Bid amount',
     load24ChargeLabel: 'Load24 charge',
     youReceiveLabel: 'You receive',
+    podPaymentNote: '90% payment on POD verification',
     securityDepositLabel: 'Security deposit',
     securityDepositHeldNote: 'Moved to a wallet hold when you place this bid — released back to your wallet if the bid is declined or once the loading is done.',
     securityDepositRequired: 'Add money to your wallet to meet the security deposit before bidding.',
