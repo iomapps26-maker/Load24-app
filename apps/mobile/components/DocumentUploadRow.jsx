@@ -73,13 +73,19 @@ export default function DocumentUploadRow({ bucket, documentType, label, icon, u
     try {
       const { storage_path, token } = await getUploadUrl(documentType, file.name);
       await uploadToSignedUrl(bucket, storage_path, token, file);
-      await confirmUpload({
-        document_type: documentType,
-        storage_path,
-        file_name: file.name,
-        mime_type: file.type
-      });
-      onUploaded();
+      // `confirmUpload` is optional: a caller rendering this inside a
+      // not-yet-saved form (e.g. Bank Details) only wants the file in storage
+      // now and records the path itself when the parent row is saved — it
+      // reads `storage_path` off the onUploaded argument.
+      if (confirmUpload) {
+        await confirmUpload({
+          document_type: documentType,
+          storage_path,
+          file_name: file.name,
+          mime_type: file.type
+        });
+      }
+      onUploaded?.({ storage_path, file_name: file.name, mime_type: file.type });
     } catch (err) {
       Alert.alert(t('uploadFailed'), err.message);
     } finally {

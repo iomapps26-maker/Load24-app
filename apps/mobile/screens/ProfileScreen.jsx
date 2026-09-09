@@ -77,7 +77,11 @@ function BankDetailsCard({ t }) {
     ifsc_code: '',
     bank_name: '',
     bank_branch: '',
-    account_type: 'savings'
+    account_type: 'savings',
+    // Storage path of the cancelled-cheque / passbook image. Uploaded to the
+    // bucket while the form is open (DocumentUploadRow with no confirmUpload),
+    // then recorded against the row by saveBank once the row exists.
+    proof_path: ''
   });
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
@@ -91,7 +95,8 @@ function BankDetailsCard({ t }) {
       ifsc_code: bank?.ifsc_code ?? '',
       bank_name: bank?.bank_name ?? '',
       bank_branch: bank?.bank_branch ?? '',
-      account_type: bank?.account_type ?? 'savings'
+      account_type: bank?.account_type ?? 'savings',
+      proof_path: bank?.proof_path ?? ''
     });
     setError('');
     setConfirmed(false);
@@ -99,7 +104,15 @@ function BankDetailsCard({ t }) {
   };
 
   const saveBank = useMutation({
-    mutationFn: () => api.bankDetails.save(form),
+    mutationFn: async () => {
+      await api.bankDetails.save(form);
+      // The cancelled cheque was uploaded to storage while the form was open;
+      // now that the row exists, record its path against it. Skipped when the
+      // user kept the existing cheque (save already reset review to pending).
+      if (form.proof_path && form.proof_path !== (bank?.proof_path ?? '')) {
+        await api.bankDetails.confirmProof({ storage_path: form.proof_path });
+      }
+    },
     onSuccess: () => {
       refreshBank();
       setEditing(false);
@@ -115,6 +128,7 @@ function BankDetailsCard({ t }) {
     if (!form.account_number.trim()) errors.push(t('accountNumber'));
     if (!form.ifsc_code.trim()) errors.push(t('ifscCode'));
     if (!form.bank_name.trim()) errors.push(t('bank'));
+    if (!form.proof_path) errors.push(t('cancelledCheque'));
     return errors;
   };
 
@@ -192,6 +206,21 @@ function BankDetailsCard({ t }) {
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Cancelled cheque / passbook — required. Uploaded to storage now;
+              its path is persisted by saveBank once the row exists. An
+              existing proof (editing a saved account) satisfies the check. */}
+          <Text className="mb-1 text-xs text-slate-400">{t('cancelledCheque')}</Text>
+          <DocumentUploadRow
+            bucket={BANK_PROOF_BUCKET}
+            documentType="bank_proof"
+            label={t('cancelledCheque')}
+            icon="file-document-outline"
+            uploadedDoc={form.proof_path ? { storage_path: form.proof_path } : null}
+            getUploadUrl={api.bankDetails.proofUploadUrl}
+            onUploaded={({ storage_path }) => setForm((f) => ({ ...f, proof_path: storage_path }))}
+          />
+          <Text className="mb-3 text-xs text-slate-400">{t('cancelledChequeRequiredHint')}</Text>
 
           {!!error && <Text className="mb-3 text-xs text-red-600">{error}</Text>}
 
@@ -274,7 +303,7 @@ function BankDetailsCard({ t }) {
             <DocumentUploadRow
               bucket={BANK_PROOF_BUCKET}
               documentType="bank_proof"
-              label={t('docBankProof')}
+              label={t('cancelledCheque')}
               icon="file-document-outline"
               uploadedDoc={bank.proof_path ? { storage_path: bank.proof_path } : null}
               getUploadUrl={api.bankDetails.proofUploadUrl}

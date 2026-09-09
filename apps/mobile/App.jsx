@@ -12,6 +12,7 @@ import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-q
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { LanguageProvider, useLanguage } from './lib/i18n';
 import { queryClient } from './lib/queryClient';
+import './lib/reactQueryFocus';
 import { api } from './lib/api';
 import { navigationRef, navigate } from './lib/navigationRef';
 import { consumePostLoginIntent } from './lib/postLoginIntent';
@@ -343,7 +344,18 @@ export default function App() {
           <LanguageProvider>
             <AuthProvider>
               <PaperProvider theme={paperTheme} settings={{ icon: (props) => <Icon {...props} /> }}>
-                <NavigationContainer ref={navigationRef}>
+                <NavigationContainer
+                  ref={navigationRef}
+                  onStateChange={() => {
+                    // Every screen change (tab switch, push, pop) counts as a
+                    // refresh trigger: refetch every on-screen query that's
+                    // gone stale (older than staleTime) so you always land on
+                    // server data, not a cache from a minute ago. Fresh
+                    // queries and background screens are left alone so
+                    // navigation stays snappy.
+                    queryClient.refetchQueries({ type: 'active', stale: true }).catch(() => {});
+                  }}
+                >
                   <AuthGate />
                 </NavigationContainer>
               </PaperProvider>

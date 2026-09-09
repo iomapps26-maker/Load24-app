@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { View, Text, Image, ScrollView, Modal, Alert, Share, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, Text, Image, ScrollView, Modal, Alert, Share, ActivityIndicator, TouchableOpacity, RefreshControl } from 'react-native';
 import { Icon, TextInput, Button, Chip } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -122,6 +122,55 @@ function TopupRequestRow({ topup, t, onProofUploaded }) {
           />
         </View>
       )}
+    </View>
+  );
+}
+
+// A withdrawal request in the list above Transaction History. Staff move it
+// pending -> approved -> paid (or rejected) server-side; once paid it carries
+// the payout date, the optional bank reference / UTR, and a short-lived signed
+// URL for the payment-proof screenshot staff attached (tap to view full size).
+function WithdrawalRow({ withdrawal: wr, t, onViewProof }) {
+  const style = WITHDRAWAL_STATUS_STYLE[wr.status] ?? WITHDRAWAL_STATUS_STYLE.pending;
+  const last4 = String(wr.bank_account_number || '').slice(-4);
+
+  return (
+    <View className="mb-3 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+      <View className="flex-row items-center justify-between">
+        <View className="mr-3 flex-1 flex-row items-center">
+          <Icon source="bank-transfer-out" size={22} color="#94a3b8" />
+          <View className="ml-3 flex-1">
+            <Text className="text-sm font-semibold text-slate-800">
+              {wr.bank_name || t('bank')}{last4 ? ` ••${last4}` : ''}
+            </Text>
+            <Text className="text-xs text-slate-400">
+              {t('withdrawalRequestedOn')} {new Date(wr.created_at).toLocaleDateString()}
+              {wr.status === 'paid' && wr.paid_at
+                ? ` · ${t('withdrawalPaidOn')} ${new Date(wr.paid_at).toLocaleDateString()}`
+                : ''}
+            </Text>
+            {!!wr.payment_reference && (
+              <Text className="text-xs text-slate-400">{t('withdrawalReference')}: {wr.payment_reference}</Text>
+            )}
+          </View>
+        </View>
+        <Text className="text-base font-bold text-slate-500">-₹{Number(wr.amount).toLocaleString('en-IN')}</Text>
+      </View>
+
+      <View className="mt-2 flex-row items-center justify-between">
+        <View className={`rounded-full px-3 py-1 ${style.bg}`}>
+          <Text className={`text-xs font-semibold ${style.text}`}>{t(style.key)}</Text>
+        </View>
+        {wr.status === 'rejected' && !!wr.rejection_reason && (
+          <Text className="ml-2 flex-1 text-right text-xs text-red-600">{wr.rejection_reason}</Text>
+        )}
+        {wr.status === 'paid' && !!wr.payment_proof_url && (
+          <TouchableOpacity className="flex-row items-center" onPress={() => onViewProof(wr.payment_proof_url)} hitSlop={8}>
+            <Icon source="receipt-text-outline" size={14} color="#f97316" />
+            <Text className="ml-1 text-xs font-semibold text-brand">{t('viewPaymentProof')}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 }
@@ -268,23 +317,66 @@ export default function WalletScreen() {
   const { t } = useLanguage();
   const queryClient = useQueryClient();
 
+  // A top-up is only credited once staff verify the payment screenshot, and
+  // a withdrawal only clears once staff mark it paid — both happen server-side
+  // with no push to the app. While something is still in that pending state,
+  // poll every 15s so the balance and status flip on their own instead of the
+  // user having to leave and come back. Nothing pending -> no polling.
+  const { data: topupRequests = [] } = useQuery({
+    queryKey: ['walletTopupRequests'],
+    queryFn: api.wallet.topupRequests.mine,
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((r) => r.status === 'awaiting_payment' || r.status === 'pending_verification')
+        ? 15_000
+        : false
+  });
+  const { data: withdrawals = [] } = useQuery({
+    queryKey: ['walletWithdrawals'],
+    queryFn: api.wallet.withdrawalsMine,
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((w) => w.status === 'pending' || w.status === 'approved') ? 15_000 : false
+  });
+  const awaitingSettlement =
+    topupRequests.some((r) => r.status === 'awaiting_payment' || r.status === 'pending_verification') ||
+    withdrawals.some((w) => w.status === 'pending' || w.status === 'approved');
+
   const { data: wallet, isLoading: isLoadingWallet, error: walletError, refetch: refetchWallet } = useQuery({
     queryKey: ['wallet'],
-    queryFn: api.wallet.balance
+    queryFn: api.wallet.balance,
+    refetchInterval: awaitingSettlement ? 15_000 : false
   });
-  const { data: transactions = [] } = useQuery({ queryKey: ['walletTransactions'], queryFn: () => api.wallet.transactions() });
-  const { data: withdrawals = [] } = useQuery({ queryKey: ['walletWithdrawals'], queryFn: api.wallet.withdrawalsMine });
-  const { data: topupRequests = [] } = useQuery({ queryKey: ['walletTopupRequests'], queryFn: api.wallet.topupRequests.mine });
+  const { data: transactions = [] } = useQuery({
+    queryKey: ['walletTransactions'],
+    queryFn: () => api.wallet.transactions(),
+    refetchInterval: awaitingSettlement ? 15_000 : false
+  });
 
   const [addBalanceVisible, setAddBalanceVisible] = useState(false);
   const [withdrawVisible, setWithdrawVisible] = useState(false);
   const [qrModal, setQrModal] = useState(null); // 'iom' | 'vivek' | null
+  const [proofUrl, setProofUrl] = useState(null); // payment-proof screenshot being viewed full-screen
 
   const refreshWallet = () => {
     queryClient.invalidateQueries({ queryKey: ['wallet'] });
     queryClient.invalidateQueries({ queryKey: ['walletTransactions'] });
     queryClient.invalidateQueries({ queryKey: ['walletWithdrawals'] });
     queryClient.invalidateQueries({ queryKey: ['walletTopupRequests'] });
+  };
+
+  // Pull-to-refresh: a manual way to pull the latest balance / verification
+  // status without waiting on the 15s poll.
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const handlePullRefresh = async () => {
+    setIsManualRefreshing(true);
+    try {
+      await Promise.all(
+        ['wallet', 'walletTransactions', 'walletWithdrawals', 'walletTopupRequests'].map((key) =>
+          queryClient.refetchQueries({ queryKey: [key] })
+        )
+      );
+    } finally {
+      setIsManualRefreshing(false);
+    }
   };
 
   // History merges the real ledger (transactions) with not-yet-verified
@@ -351,7 +443,13 @@ export default function WalletScreen() {
   }
 
   return (
-    <ScrollView className="flex-1 bg-slate-50" contentContainerStyle={{ padding: 16 }}>
+    <ScrollView
+      className="flex-1 bg-slate-50"
+      contentContainerStyle={{ padding: 16 }}
+      refreshControl={
+        <RefreshControl refreshing={isManualRefreshing} onRefresh={handlePullRefresh} tintColor="#f97316" colors={['#f97316']} />
+      }
+    >
       <View className="mb-4 rounded-2xl bg-navy p-5">
         <Text className="text-sm text-slate-300">{t('walletBalance')}</Text>
         <Text className="mt-1 text-3xl font-bold text-white">₹{Number(wallet?.balance ?? 0).toLocaleString('en-IN')}</Text>
@@ -482,17 +580,9 @@ export default function WalletScreen() {
 
       {withdrawals.length > 0 && (
         <View className="mb-4">
-          {withdrawals.map((wr) => {
-            const style = WITHDRAWAL_STATUS_STYLE[wr.status] ?? WITHDRAWAL_STATUS_STYLE.pending;
-            return (
-              <View key={wr.id} className="mb-2 flex-row items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                <Text className="text-sm font-semibold text-slate-800">₹{Number(wr.amount).toLocaleString('en-IN')}</Text>
-                <View className={`rounded-full px-3 py-1 ${style.bg}`}>
-                  <Text className={`text-xs font-semibold ${style.text}`}>{t(style.key)}</Text>
-                </View>
-              </View>
-            );
-          })}
+          {withdrawals.map((wr) => (
+            <WithdrawalRow key={wr.id} withdrawal={wr} t={t} onViewProof={setProofUrl} />
+          ))}
         </View>
       )}
 
@@ -554,6 +644,22 @@ export default function WalletScreen() {
         upiId={VIVEK_UPI_PAYEE.pa}
         t={t}
       />
+
+      {/* Full-screen view of the payment-proof screenshot staff attached to a
+          paid withdrawal. Tap anywhere to dismiss. */}
+      <Modal visible={!!proofUrl} transparent animationType="fade" onRequestClose={() => setProofUrl(null)}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setProofUrl(null)}
+          className="flex-1 items-center justify-center bg-black/90 p-4"
+        >
+          <Text className="mb-3 text-sm font-semibold text-white">{t('paymentProof')}</Text>
+          {!!proofUrl && (
+            <Image source={{ uri: proofUrl }} style={{ width: '100%', height: '78%' }} resizeMode="contain" />
+          )}
+          <Text className="mt-4 text-xs text-slate-300">{t('close')}</Text>
+        </TouchableOpacity>
+      </Modal>
     </ScrollView>
   );
 }
