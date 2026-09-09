@@ -21,6 +21,21 @@ const TOPUP_REASON_CATEGORIES = ['security_fee', 'service_charge', 'load_payment
 const TOPUP_BUCKET = 'wallet-payment-proofs';
 const TOPUP_PROOF_VIEW_URL_TTL_SECONDS = 300; // same TTL as kyc.js's DOC_VIEW_URL_TTL_SECONDS
 
+// Payment-proof screenshot staff attach when marking a withdrawal paid — the
+// bank/UPI transfer receipt, shown back to the requesting user in the app.
+// Private bucket, staff-only writes, ~5 min signed view URLs (migration 060).
+const WITHDRAWAL_PROOF_BUCKET = 'withdrawal-payment-proofs';
+const WITHDRAWAL_PROOF_VIEW_URL_TTL_SECONDS = 300;
+const WITHDRAWAL_PROOF_REFERENCE_MAX = 64;
+
+async function signedWithdrawalProofUrl(proofPath) {
+  if (!proofPath) return null;
+  const { data } = await supabaseAdmin.storage
+    .from(WITHDRAWAL_PROOF_BUCKET)
+    .createSignedUrl(proofPath, WITHDRAWAL_PROOF_VIEW_URL_TTL_SECONDS);
+  return data?.signedUrl ?? null;
+}
+
 const router = Router();
 
 // GET /api/wallet — balance, what's actually spendable right now (balance
@@ -194,7 +209,9 @@ router.post('/topup-requests/:id/proof', async (req, res) => {
   res.status(200).json(data);
 });
 
-// GET /api/wallet/withdrawals/mine — the caller's own withdrawal requests.
+// GET /api/wallet/withdrawals/mine — the caller's own withdrawal requests,
+// each with a fresh short-lived signed URL for the staff-uploaded payment
+// proof (null until it's been paid with one attached).
 router.get('/withdrawals/mine', async (req, res) => {
   // Optional paging with a high default cap — bounded response, no change for
   // the mobile app (which sends no params).
@@ -208,7 +225,11 @@ router.get('/withdrawals/mine', async (req, res) => {
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
-  res.json(data);
+
+  const withUrls = await Promise.all(
+    (data || []).map(async (w) => ({ ...w, payment_proof_url: await signedWithdrawalProofUrl(w.payment_proof_path) }))
+  );
+  res.json(withUrls);
 });
 
 // POST /api/wallet/withdraw { amount } — snapshots the caller's saved bank
@@ -263,12 +284,15 @@ router.post('/withdraw', async (req, res) => {
 
 // -- Staff-only review endpoints -------------------------------------------
 
-// GET /api/wallet/withdrawals/pending — queue for staff review.
+// GET /api/wallet/withdrawals/pending — queue for staff review. Returns both
+// 'pending' (needs approve/reject) and 'approved' (needs a payout + proof)
+// so an approved request stays on the queue across a page reload, not just
+// for the session that approved it.
 router.get('/withdrawals/pending', requireRole(STAFF_ROLES), async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from('withdrawal_requests')
     .select('*')
-    .eq('status', 'pending')
+    .in('status', ['pending', 'approved'])
     .order('created_at', { ascending: true });
   if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
   res.json(data);
@@ -322,11 +346,48 @@ router.post('/withdrawals/:id/reject', requireRole(STAFF_ROLES), async (req, res
   res.json(data);
 });
 
-// POST /api/wallet/withdrawals/:id/pay — staff confirms the payout actually
-// left the bank; this is the only step that debits the wallet (via the
-// wallet_transactions insert below, applied by the DB trigger), keeping the
-// balance truthful to real money movement rather than a request being made.
+// POST /api/wallet/withdrawals/:id/pay/upload-url { file_name } — mints a
+// signed Supabase Storage upload URL for the payment-proof screenshot, same
+// shape as topup-requests/:id/proof/upload-url. One screenshot per request at
+// a deterministic path; a re-upload (while still approved) overwrites it. The
+// admin portal PUTs the file to this URL, then calls /pay with the path.
+router.post('/withdrawals/:id/pay/upload-url', requireRole(STAFF_ROLES), async (req, res) => {
+  const { file_name } = req.body;
+
+  const { data: wr, error: fetchError } = await supabaseAdmin
+    .from('withdrawal_requests')
+    .select('id, user_id, status')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (fetchError) return dbError(res, fetchError, 'Could not load that record', { log: LOG });
+  if (!wr) return res.status(404).json({ error: 'Withdrawal request not found' });
+  if (wr.status !== 'approved') {
+    return res.status(409).json({ error: 'Request must be approved before it can be paid' });
+  }
+
+  const ext = file_name && file_name.includes('.') ? file_name.split('.').pop().toLowerCase() : 'jpg';
+  const storage_path = `${wr.user_id}/${wr.id}.${ext}`;
+
+  await supabaseAdmin.storage.from(WITHDRAWAL_PROOF_BUCKET).remove([storage_path]);
+  const { data, error } = await supabaseAdmin.storage.from(WITHDRAWAL_PROOF_BUCKET).createSignedUploadUrl(storage_path);
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
+
+  res.status(200).json({ bucket: WITHDRAWAL_PROOF_BUCKET, storage_path, signed_url: data.signedUrl, token: data.token });
+});
+
+// POST /api/wallet/withdrawals/:id/pay { storage_path, reference? } — staff
+// confirms the payout actually left the bank, attaching the proof screenshot
+// already uploaded via the signed URL above (reference is the optional bank
+// reference / UTR number). This is the only step that debits the wallet (via
+// the wallet_transactions insert below, applied by the DB trigger), keeping
+// the balance truthful to real money movement rather than a request being made.
 router.post('/withdrawals/:id/pay', requireRole(STAFF_ROLES), async (req, res) => {
+  const storage_path = typeof req.body.storage_path === 'string' ? req.body.storage_path.trim() : '';
+  const reference = typeof req.body.reference === 'string'
+    ? req.body.reference.trim().slice(0, WITHDRAWAL_PROOF_REFERENCE_MAX)
+    : '';
+  if (!storage_path) return res.status(400).json({ error: 'Payment proof screenshot is required' });
+
   const { data: wr, error: fetchError } = await supabaseAdmin
     .from('withdrawal_requests')
     .select('*')
@@ -335,6 +396,12 @@ router.post('/withdrawals/:id/pay', requireRole(STAFF_ROLES), async (req, res) =
     .maybeSingle();
   if (fetchError) return dbError(res, fetchError, 'Could not load that record', { log: LOG });
   if (!wr) return res.status(400).json({ error: 'Request must be approved before it can be paid' });
+
+  // The upload-url route only ever hands out `${user_id}/${id}.${ext}` — reject
+  // anything else so a caller can't point the row at someone else's object.
+  if (!storage_path.startsWith(`${wr.user_id}/${wr.id}.`)) {
+    return res.status(400).json({ error: 'storage_path does not match this withdrawal request' });
+  }
 
   const transaction_id = generateTransactionId();
   const { data: tx, error: txError } = await supabaseAdmin
@@ -354,11 +421,20 @@ router.post('/withdrawals/:id/pay', requireRole(STAFF_ROLES), async (req, res) =
 
   const { data: paid, error: payError } = await supabaseAdmin
     .from('withdrawal_requests')
-    .update({ status: 'paid', wallet_transaction_id: tx.id })
+    .update({
+      status: 'paid',
+      wallet_transaction_id: tx.id,
+      payment_proof_path: storage_path,
+      payment_reference: reference || null,
+      paid_at: new Date().toISOString(),
+      paid_by: req.user.id
+    })
     .eq('id', wr.id)
+    .eq('status', 'approved')
     .select()
-    .single();
+    .maybeSingle();
   if (payError) return dbError(res, payError, 'Could not mark the withdrawal paid', { log: LOG });
+  if (!paid) return res.status(409).json({ error: 'Withdrawal is no longer awaiting payment' });
 
   await notifyUser(paid.user_id, {
     type: 'withdrawal_paid',
@@ -367,7 +443,7 @@ router.post('/withdrawals/:id/pay', requireRole(STAFF_ROLES), async (req, res) =
     data: { withdrawal_id: paid.id }
   });
 
-  res.json(paid);
+  res.json({ ...paid, payment_proof_url: await signedWithdrawalProofUrl(paid.payment_proof_path) });
 });
 
 // POST /api/wallet/adjust — staff-applied ledger entries that have no

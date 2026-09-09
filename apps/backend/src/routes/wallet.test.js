@@ -21,7 +21,11 @@ function createStore() {
     bank_details: [],
     user_roles: [],
     user_profiles: [],
-    notifications: []
+    notifications: [],
+    // requireRole -> logAction writes here on every staff-gated mutation
+    // (approve / pay / pay upload-url / adjust); without the array the mocked
+    // insert's `store[table].length` throws and floods stderr.
+    audit_log: []
   };
 }
 
@@ -395,7 +399,18 @@ describe('Staff withdrawal review', () => {
     expect(res.status).toBe(403);
   });
 
-  it('approve -> pay debits the wallet exactly once', async () => {
+  it('lists both pending and approved requests on the queue', async () => {
+    store.withdrawal_requests.push(
+      { id: 'wr1', wallet_id: 'w1', user_id: 'user-1', amount: 100, status: 'pending' },
+      { id: 'wr2', wallet_id: 'w1', user_id: 'user-2', amount: 200, status: 'approved' },
+      { id: 'wr3', wallet_id: 'w1', user_id: 'user-3', amount: 300, status: 'paid' }
+    );
+    const res = await request(staffApp()).get('/api/wallet/withdrawals/pending');
+    expect(res.status).toBe(200);
+    expect(res.body.map((r) => r.id).sort()).toEqual(['wr1', 'wr2']);
+  });
+
+  it('approve -> pay debits the wallet exactly once and records the proof', async () => {
     store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 1000 });
     store.withdrawal_requests.push({
       id: 'wr1', wallet_id: 'w1', user_id: 'user-1', amount: 400, status: 'pending',
@@ -407,20 +422,70 @@ describe('Staff withdrawal review', () => {
     expect(approveRes.status).toBe(200);
     expect(approveRes.body.status).toBe('approved');
 
-    const payRes = await request(app).post('/api/wallet/withdrawals/wr1/pay');
+    const urlRes = await request(app).post('/api/wallet/withdrawals/wr1/pay/upload-url').send({ file_name: 'receipt.png' });
+    expect(urlRes.status).toBe(200);
+    expect(urlRes.body).toMatchObject({ bucket: 'withdrawal-payment-proofs', storage_path: 'user-1/wr1.png' });
+    expect(urlRes.body.token).toBeTruthy();
+
+    const payRes = await request(app)
+      .post('/api/wallet/withdrawals/wr1/pay')
+      .send({ storage_path: 'user-1/wr1.png', reference: 'AXISR52400913' });
     expect(payRes.status).toBe(200);
-    expect(payRes.body.status).toBe('paid');
+    expect(payRes.body).toMatchObject({
+      status: 'paid', payment_proof_path: 'user-1/wr1.png', payment_reference: 'AXISR52400913', paid_by: 'staff-1'
+    });
+    expect(payRes.body.paid_at).toBeTruthy();
+    expect(payRes.body.payment_proof_url).toContain('user-1/wr1.png');
     expect(store.wallets[0].balance).toBe(600);
     expect(store.wallet_transactions[0]).toMatchObject({ type: 'withdrawal', amount: 400, status: 'completed' });
+  });
+
+  it('pay refuses without a proof screenshot', async () => {
+    store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 1000 });
+    store.withdrawal_requests.push({ id: 'wr1', wallet_id: 'w1', user_id: 'user-1', amount: 400, status: 'approved' });
+
+    const res = await request(staffApp()).post('/api/wallet/withdrawals/wr1/pay').send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/proof/i);
+    expect(store.wallets[0].balance).toBe(1000);
+    expect(store.wallet_transactions).toHaveLength(0);
+  });
+
+  it('pay rejects a storage_path that does not belong to the request', async () => {
+    store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 1000 });
+    store.withdrawal_requests.push({ id: 'wr1', wallet_id: 'w1', user_id: 'user-1', amount: 400, status: 'approved' });
+
+    const res = await request(staffApp())
+      .post('/api/wallet/withdrawals/wr1/pay')
+      .send({ storage_path: 'someone-else/wr1.png' });
+    expect(res.status).toBe(400);
+    expect(store.wallet_transactions).toHaveLength(0);
+  });
+
+  it('cannot mint an upload URL for a request that is not approved', async () => {
+    store.withdrawal_requests.push({ id: 'wr1', wallet_id: 'w1', user_id: 'user-1', amount: 400, status: 'pending' });
+    const res = await request(staffApp()).post('/api/wallet/withdrawals/wr1/pay/upload-url').send({ file_name: 'x.png' });
+    expect(res.status).toBe(409);
   });
 
   it('cannot pay a request that is still pending (not yet approved)', async () => {
     store.wallets.push({ id: 'w1', user_id: 'user-1', balance: 1000 });
     store.withdrawal_requests.push({ id: 'wr1', wallet_id: 'w1', user_id: 'user-1', amount: 400, status: 'pending' });
 
-    const res = await request(staffApp()).post('/api/wallet/withdrawals/wr1/pay');
+    const res = await request(staffApp())
+      .post('/api/wallet/withdrawals/wr1/pay')
+      .send({ storage_path: 'user-1/wr1.png' });
     expect(res.status).toBe(400);
     expect(store.wallets[0].balance).toBe(1000);
+  });
+
+  it('surfaces the payment proof URL on GET /withdrawals/mine', async () => {
+    store.withdrawal_requests.push({
+      id: 'wr1', wallet_id: 'w1', user_id: 'user-1', amount: 400, status: 'paid', payment_proof_path: 'user-1/wr1.png'
+    });
+    const res = await request(buildApp('user-1')).get('/api/wallet/withdrawals/mine');
+    expect(res.status).toBe(200);
+    expect(res.body[0].payment_proof_url).toContain('user-1/wr1.png');
   });
 });
 
