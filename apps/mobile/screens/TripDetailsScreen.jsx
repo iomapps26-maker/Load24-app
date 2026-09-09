@@ -9,18 +9,26 @@ import { AXLE_LABELS, BODY_TYPE_LABELS, SPECIAL_CONDITION_LABELS } from '../lib/
 import LoadCard from '../components/LoadCard';
 import DocumentUploadRow from '../components/DocumentUploadRow';
 
-// The two paperwork slots either trip party can attach once a bid is approved
+// The paperwork slots either trip party can attach once a bid is approved
 // (backend: POST /api/load-bids/load/:id/documents — see routes/loadBids.js).
 const TRIP_DOC_TYPES = [
   // `numberField` adds the "E-Way Bill Number" input under the upload row
   // (POST /api/load-bids/load/:id/documents/number) — E-Way Bill only for now.
   { type: 'eway_bill', labelKey: 'ewayBill', icon: 'file-document-outline', numberField: true },
-  { type: 'bilty', labelKey: 'bilty', icon: 'clipboard-text-outline' }
+  { type: 'bilty', labelKey: 'bilty', icon: 'clipboard-text-outline' },
+  // `contactFields` adds the delivery person name + contact inputs under the
+  // upload row (POST /api/load-bids/load/:id/documents/delivery-contact).
+  { type: 'pod', labelKey: 'proofOfDelivery', icon: 'clipboard-check-outline', contactFields: true }
 ];
 
 // The 12-digit GST E-Way Bill number. '' is allowed through so a wrong number
 // can be cleared; the backend applies the same rule.
 const EWAY_BILL_NUMBER_RE = /^\d{12}$/;
+
+// A 10-digit Indian mobile number (they always start 6-9), for the delivery
+// person captured with the POD. '' is allowed through so a wrong number can be
+// cleared; the backend (normalizeIndianPhone) applies the same rule.
+const DELIVERY_CONTACT_RE = /^[6-9]\d{9}$/;
 
 // bookings.status (spec §8) -> i18n key for the label shown next to the ref.
 const BOOKING_STATUS_TKEY = {
@@ -125,15 +133,91 @@ function EwayBillNumberRow({ label, value, onSave, onSaved, t }) {
   );
 }
 
-// E-Way Bill + Bilty upload slots, shown to both trip parties. Each row is an
+// The delivery person's name + contact, captured under the POD upload row.
+// Persisted on the same trip document (document_type 'pod') so it survives
+// whether or not a POD file has been attached; either trip party can set or
+// clear it (POST /api/load-bids/load/:id/documents/delivery-contact).
+function DeliveryContactRow({ name, contact, onSave, onSaved, t }) {
+  const [nameText, setNameText] = useState(name);
+  const [contactText, setContactText] = useState(contact);
+  const [busy, setBusy] = useState(false);
+
+  // Re-seed when the saved values change under us (e.g. after onChanged
+  // refetch, or the other party edits them).
+  useEffect(() => setNameText(name), [name]);
+  useEffect(() => setContactText(contact), [contact]);
+
+  const trimmedName = nameText.trim();
+  const trimmedContact = contactText.trim();
+  const contactInvalid = trimmedContact !== '' && !DELIVERY_CONTACT_RE.test(trimmedContact);
+  const dirty = trimmedName !== name || trimmedContact !== contact;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave({ delivery_person_name: trimmedName, delivery_person_contact: trimmedContact });
+      onSaved();
+    } catch (err) {
+      Alert.alert(t('uploadFailed'), err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View className="-mt-1 mb-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+      <Text className="mb-2 text-xs font-semibold text-slate-500">{t('deliveryPersonDetails')}</Text>
+      <TextInput
+        mode="outlined"
+        dense
+        maxLength={80}
+        label={t('deliveryPersonName')}
+        placeholder={t('deliveryPersonNamePlaceholder')}
+        value={nameText}
+        onChangeText={setNameText}
+      />
+      <TextInput
+        mode="outlined"
+        dense
+        keyboardType="number-pad"
+        maxLength={10}
+        label={t('deliveryPersonContact')}
+        placeholder={t('deliveryPersonContactPlaceholder')}
+        value={contactText}
+        onChangeText={setContactText}
+        className="mt-2"
+      />
+      {contactInvalid && (
+        <HelperText type="error" visible padding="none">
+          {t('deliveryPersonContactInvalid')}
+        </HelperText>
+      )}
+      <View className="mt-2 flex-row">
+        <Button
+          mode="contained"
+          buttonColor="#f97316"
+          compact
+          loading={busy}
+          disabled={busy || !dirty || contactInvalid}
+          onPress={save}
+        >
+          {t('save')}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+// E-Way Bill + Bilty + POD upload slots, shown to both trip parties. Each row is an
 // upload/replace control; once a file is on record it also gets a View button
 // that opens the (short-lived, signed) URL from the trip-details payload. The
-// E-Way Bill row also carries a number field (see EwayBillNumberRow).
+// E-Way Bill row also carries a number field (see EwayBillNumberRow) and the
+// POD row a delivery-person name + contact (see DeliveryContactRow).
 function TripDocumentsCard({ loadId, documents, viewerEmail, onChanged, t }) {
   return (
     <View className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
       <Text className="mb-3 text-base font-bold text-slate-900">{t('tripDocuments')}</Text>
-      {TRIP_DOC_TYPES.map(({ type, labelKey, icon, numberField }) => {
+      {TRIP_DOC_TYPES.map(({ type, labelKey, icon, numberField, contactFields }) => {
         const doc = documents?.[type];
         // A doc entry can exist with only a number and no file yet — the upload
         // row's "uploaded" state must track the file, not the entry.
@@ -164,6 +248,15 @@ function TripDocumentsCard({ loadId, documents, viewerEmail, onChanged, t }) {
                 onSave={(document_number) =>
                   api.loadBids.setTripDocumentNumber(loadId, { document_type: type, document_number })
                 }
+                onSaved={onChanged}
+                t={t}
+              />
+            )}
+            {contactFields && (
+              <DeliveryContactRow
+                name={doc?.delivery_person_name ?? ''}
+                contact={doc?.delivery_person_contact ?? ''}
+                onSave={(body) => api.loadBids.setTripDeliveryContact(loadId, body)}
                 onSaved={onChanged}
                 t={t}
               />
