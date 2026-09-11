@@ -261,6 +261,11 @@ export default function PlaceBidScreen() {
   );
   const load24Charge = Math.round((amount * chargePercent) / 100);
   const netReceive = amount - load24Charge;
+  // Fixed platform policy (display-only, mirrors PostLoadScreen's
+  // advance-payment note): 90% of the payout is released once the POD is
+  // verified. Shown in the breakup so the bidder knows the payout schedule
+  // before committing.
+  const podPayment = Math.round(netReceive * 0.9);
   const walletBalance = Number(wallet?.available_balance ?? 0);
   // While the wallet balance is still loading (Render cold starts can take
   // 20s), don't block bidding on an unknown balance — the backend's POST /
@@ -391,6 +396,7 @@ export default function PlaceBidScreen() {
           <BreakupRow label={`${t('load24ChargeLabel')} (${chargePercent.toFixed(1)}%)`} amount={load24Charge} sign="− " muted />
           <View className="my-1 border-t border-slate-100" />
           <BreakupRow label={t('youReceiveLabel')} amount={netReceive} strong />
+          <BreakupRow label={t('podPaymentNote')} amount={podPayment} muted />
 
           {securityDeposit > 0 && (
             <View className="mt-3 rounded-2xl bg-slate-50 p-3">

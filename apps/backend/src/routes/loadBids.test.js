@@ -1019,7 +1019,7 @@ describe('autoRejectExpired (via GET /load/:load_id) — releases expired-bid ho
   });
 });
 
-describe('trip documents (E-Way Bill / Bilty)', () => {
+describe('trip documents (E-Way Bill / Bilty / POD)', () => {
   const LOAD = { id: 'load-7', posted_by: 'poster@example.com', material_type: 'Cement' };
   const BID = { id: 'bid-7', load_id: 'load-7', status: 'approved', bid_by_email: 'trucker@example.com' };
 
@@ -1060,6 +1060,14 @@ describe('trip documents (E-Way Bill / Bilty)', () => {
     expect(res.body.storage_path).toBe('poster-1/load-7-eway_bill.pdf');
     expect(res.body.token).toBe('tok');
     expect(tripDocs.storageOps).toContainEqual(['upload-url', 'trip-documents', 'poster-1/load-7-eway_bill.pdf']);
+  });
+
+  it('accepts pod as a document_type for the upload URL', async () => {
+    const res = await request(buildTripApp('trucker@example.com'))
+      .post('/api/load-bids/load/load-7/documents/upload-url')
+      .send({ document_type: 'pod', file_name: 'pod.jpg' });
+    expect(res.status).toBe(200);
+    expect(res.body.storage_path).toBe('trucker-1/load-7-pod.jpg');
   });
 
   it('rejects an unknown document_type', async () => {
@@ -1178,6 +1186,100 @@ describe('trip documents (E-Way Bill / Bilty)', () => {
       expect(tripDocs.rows[0]).toMatchObject({
         document_number: '999999999999',
         storage_path: 'poster-1/load-7-eway_bill.pdf'
+      });
+    });
+  });
+
+  describe('POST .../documents/delivery-contact — POD delivery person', () => {
+    it('saves the delivery person name + contact against the pod row', async () => {
+      const res = await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/delivery-contact')
+        .send({ delivery_person_name: '  Ramesh Kumar  ', delivery_person_contact: '9876543210' });
+      expect(res.status).toBe(200);
+      expect(res.body.document).toMatchObject({
+        document_type: 'pod',
+        delivery_person_name: 'Ramesh Kumar',
+        delivery_person_contact: '9876543210'
+      });
+      expect(tripDocs.rows).toHaveLength(1);
+      expect(tripDocs.rows[0]).toMatchObject({
+        load_id: 'load-7',
+        bid_id: 'bid-7',
+        document_type: 'pod',
+        delivery_person_name: 'Ramesh Kumar',
+        delivery_person_contact: '9876543210'
+      });
+    });
+
+    it('normalizes a contact given with +91 / spaces down to the bare 10 digits', async () => {
+      await request(buildTripApp('trucker@example.com'))
+        .post('/api/load-bids/load/load-7/documents/delivery-contact')
+        .send({ delivery_person_name: 'A', delivery_person_contact: '+91 98765 43210' });
+      expect(tripDocs.rows[0].delivery_person_contact).toBe('9876543210');
+    });
+
+    it('rejects a contact that is not a valid 10-digit mobile number', async () => {
+      for (const bad of ['12345', '1234567890', '98765abcde']) {
+        const res = await request(buildTripApp('poster@example.com'))
+          .post('/api/load-bids/load/load-7/documents/delivery-contact')
+          .send({ delivery_person_contact: bad });
+        expect(res.status).toBe(400);
+      }
+      expect(tripDocs.rows).toHaveLength(0);
+    });
+
+    it('clears either field when an empty string is sent', async () => {
+      await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/delivery-contact')
+        .send({ delivery_person_name: 'Ramesh', delivery_person_contact: '9876543210' });
+      const res = await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/delivery-contact')
+        .send({ delivery_person_name: '', delivery_person_contact: '' });
+      expect(res.status).toBe(200);
+      expect(tripDocs.rows).toHaveLength(1);
+      expect(tripDocs.rows[0].delivery_person_name).toBeNull();
+      expect(tripDocs.rows[0].delivery_person_contact).toBeNull();
+    });
+
+    it('rejects a name longer than 80 characters', async () => {
+      const res = await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/delivery-contact')
+        .send({ delivery_person_name: 'x'.repeat(81) });
+      expect(res.status).toBe(400);
+      expect(tripDocs.rows).toHaveLength(0);
+    });
+
+    it('rejects a caller who is neither the poster nor the approved bidder', async () => {
+      const res = await request(buildTripApp('stranger@example.com'))
+        .post('/api/load-bids/load/load-7/documents/delivery-contact')
+        .send({ delivery_person_name: 'Ramesh', delivery_person_contact: '9876543210' });
+      expect(res.status).toBe(403);
+    });
+
+    it('keeps the POD file when the delivery contact changes, and vice versa', async () => {
+      await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/delivery-contact')
+        .send({ delivery_person_name: 'Ramesh', delivery_person_contact: '9876543210' });
+
+      await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents')
+        .send({ document_type: 'pod', storage_path: 'poster-1/load-7-pod.jpg', file_name: 'pod.jpg', mime_type: 'image/jpeg' });
+
+      expect(tripDocs.rows).toHaveLength(1);
+      expect(tripDocs.rows[0]).toMatchObject({
+        delivery_person_name: 'Ramesh',
+        delivery_person_contact: '9876543210',
+        storage_path: 'poster-1/load-7-pod.jpg'
+      });
+
+      await request(buildTripApp('poster@example.com'))
+        .post('/api/load-bids/load/load-7/documents/delivery-contact')
+        .send({ delivery_person_name: 'Suresh', delivery_person_contact: '9000000000' });
+
+      expect(tripDocs.rows[0]).toMatchObject({
+        delivery_person_name: 'Suresh',
+        delivery_person_contact: '9000000000',
+        storage_path: 'poster-1/load-7-pod.jpg'
       });
     });
   });

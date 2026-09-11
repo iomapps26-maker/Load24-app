@@ -5,6 +5,7 @@ import { applyWalletAdjustment, getOrCreateWallet, getAvailableBalance } from '.
 import { getBiddingSettingsCached } from '../lib/platformSettings.js';
 import { computeBidSecurityHold } from '../lib/bidSecurityDeposit.js';
 import { checkBidEligibility, TRUCK_REQUIRED_ROLES } from '../lib/bidEligibility.js';
+import { normalizeIndianPhone } from '../lib/phone.js';
 import { placeBidSecurityHold, releaseBidSecurityHold, sweepExpiredBidHolds } from '../lib/bidSecurityHold.js';
 import {
   createBookingForConfirmedBid,
@@ -21,8 +22,11 @@ const SECURITY_HOLD_COLUMNS = 'id, load_id, bid_by_email, security_hold_txn_id, 
 const TRIP_DOCS_BUCKET = 'trip-documents';
 const TRIP_DOC_URL_TTL_SECONDS = 300;
 // The paperwork either trip party can attach on the Trip Details screen once
-// a bid is approved (see migrations/044_add_trip_documents.sql).
-const TRIP_DOCUMENT_TYPES = ['eway_bill', 'bilty'];
+// a bid is approved (see migrations/044_add_trip_documents.sql +
+// 059_add_trip_pod_document.sql). The `pod` (Proof of Delivery) row also
+// carries the delivery person's name + contact (see the delivery-contact
+// route below).
+const TRIP_DOCUMENT_TYPES = ['eway_bill', 'bilty', 'pod'];
 
 // Mirrors the role list in loads_update_own_or_staff / load_bids_update_poster
 // (db/migrations/001_init.sql, 015_add_load_bids.sql) — kept in sync by hand,
@@ -310,33 +314,50 @@ async function isBidReviewStaff(userId) {
 async function tripDocumentsForLoad(loadId) {
   const { data: rows } = await supabaseAdmin
     .from('trip_documents')
-    .select('document_type, file_name, mime_type, storage_path, document_number, uploaded_by_email, updated_at')
+    .select(
+      'document_type, file_name, mime_type, storage_path, document_number, delivery_person_name, delivery_person_contact, uploaded_by_email, updated_at'
+    )
     .eq('load_id', loadId);
   if (!rows?.length) return {};
 
   const entries = await Promise.all(
-    rows.map(async ({ document_type, file_name, mime_type, storage_path, document_number, uploaded_by_email, updated_at }) => {
-      // A row can carry just a document number (migration 050) with no file
-      // uploaded yet — nothing to sign in that case.
-      let url = null;
-      if (storage_path) {
-        const { data } = await supabaseAdmin.storage.from(TRIP_DOCS_BUCKET).createSignedUrl(storage_path, TRIP_DOC_URL_TTL_SECONDS);
-        url = data?.signedUrl ?? null;
-      }
-      return [
+    rows.map(
+      async ({
         document_type,
-        {
-          document_type,
-          file_name,
-          mime_type,
-          document_number: document_number ?? null,
-          has_file: !!storage_path,
-          uploaded_by_email,
-          updated_at,
-          url
+        file_name,
+        mime_type,
+        storage_path,
+        document_number,
+        delivery_person_name,
+        delivery_person_contact,
+        uploaded_by_email,
+        updated_at
+      }) => {
+        // A row can carry just a document number (migration 050) or the POD's
+        // delivery-person fields (migration 059) with no file uploaded yet —
+        // nothing to sign in that case.
+        let url = null;
+        if (storage_path) {
+          const { data } = await supabaseAdmin.storage.from(TRIP_DOCS_BUCKET).createSignedUrl(storage_path, TRIP_DOC_URL_TTL_SECONDS);
+          url = data?.signedUrl ?? null;
         }
-      ];
-    })
+        return [
+          document_type,
+          {
+            document_type,
+            file_name,
+            mime_type,
+            document_number: document_number ?? null,
+            delivery_person_name: delivery_person_name ?? null,
+            delivery_person_contact: delivery_person_contact ?? null,
+            has_file: !!storage_path,
+            uploaded_by_email,
+            updated_at,
+            url
+          }
+        ];
+      }
+    )
   );
   return Object.fromEntries(entries);
 }
@@ -707,7 +728,8 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
   ]);
 
   res.json({
-    // E-Way Bill / Bilty either party attached to this trip, keyed by type.
+    // E-Way Bill / Bilty / POD either party attached to this trip, keyed by
+    // type; the `pod` entry also carries delivery_person_name / _contact.
     trip_documents: tripDocuments,
     viewer_role: isPoster ? 'poster' : 'accepter',
     load,
@@ -758,7 +780,7 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
 router.post('/load/:load_id/documents/upload-url', async (req, res) => {
   const { document_type, file_name } = req.body;
   if (!TRIP_DOCUMENT_TYPES.includes(document_type)) {
-    return res.status(400).json({ error: 'document_type must be eway_bill or bilty' });
+    return res.status(400).json({ error: 'document_type must be eway_bill, bilty or pod' });
   }
 
   const trip = await resolveTripForParty(req);
@@ -781,7 +803,7 @@ router.post('/load/:load_id/documents/upload-url', async (req, res) => {
 router.post('/load/:load_id/documents', async (req, res) => {
   const { document_type, storage_path, file_name, mime_type } = req.body;
   if (!TRIP_DOCUMENT_TYPES.includes(document_type)) {
-    return res.status(400).json({ error: 'document_type must be eway_bill or bilty' });
+    return res.status(400).json({ error: 'document_type must be eway_bill, bilty or pod' });
   }
   if (!storage_path) return res.status(400).json({ error: 'storage_path is required' });
   if (!storage_path.startsWith(`${req.user.id}/`)) {
@@ -834,7 +856,7 @@ router.post('/load/:load_id/documents', async (req, res) => {
 router.post('/load/:load_id/documents/number', async (req, res) => {
   const { document_type, document_number } = req.body;
   if (!TRIP_DOCUMENT_TYPES.includes(document_type)) {
-    return res.status(400).json({ error: 'document_type must be eway_bill or bilty' });
+    return res.status(400).json({ error: 'document_type must be eway_bill, bilty or pod' });
   }
   const raw = typeof document_number === 'string' ? document_number.trim() : '';
   if (raw !== '' && !/^\d{12}$/.test(raw)) {
@@ -859,6 +881,57 @@ router.post('/load/:load_id/documents/number', async (req, res) => {
     .select('document_type, document_number')
     .single();
   if (error) return dbError(res, error, 'Could not save the document number');
+
+  res.status(200).json({ ok: true, document: data });
+});
+
+// POST /api/load-bids/load/:load_id/documents/delivery-contact
+//   { delivery_person_name, delivery_person_contact }
+// — the person who took delivery, captured under the POD upload row on Trip
+// Details. Stored on the same trip_documents row as the POD file (upsert on
+// load_id + document_type 'pod') so it can be set before, after, or without an
+// upload; an empty string clears either field. The upsert only names the
+// columns it changes, so a later POD file upload keeps these, and vice versa.
+// Same party gate as the upload/number routes above.
+router.post('/load/:load_id/documents/delivery-contact', async (req, res) => {
+  const { delivery_person_name, delivery_person_contact } = req.body;
+
+  const name = typeof delivery_person_name === 'string' ? delivery_person_name.trim() : '';
+  if (name.length > 80) {
+    return res.status(400).json({ error: 'Delivery person name must be 80 characters or fewer' });
+  }
+
+  const rawContact = typeof delivery_person_contact === 'string' ? delivery_person_contact.trim() : '';
+  let contact = null;
+  if (rawContact !== '') {
+    const normalized = normalizeIndianPhone(rawContact);
+    if (!normalized) {
+      return res.status(400).json({ error: 'Delivery person contact must be a valid 10-digit mobile number' });
+    }
+    // Store the bare 10 digits (drop the +91) so it round-trips cleanly to the
+    // app's 10-digit input field.
+    contact = normalized.slice(3);
+  }
+
+  const trip = await resolveTripForParty(req);
+  if (trip.error) return res.status(trip.status).json({ error: trip.error });
+
+  const { data, error } = await supabaseAdmin
+    .from('trip_documents')
+    .upsert(
+      {
+        load_id: trip.load.id,
+        bid_id: trip.bid.id,
+        document_type: 'pod',
+        delivery_person_name: name || null,
+        delivery_person_contact: contact,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'load_id,document_type' }
+    )
+    .select('document_type, delivery_person_name, delivery_person_contact')
+    .single();
+  if (error) return dbError(res, error, 'Could not save the delivery person details');
 
   res.status(200).json({ ok: true, document: data });
 });

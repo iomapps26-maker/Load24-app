@@ -171,8 +171,8 @@ export const api = {
     place: (body) => request('/api/load-bids', { method: 'POST', body }),
     forLoad: (loadId) => request(`/api/load-bids/load/${loadId}`),
     tripDetails: (loadId) => request(`/api/load-bids/load/${loadId}/trip-details`),
-    // E-Way Bill / Bilty attached to a trip — signed-upload-URL then confirm,
-    // same shape as trucks.uploadUrl/confirmDocument (see DocumentUploadRow).
+    // E-Way Bill / Bilty / POD attached to a trip — signed-upload-URL then
+    // confirm, same shape as trucks.uploadUrl/confirmDocument (see DocumentUploadRow).
     tripDocumentUploadUrl: (loadId, document_type, file_name) =>
       request(`/api/load-bids/load/${loadId}/documents/upload-url`, { method: 'POST', body: { document_type, file_name } }),
     confirmTripDocument: (loadId, body) => request(`/api/load-bids/load/${loadId}/documents`, { method: 'POST', body }),
@@ -180,6 +180,11 @@ export const api = {
     // number) — kept on the same row as the file, settable independently of it.
     // body: { document_type, document_number } — '' clears it.
     setTripDocumentNumber: (loadId, body) => request(`/api/load-bids/load/${loadId}/documents/number`, { method: 'POST', body }),
+    // The delivery person's name + contact captured under the POD row — kept on
+    // the same trip_documents row as the POD file, settable independently of it.
+    // body: { delivery_person_name, delivery_person_contact } — '' clears either.
+    setTripDeliveryContact: (loadId, body) =>
+      request(`/api/load-bids/load/${loadId}/documents/delivery-contact`, { method: 'POST', body }),
     deliver: (loadId) => request(`/api/load-bids/load/${loadId}/deliver`, { method: 'POST' }),
     approve: (id) => request(`/api/load-bids/${id}/approve`, { method: 'POST' }),
     reject: (id) => request(`/api/load-bids/${id}/reject`, { method: 'POST' })

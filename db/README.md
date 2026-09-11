@@ -232,6 +232,19 @@ SQL Editor (no migration runner wired up yet).
   `now() + 5 minutes`. 10 min proved longer than needed and left a bid's §5
   security-deposit hold tying up the bidder's wallet balance longer than
   necessary. Only affects bids placed after it runs.
+- `migrations/059_add_trip_pod_document.sql` — adds **POD (Proof of Delivery)**
+  as a third `trip_documents.document_type` (the `document_type` CHECK from 044
+  gains `'pod'`), plus `delivery_person_name` / `delivery_person_contact` on the
+  same table — the person who took delivery, entered just below the POD upload
+  row on Trip Details. Same one-row-per-`(load_id, document_type)` model as
+  044/050: the `pod` row can hold just the delivery-person fields with no file
+  yet. New route `POST /api/load-bids/load/:load_id/documents/delivery-contact`
+  (`routes/loadBids.js`, `TRIP_DOCUMENT_TYPES` gains `'pod'`) upserts them; they
+  come back inside `trip-details`' `trip_documents` alongside `has_file` /
+  `document_number`. DB-level guards are length checks only — the "valid
+  10-digit Indian mobile" rule for the contact lives in the route (via
+  `lib/phone.js`'s `normalizeIndianPhone`), same route-vs-column split as the
+  E-Way Bill number (050).
 - `migrations/058_fix_has_role_recursion.sql` — **critical, run this first.**
   `user_roles`'s own RLS policies (003) inlined a subquery against
   `user_roles` from within a policy on `user_roles` itself, and `has_role()`
