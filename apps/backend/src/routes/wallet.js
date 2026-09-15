@@ -578,4 +578,60 @@ router.post('/topup-requests/:id/reject', requireRole(STAFF_ROLES), async (req, 
   res.json(data);
 });
 
+// GET /api/wallet/admin/transactions?q=&type=&status=&from=&to=&page=&limit=
+// Staff-facing payment history: every wallet_transactions row — add_money,
+// credit, debit, refund, commission, service_charge, security_hold,
+// security_release, withdrawal — newest first. This is the append-only
+// ledger itself (migration 014), the only source of truth for a wallet's
+// balance, not a staff review queue like /withdrawals/pending or
+// /topup-requests/pending which only ever show one status.
+// q matches transaction_id or the owning user's name/mobile — resolved via
+// user_profiles first since PostgREST can't filter wallet_transactions by a
+// related table's columns in one query (same two-step join as
+// /topup-requests/pending's profile lookup, just run before the main query
+// instead of after).
+router.get('/admin/transactions', requireRole(STAFF_ROLES), async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const pageFrom = (page - 1) * limit;
+  const pageTo = pageFrom + limit - 1;
+
+  let query = supabaseAdmin.from('wallet_transactions').select('*', { count: 'exact' });
+  if (req.query.type) query = query.eq('type', req.query.type);
+  if (req.query.status) query = query.eq('status', req.query.status);
+  if (req.query.from) query = query.gte('created_at', req.query.from);
+  if (req.query.to) query = query.lte('created_at', req.query.to);
+
+  const q = (req.query.q || '').trim();
+  if (q) {
+    const { data: matchedProfiles, error: profileSearchError } = await supabaseAdmin
+      .from('user_profiles')
+      .select('user_id')
+      .or(`full_name.ilike.%${q}%,mobile.ilike.%${q}%`);
+    if (profileSearchError) return dbError(res, profileSearchError, 'Wallet request failed', { log: LOG });
+
+    const matchedIds = (matchedProfiles || []).map((p) => p.user_id);
+    const orClauses = [`transaction_id.ilike.%${q}%`];
+    if (matchedIds.length) orClauses.push(`user_id.in.(${matchedIds.join(',')})`);
+    query = query.or(orClauses.join(','));
+  }
+
+  const { data, error, count } = await query.order('created_at', { ascending: false }).range(pageFrom, pageTo);
+  if (error) return dbError(res, error, 'Wallet request failed', { log: LOG });
+
+  const userIds = [...new Set((data || []).map((t) => t.user_id))];
+  const { data: profiles, error: profilesError } = userIds.length
+    ? await supabaseAdmin.from('user_profiles').select('user_id, full_name, mobile').in('user_id', userIds)
+    : { data: [], error: null };
+  if (profilesError) return dbError(res, profilesError, 'Could not load user profiles', { log: LOG });
+  const profileByUserId = new Map((profiles || []).map((p) => [p.user_id, p]));
+
+  res.json({
+    transactions: (data || []).map((t) => ({ ...t, profile: profileByUserId.get(t.user_id) || null })),
+    page,
+    limit,
+    total: count ?? 0
+  });
+});
+
 export default router;

@@ -61,9 +61,12 @@ function applyTransactionEffect(tx) {
   wallet.balance += increase ? Number(tx.amount) : -Number(tx.amount);
 }
 
-function makeQueryBuilder(table) {
+function makeQueryBuilder(table, selectOpts) {
   let rows = store[table];
   const filters = [];
+  let sort = null;
+  let range = null;
+  const countMode = !!(selectOpts && selectOpts.count);
   const builder = {
     select: () => builder,
     eq: (field, value) => {
@@ -74,12 +77,57 @@ function makeQueryBuilder(table) {
       filters.push((r) => values.includes(r[field]));
       return builder;
     },
-    gte: () => builder,
-    lte: () => builder,
-    order: () => builder,
-    range: () => {
-      const result = rows.filter((r) => filters.every((f) => f(r)));
-      return Promise.resolve({ data: result, error: null });
+    // Minimal stand-in for PostgREST's `.or('a.ilike.%x%,b.in.(1,2)')` (same
+    // approach as admin/users.test.js's mock) — parenthesis-aware comma
+    // split, since an `in.(...)` clause embeds its own commas, then OR-
+    // matches whichever of ilike/in clauses it finds.
+    or: (expr) => {
+      const clauses = [];
+      let depth = 0;
+      let current = '';
+      for (const ch of expr) {
+        if (ch === '(') depth++;
+        if (ch === ')') depth--;
+        if (ch === ',' && depth === 0) {
+          clauses.push(current);
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+      if (current) clauses.push(current);
+
+      const matchers = clauses.map((clause) => {
+        const [field, op, ...rest] = clause.split('.');
+        const value = rest.join('.');
+        if (op === 'ilike') {
+          const needle = value.replace(/%/g, '').toLowerCase();
+          return (r) => String(r[field] || '').toLowerCase().includes(needle);
+        }
+        if (op === 'in') {
+          const values = value.replace(/^\(|\)$/g, '').split(',').filter(Boolean);
+          return (r) => values.includes(String(r[field]));
+        }
+        return () => false;
+      });
+      filters.push((r) => matchers.some((m) => m(r)));
+      return builder;
+    },
+    gte: (field, value) => {
+      filters.push((r) => r[field] >= value);
+      return builder;
+    },
+    lte: (field, value) => {
+      filters.push((r) => r[field] <= value);
+      return builder;
+    },
+    order: (field, { ascending = true } = {}) => {
+      sort = { field, sign: ascending ? 1 : -1 };
+      return builder;
+    },
+    range: (from, to) => {
+      range = { from, to };
+      return builder;
     },
     maybeSingle: () => {
       const result = rows.filter((r) => filters.every((f) => f(r)));
@@ -90,8 +138,14 @@ function makeQueryBuilder(table) {
       return Promise.resolve({ data: result[0] || null, error: null });
     },
     then: (resolve) => {
-      const result = rows.filter((r) => filters.every((f) => f(r)));
-      resolve({ data: result, error: null });
+      let result = rows.filter((r) => filters.every((f) => f(r)));
+      const count = result.length;
+      if (sort) {
+        const { field, sign } = sort;
+        result = [...result].sort((a, b) => (a[field] > b[field] ? sign : a[field] < b[field] ? -sign : 0));
+      }
+      if (range) result = result.slice(range.from, range.to + 1);
+      resolve({ data: result, error: null, count: countMode ? count : null });
     }
   };
   return builder;
@@ -102,7 +156,7 @@ function makeSupabaseMock() {
     storage: makeStorageMock(),
     from(table) {
       return {
-        select: () => makeQueryBuilder(table),
+        select: (columns, opts) => makeQueryBuilder(table, opts),
         insert(row) {
           const withDefaults = {
             id: `${table}-${store[table].length + 1}`,
@@ -486,6 +540,85 @@ describe('Staff withdrawal review', () => {
     const res = await request(buildApp('user-1')).get('/api/wallet/withdrawals/mine');
     expect(res.status).toBe(200);
     expect(res.body[0].payment_proof_url).toContain('user-1/wr1.png');
+  });
+});
+
+describe('GET /api/wallet/admin/transactions', () => {
+  function staffApp() {
+    store.user_roles.push({ user_id: 'staff-1', role: 'admin' });
+    return buildApp('staff-1');
+  }
+
+  it('rejects a non-staff caller with 403', async () => {
+    const res = await request(buildApp('user-1')).get('/api/wallet/admin/transactions');
+    expect(res.status).toBe(403);
+  });
+
+  it('lists every transaction newest-first with the owning profile and a total count', async () => {
+    store.user_profiles.push({ user_id: 'user-1', full_name: 'Sumit', mobile: '9999999999' });
+    store.wallet_transactions.push(
+      { id: 't1', transaction_id: 'TXN1', user_id: 'user-1', type: 'add_money', amount: 500, status: 'completed', created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 't2', transaction_id: 'TXN2', user_id: 'user-1', type: 'withdrawal', amount: 200, status: 'completed', created_at: '2026-02-01T00:00:00.000Z' }
+    );
+
+    const res = await request(staffApp()).get('/api/wallet/admin/transactions');
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(2);
+    expect(res.body.transactions[0].id).toBe('t2'); // newest first
+    expect(res.body.transactions[0].profile).toMatchObject({ full_name: 'Sumit', mobile: '9999999999' });
+  });
+
+  it('filters by type and status', async () => {
+    store.wallet_transactions.push(
+      { id: 't1', transaction_id: 'TXN1', user_id: 'user-1', type: 'add_money', amount: 500, status: 'completed', created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 't2', transaction_id: 'TXN2', user_id: 'user-1', type: 'withdrawal', amount: 200, status: 'completed', created_at: '2026-02-01T00:00:00.000Z' },
+      { id: 't3', transaction_id: 'TXN3', user_id: 'user-1', type: 'withdrawal', amount: 300, status: 'pending', created_at: '2026-03-01T00:00:00.000Z' }
+    );
+
+    const res = await request(staffApp()).get('/api/wallet/admin/transactions').query({ type: 'withdrawal', status: 'completed' });
+    expect(res.status).toBe(200);
+    expect(res.body.transactions.map((t) => t.id)).toEqual(['t2']);
+  });
+
+  it('q matches the transaction_id directly', async () => {
+    store.wallet_transactions.push(
+      { id: 't1', transaction_id: 'TXN-ABC', user_id: 'user-1', type: 'add_money', amount: 500, status: 'completed', created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 't2', transaction_id: 'TXN-XYZ', user_id: 'user-1', type: 'add_money', amount: 500, status: 'completed', created_at: '2026-01-02T00:00:00.000Z' }
+    );
+
+    const res = await request(staffApp()).get('/api/wallet/admin/transactions').query({ q: 'abc' });
+    expect(res.status).toBe(200);
+    expect(res.body.transactions.map((t) => t.id)).toEqual(['t1']);
+  });
+
+  it('q also matches the owning user\'s name or mobile', async () => {
+    store.user_profiles.push(
+      { user_id: 'user-1', full_name: 'Asha Devi', mobile: '9000000001' },
+      { user_id: 'user-2', full_name: 'Ravi Kumar', mobile: '9000000002' }
+    );
+    store.wallet_transactions.push(
+      { id: 't1', transaction_id: 'TXN1', user_id: 'user-1', type: 'add_money', amount: 500, status: 'completed', created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 't2', transaction_id: 'TXN2', user_id: 'user-2', type: 'add_money', amount: 500, status: 'completed', created_at: '2026-01-02T00:00:00.000Z' }
+    );
+
+    const res = await request(staffApp()).get('/api/wallet/admin/transactions').query({ q: 'asha' });
+    expect(res.status).toBe(200);
+    expect(res.body.transactions.map((t) => t.id)).toEqual(['t1']);
+  });
+
+  it('paginates with page/limit', async () => {
+    for (let i = 1; i <= 5; i++) {
+      store.wallet_transactions.push({
+        id: `t${i}`, transaction_id: `TXN${i}`, user_id: 'user-1', type: 'add_money', amount: 100,
+        status: 'completed', created_at: `2026-01-0${i}T00:00:00.000Z`
+      });
+    }
+
+    const res = await request(staffApp()).get('/api/wallet/admin/transactions').query({ page: 2, limit: 2 });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(5);
+    expect(res.body.page).toBe(2);
+    expect(res.body.transactions.map((t) => t.id)).toEqual(['t3', 't2']); // newest-first, second page of 2
   });
 });
 
