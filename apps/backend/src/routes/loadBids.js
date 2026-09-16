@@ -13,6 +13,7 @@ import {
   getBookingByLoadId,
   completeBookingForLoad
 } from '../lib/bookings.js';
+import { getOrAssignSupportContact } from '../lib/contactAssignment.js';
 
 // The load_bids columns that track a bid's security hold (§5, migration 047)
 // — read wherever a hold might need releasing so releaseBidSecurityHold can
@@ -714,7 +715,7 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
     return res.status(403).json({ error: 'Not authorized to view trip details for this load' });
   }
 
-  const [posterProfile, accepterProfile, tripDocuments, booking] = await Promise.all([
+  const [posterProfile, accepterProfile, tripDocuments, booking, supportContact] = await Promise.all([
     profileForEmail(load.posted_by),
     profileForEmail(bid.bid_by_email),
     tripDocumentsForLoad(load.id),
@@ -723,6 +724,14 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
     // best-effort create in POST /:id/approve failed.
     ensureBooking({ load, bid }).catch((err) => {
       console.error('[load-bids] ensureBooking failed for bid', bid.id, err);
+      return null;
+    }),
+    // The caller's permanent support contact (migration 061) — assignment is
+    // per-user and idempotent, so fetching it here unconditionally is safe
+    // even for a cancelled trip; only whether it's SURFACED below depends on
+    // the booking's status.
+    getOrAssignSupportContact(req.user.id).catch((err) => {
+      console.error('[load-bids] getOrAssignSupportContact failed for', req.user.id, err);
       return null;
     })
   ]);
@@ -734,6 +743,9 @@ router.get('/load/:load_id/trip-details', async (req, res) => {
     viewer_role: isPoster ? 'poster' : 'accepter',
     load,
     booking,
+    // Only surfaced while the trip is active (booking exists and isn't
+    // cancelled) — same predicate as lib/bookings.js's getBookingByLoadId.
+    support_contact: booking && booking.status !== 'cancelled' ? supportContact : null,
     bid: {
       id: bid.id,
       booking_ref: booking?.booking_ref ?? null,

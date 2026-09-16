@@ -258,6 +258,24 @@ SQL Editor (no migration runner wired up yet).
   becomes `SECURITY DEFINER` (bypasses RLS internally instead of re-entering
   it), and `user_roles`'s four policies call it instead of inlining the
   recursive subquery.
+- `migrations/061_add_support_sales_contacts.sql` — adds two independent
+  contact-info-only directories (`support_contact_roster` /
+  `sales_contact_roster` — name/phone/email, no `auth.users` row, no login)
+  and two permanent per-user assignment tables (`user_support_contact` /
+  `user_sales_contact`, `unique(user_id)`). Deliberately NOT named with the
+  `*_executive`/`*_manager` vocabulary already live in `user_roles` (used for
+  CRM/bid-review staff logins elsewhere) — these are a separate,
+  unrelated concept. Round-robin, idempotent get-or-assign functions
+  `assign_support_contact(p_user_id)` / `assign_sales_contact(p_user_id)`
+  (called via `supabaseAdmin.rpc(...)` from
+  `lib/contactAssignment.js`) atomically claim the least-loaded active
+  roster row (`FOR UPDATE SKIP LOCKED` on an `assigned_count` counter column)
+  under a per-user `pg_advisory_xact_lock` that serializes concurrent
+  first-time calls for the same user. Support-contact assignment is
+  permanent but only ever surfaced on `trip-details` while the trip's
+  booking is non-cancelled; sales-contact assignment is permanent and
+  surfaced generally (`GET /api/sales-contact/mine`). RLS grants staff/own-row
+  select only — every write goes through `supabaseAdmin`.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.

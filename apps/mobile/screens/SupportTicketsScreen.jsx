@@ -18,6 +18,12 @@ export default function SupportTicketsScreen() {
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const { data: tickets = [] } = useQuery({ queryKey: ['supportTickets'], queryFn: api.supportTickets.mine });
+  // The caller's permanently-assigned sales contact (backend:
+  // db/migrations/061_add_support_sales_contacts.sql). Falls back to the
+  // fixed SALES_PHONE constant when the roster is empty/misconfigured, so
+  // this degrades to today's behaviour rather than breaking the button.
+  const { data: salesContact } = useQuery({ queryKey: ['salesContact'], queryFn: api.salesContact.mine });
+  const salesPhone = salesContact?.phone || SALES_PHONE;
 
   const [showForm, setShowForm] = useState(false);
   const [subject, setSubject] = useState('');
@@ -49,10 +55,12 @@ export default function SupportTicketsScreen() {
     <ScrollView className="flex-1 bg-slate-50" contentContainerStyle={{ padding: 16 }}>
       <TouchableOpacity
         className="mb-4 flex-row items-center justify-center rounded-xl bg-green-600 py-3.5"
-        onPress={() => Linking.openURL(`tel:${SALES_PHONE}`)}
+        onPress={() => Linking.openURL(`tel:${salesPhone}`)}
       >
         <Icon source="phone" size={18} color="white" />
-        <Text className="ml-2 text-base font-bold text-white">{t('callSalesTeam')}</Text>
+        <Text className="ml-2 text-base font-bold text-white">
+          {salesContact?.name ? `${t('callSalesTeam')} — ${salesContact.name}` : t('callSalesTeam')}
+        </Text>
       </TouchableOpacity>
 
       {showForm ? (

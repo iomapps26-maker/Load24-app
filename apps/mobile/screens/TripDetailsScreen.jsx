@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, Linking, Alert } from 'react-native';
 import { Icon, Button, TextInput, HelperText } from 'react-native-paper';
 import { useRoute } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useLanguage } from '../lib/i18n';
@@ -67,6 +68,30 @@ function PartyCard({ title, party, t }) {
         >
           <Icon source="phone" size={18} color="#ffffff" />
           <Text className="text-sm font-bold text-white">{party.mobile}</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// The caller's permanently-assigned LOAD24 support contact (backend:
+// db/migrations/061_add_support_sales_contacts.sql, surfaced on
+// trip-details only while the booking is active — see loadBids.js). Same
+// card shape as PartyCard above, just name + phone (no company/location/
+// trust score — this isn't a trip party).
+function SupportContactCard({ contact, t }) {
+  return (
+    <View className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
+      <Text className="mb-3 text-base font-bold text-slate-900">{t('yourSupportContact')}</Text>
+      <InfoRow icon="account-outline" label={t('fullName')} value={contact.name} />
+
+      {!!contact.phone && (
+        <TouchableOpacity
+          onPress={() => Linking.openURL(`tel:${contact.phone}`)}
+          className="mt-3 flex-row items-center justify-center gap-2 rounded-xl bg-green-600 py-3"
+        >
+          <Icon source="phone" size={18} color="#ffffff" />
+          <Text className="text-sm font-bold text-white">{contact.phone}</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -277,6 +302,10 @@ export default function TripDetailsScreen() {
   const { loadId } = route.params;
   const { language, t } = useLanguage();
   const queryClient = useQueryClient();
+  // This screen has no bottom tab bar to donate its own safe-area clearance
+  // (unlike Home) — without this, the last card (the other party's call
+  // button) sits flush against — or behind — a 3-button Android nav bar.
+  const insets = useSafeAreaInsets();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['tripDetails', loadId],
@@ -324,7 +353,7 @@ export default function TripDetailsScreen() {
     );
   }
 
-  const { load, bid, booking, poster, accepter, viewer_role } = data;
+  const { load, bid, booking, poster, accepter, viewer_role, support_contact } = data;
   const otherParty = viewer_role === 'poster' ? accepter : poster;
   const viewerEmail = viewer_role === 'poster' ? poster?.email : accepter?.email;
   // The load's bhada_price is just the original asking price — once a bid is
@@ -335,7 +364,10 @@ export default function TripDetailsScreen() {
   const canDeliver = ['matched', 'in_transit'].includes(load.status);
 
   return (
-    <ScrollView className="flex-1 bg-slate-50 px-4 pt-4">
+    <ScrollView
+      className="flex-1 bg-slate-50 px-4 pt-4"
+      contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 20) + 12 }}
+    >
       <LoadCard load={agreedLoad} hideActions />
 
       {!!(booking?.booking_ref || bid?.booking_ref) && (
@@ -414,6 +446,8 @@ export default function TripDetailsScreen() {
         party={otherParty}
         t={t}
       />
+
+      {!!support_contact && <SupportContactCard contact={support_contact} t={t} />}
     </ScrollView>
   );
 }

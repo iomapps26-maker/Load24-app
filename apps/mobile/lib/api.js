@@ -109,6 +109,9 @@ export const api = {
     mine: () => request('/api/support-tickets/mine'),
     create: (body) => request('/api/support-tickets', { method: 'POST', body })
   },
+  salesContact: {
+    mine: () => request('/api/sales-contact/mine')
+  },
   onboarding: {
     selectRole: (roles) => request('/api/onboarding/select-role', { method: 'POST', body: { roles } })
   },

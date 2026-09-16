@@ -73,6 +73,16 @@ vi.mock('../lib/bookings.js', () => ({
   BOOKING_COLUMNS: 'id'
 }));
 
+// The caller's permanent support contact (migration 061), resolved on every
+// trip-details read regardless of booking status — see loadBids.js's
+// support_contact field, gated at response time not fetch time.
+const getOrAssignSupportContact = vi.fn(() =>
+  Promise.resolve({ id: 'contact-1', name: 'Asha', phone: '9000000001', email: null })
+);
+vi.mock('../lib/contactAssignment.js', () => ({
+  getOrAssignSupportContact: (...args) => getOrAssignSupportContact(...args)
+}));
+
 // Records every supabaseAdmin.from('truck_availabilities').update(...).eq(...) call
 // so the test can assert both the patch and the filters it was scoped to,
 // without simulating real row filtering.
@@ -1016,6 +1026,68 @@ describe('autoRejectExpired (via GET /load/:load_id) — releases expired-bid ho
     const res = await request(app).get('/api/load-bids/load/load-1');
     expect(res.status).toBe(200);
     expect(res.body.booking).toBeNull();
+  });
+});
+
+describe('GET /load/:load_id/trip-details — support_contact', () => {
+  const LOAD = { id: 'load-9', posted_by: 'poster@example.com' };
+  const BID = { id: 'bid-9', load_id: 'load-9', status: 'approved', bid_by_email: 'trucker@example.com' };
+
+  function buildTripDetailsApp(callerEmail) {
+    const app = express();
+    app.use(express.json());
+    app.use((req, res, next) => {
+      req.user = { id: callerEmail === LOAD.posted_by ? 'poster-1' : 'trucker-1', email: callerEmail };
+      req.supabase = {
+        from(table) {
+          if (table === 'loads') {
+            return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: LOAD, error: null }) }) }) };
+          }
+          if (table === 'load_bids') {
+            return {
+              select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: BID, error: null }) }) }) })
+            };
+          }
+          throw new Error(`unexpected table ${table}`);
+        }
+      };
+      next();
+    });
+    app.use('/api/load-bids', loadBidsRouter);
+    return app;
+  }
+
+  beforeEach(() => {
+    getOrAssignSupportContact.mockClear();
+  });
+
+  it('is included when the booking is confirmed, in_transit, or completed', async () => {
+    for (const status of ['confirmed', 'in_transit', 'completed']) {
+      ensureBooking.mockResolvedValueOnce({ id: 'bk-9', booking_ref: 'BK000099', status, bid_id: BID.id });
+      const res = await request(buildTripDetailsApp('poster@example.com')).get('/api/load-bids/load/load-9/trip-details');
+      expect(res.status).toBe(200);
+      expect(res.body.support_contact).toEqual({ id: 'contact-1', name: 'Asha', phone: '9000000001', email: null });
+    }
+  });
+
+  it('is null when the booking is cancelled', async () => {
+    ensureBooking.mockResolvedValueOnce({ id: 'bk-9', booking_ref: 'BK000099', status: 'cancelled', bid_id: BID.id });
+    const res = await request(buildTripDetailsApp('poster@example.com')).get('/api/load-bids/load/load-9/trip-details');
+    expect(res.status).toBe(200);
+    expect(res.body.support_contact).toBeNull();
+  });
+
+  it('is null when there is no booking at all', async () => {
+    ensureBooking.mockResolvedValueOnce(null);
+    const res = await request(buildTripDetailsApp('poster@example.com')).get('/api/load-bids/load/load-9/trip-details');
+    expect(res.status).toBe(200);
+    expect(res.body.support_contact).toBeNull();
+  });
+
+  it("resolves the CALLER's own contact, not a fixed party", async () => {
+    ensureBooking.mockResolvedValueOnce({ id: 'bk-9', booking_ref: 'BK000099', status: 'confirmed', bid_id: BID.id });
+    await request(buildTripDetailsApp('trucker@example.com')).get('/api/load-bids/load/load-9/trip-details');
+    expect(getOrAssignSupportContact).toHaveBeenCalledWith('trucker-1');
   });
 });
 

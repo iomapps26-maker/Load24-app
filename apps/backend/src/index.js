@@ -23,6 +23,7 @@ import reviewsRouter from './routes/reviews.js';
 import supportTicketsRouter from './routes/supportTickets.js';
 import walletRouter from './routes/wallet.js';
 import notificationsRouter from './routes/notifications.js';
+import salesContactRouter from './routes/salesContact.js';
 import adminDashboardRouter from './routes/admin/dashboard.js';
 import adminUsersRouter from './routes/admin/users.js';
 import adminSupportTicketsRouter from './routes/admin/supportTickets.js';
@@ -40,6 +41,8 @@ import adminIncentivesRouter from './routes/admin/incentives.js';
 import adminContentBlocksRouter, { appVersionsRouter as adminAppVersionsRouter, appConfigHandler } from './routes/admin/content.js';
 import adminMasterDataRouter, { publicMasterDataRouter } from './routes/admin/masterData.js';
 import adminAuditLogRouter from './routes/admin/auditLog.js';
+import adminSupportContactsRouter from './routes/admin/supportContacts.js';
+import adminSalesContactsRouter from './routes/admin/salesContacts.js';
 import tripLocationPingsRouter from './routes/tripLocationPings.js';
 import { generateMatchSuggestions } from './lib/matchSuggestions.js';
 import { evaluateIncentiveRules } from './lib/incentiveEvaluation.js';
@@ -210,6 +213,7 @@ app.use('/api/trucks', requireAuth, requireConsents, trucksRouter);
 app.use('/api/truck-availability', requireAuth, requireConsents, truckAvailabilityRouter);
 app.use('/api/reviews', requireAuth, requireConsents, reviewsRouter);
 app.use('/api/support-tickets', requireAuth, requireConsents, supportTicketsRouter);
+app.use('/api/sales-contact', requireAuth, requireConsents, salesContactRouter);
 app.use('/api/wallet', requireAuth, requireConsents, walletRouter);
 app.use('/api/notifications', requireAuth, requireConsents, notificationsRouter);
 
@@ -244,6 +248,8 @@ app.use('/api/admin/content-blocks', requireAuth, requireRole(ADMIN_STAFF_ROLES)
 app.use('/api/admin/app-versions', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminAppVersionsRouter);
 app.use('/api/admin/master-data', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminMasterDataRouter);
 app.use('/api/admin/audit-log', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminAuditLogRouter);
+app.use('/api/admin/support-contacts', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminSupportContactsRouter);
+app.use('/api/admin/sales-contacts', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminSalesContactsRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);
