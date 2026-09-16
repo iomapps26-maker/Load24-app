@@ -530,6 +530,7 @@ export default function ProfileScreen() {
       <NavRow icon="file-document-outline" iconColor="#7c3aed" label={t('supportTickets')} onPress={() => navigation.navigate('SupportTickets')} />
       <NavRow icon="lock-outline" iconColor="#ea580c" label={t('mpinSettings')} onPress={() => navigation.navigate('MpinSetup')} />
       <NavRow icon="link-variant" iconColor="#0891b2" label={t('linkedAccounts')} onPress={() => navigation.navigate('LinkedAccounts')} />
+      <NavRow icon="cash-refund" iconColor="#f97316" label={t('tokenRefundPolicy')} onPress={() => navigation.navigate('TokenRefundPolicy')} />
 
       <TouchableOpacity
         className="mx-4 mb-3 flex-row items-center justify-center rounded-2xl border border-red-200 bg-white py-4"

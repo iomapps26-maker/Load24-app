@@ -5,7 +5,6 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../lib/api';
-import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
 import { SALES_PHONE } from '../lib/contact';
 import { downloadQr } from '../lib/downloadQr';
@@ -121,10 +120,8 @@ function RecentLoadCard({ load, t }) {
 
 export default function HomeScreen() {
   const navigation = useNavigation();
-  const { signOut } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const scrollRef = useRef(null);
-  const [summaryY, setSummaryY] = useState(0);
   const [qrModal, setQrModal] = useState(null); // 'iom' | 'vivek' | null
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
@@ -170,13 +167,6 @@ export default function HomeScreen() {
     total: myLoads.length
   };
 
-  const handleSignOut = () => {
-    Alert.alert(t('signOut'), '', [
-      { text: t('back'), style: 'cancel' },
-      { text: t('signOut'), style: 'destructive', onPress: signOut }
-    ]);
-  };
-
   return (
     <ScrollView ref={scrollRef} className="flex-1 bg-white">
       {/* Header */}
@@ -191,12 +181,6 @@ export default function HomeScreen() {
           </Text>
         </View>
         <View className="flex-row items-center gap-1">
-          <TouchableOpacity className="h-9 w-9 items-center justify-center rounded-lg bg-slate-100" onPress={() => navigation.navigate('Wallet')}>
-            <Icon source="wallet-outline" size={18} color="#334155" />
-          </TouchableOpacity>
-          <TouchableOpacity className="h-9 w-9 items-center justify-center rounded-lg bg-slate-100" onPress={handleSignOut}>
-            <Icon source="account-outline" size={18} color="#334155" />
-          </TouchableOpacity>
           <TouchableOpacity
             className="h-9 w-9 items-center justify-center rounded-lg bg-slate-100"
             onPress={() => navigation.navigate('Notifications')}
@@ -214,40 +198,9 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       </View>
-      <View className="border-b border-slate-100 px-4 pb-3 pt-2">
-        <TouchableOpacity
-          className="items-center rounded-xl bg-brand py-2.5"
-          onPress={() => scrollRef.current?.scrollTo({ y: summaryY, animated: true })}
-        >
-          <Text className="text-sm font-bold text-white">{t('goToDashboard')}</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Hero */}
-      <View className="bg-orange-50 px-6 pb-8 pt-8">
-        <Text className="mb-3 text-center text-2xl font-bold text-slate-900">{t('tagline')}</Text>
-        <Text className="mb-6 text-center text-sm text-slate-500">{t('heroSubtitle')}</Text>
-
-        {!canAddTruck && (
-          <TouchableOpacity
-            className="mb-3 flex-row items-center justify-center rounded-xl bg-brand py-3.5"
-            onPress={() => navigation.navigate('Create')}
-          >
-            <Text className="mr-2 text-base font-bold text-white">{t('ctaShipper')}</Text>
-            <Icon source="arrow-right" size={18} color="white" />
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity
-          className="flex-row items-center justify-center rounded-xl border-2 border-brand py-3.5"
-          onPress={() => navigation.navigate(canAddTruck ? 'TruckDetails' : 'Loads')}
-        >
-          <Text className="mr-2 text-base font-bold text-brand">{t('ctaTruckOwner')}</Text>
-          <Icon source="arrow-right" size={18} color="#f97316" />
-        </TouchableOpacity>
-      </View>
 
       {/* Loads summary */}
-      <View className="px-4 pt-6" onLayout={(e) => setSummaryY(e.nativeEvent.layout.y)}>
+      <View className="px-4 pt-6">
         <View className="mb-4 flex-row items-center justify-between">
           <Text className="text-xl font-bold text-slate-900">{t('yourLoadsSummary')}</Text>
           {!canAddTruck && (

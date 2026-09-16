@@ -220,6 +220,7 @@ export default function FindLoadsScreen() {
               liked={myLikes.some((l) => l.load_id === item.id)}
               onToggleLike={toggleLike}
               bidStatus={myBids.find((b) => b.load_id === item.id)?.status}
+              isOwnLoad={!!profile?.user_email && item.posted_by === profile.user_email}
             />
           )}
           ListEmptyComponent={

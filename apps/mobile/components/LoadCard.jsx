@@ -11,7 +11,7 @@ function formatDate(dateStr, language) {
   return d.toLocaleDateString(language === 'hi' ? 'hi-IN' : 'en-IN', { day: '2-digit', month: 'short' });
 }
 
-export default function LoadCard({ load, liked, onToggleLike, bidStatus, hideActions }) {
+export default function LoadCard({ load, liked, onToggleLike, bidStatus, hideActions, isOwnLoad }) {
   const { language, t } = useLanguage();
   const navigation = useNavigation();
 
@@ -152,7 +152,19 @@ export default function LoadCard({ load, liked, onToggleLike, bidStatus, hideAct
           </TouchableOpacity>
         )}
 
-        {!hideActions && !bidStatus && (
+        {/* The poster can't bid on their own load — swap the bid CTA for the
+            same "review bids received" screen MyLoadRow links to from Home. */}
+        {!hideActions && !bidStatus && isOwnLoad && (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('SeeBidding', { loadId: load.id })}
+            className="mt-3 flex-row items-center justify-center gap-1.5 rounded-xl bg-brand py-3"
+          >
+            <Icon source="gavel" size={18} color="#ffffff" />
+            <Text className="text-base font-bold text-white">{t('seeBidding')}</Text>
+          </TouchableOpacity>
+        )}
+
+        {!hideActions && !bidStatus && !isOwnLoad && (
           <TouchableOpacity
             onPress={() => navigation.navigate('PlaceBid', { load })}
             className="mt-3 flex-row items-center justify-center gap-1.5 rounded-xl border-2 border-brand py-3"

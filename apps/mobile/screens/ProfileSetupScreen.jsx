@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
 import { TextInput, Button, HelperText, Icon } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
@@ -59,6 +60,10 @@ export default function ProfileSetupScreen() {
   const { t } = useLanguage();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
+  // No bottom tab bar on this pushed screen, so the Back/Save row has no
+  // built-in clearance from a 3-button Android nav bar — without this it can
+  // render right under (or behind) it depending on the device.
+  const insets = useSafeAreaInsets();
   const isVerifiedEmail = !!user?.email && !isSyntheticEmail(user.email);
 
   const [step, setStep] = useState(0); // 0: role, 1: basic info
@@ -128,7 +133,7 @@ export default function ProfileSetupScreen() {
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1 bg-orange-50">
-      <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 40, paddingBottom: Math.max(insets.bottom, 20) + 20 }}>
         <ProgressDots step={step} />
 
         {step === 0 ? (

@@ -40,6 +40,7 @@ import PlaceBidScreen from './screens/PlaceBidScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import PostedLoadsScreen from './screens/PostedLoadsScreen';
 import TripHistoryScreen from './screens/TripHistoryScreen';
+import TokenRefundPolicyScreen from './screens/TokenRefundPolicyScreen';
 import MainTabs from './navigation/MainTabs';
 import { isExternalPickerActive } from './lib/pickerGuard';
 
@@ -319,6 +320,11 @@ function AuthGate() {
                 name="TripHistory"
                 component={TripHistoryScreen}
                 options={{ headerShown: true, title: t('tripHistory') }}
+              />
+              <Stack.Screen
+                name="TokenRefundPolicy"
+                component={TokenRefundPolicyScreen}
+                options={{ headerShown: true, title: t('tokenRefundPolicy') }}
               />
             </>
           )
