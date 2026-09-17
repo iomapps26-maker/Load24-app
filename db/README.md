@@ -276,6 +276,18 @@ SQL Editor (no migration runner wired up yet).
   booking is non-cancelled; sales-contact assignment is permanent and
   surfaced generally (`GET /api/sales-contact/mine`). RLS grants staff/own-row
   select only — every write goes through `supabaseAdmin`.
+- `migrations/062_fix_contact_assignment_ambiguous_id.sql` — fixes
+  `assign_support_contact()` / `assign_sales_contact()` (061), which raised
+  `42702 column reference "id" is ambiguous` on every call (confirmed live:
+  Render logs showed `[sales-contact] column reference "id" is ambiguous`),
+  silently caught by the route handlers' `.catch()` — so every assignment
+  failed, `assigned_count` never moved off 0, and the app always fell back to
+  the hardcoded sales number / hid the support contact card. Cause:
+  `returns table (id uuid, ...)` implicitly declares `id` as a PL/pgSQL
+  variable for the whole function body, and the `update ... where id = (...)`
+  referenced it unqualified. Fix: alias the update target (`update ...
+  roster scr ... where scr.id = (...)`), same as every other column
+  reference in the statement already does.
 - `seed.sql` — local/dev seed data: two demo accounts (shipper + trucker),
   a profile, a load, a like, a device, and consent rows. Requires a service
   role connection (inserts into `auth.users`) — never run against production.
