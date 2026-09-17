@@ -606,6 +606,25 @@ describe('GET /api/wallet/admin/transactions', () => {
     expect(res.body.transactions.map((t) => t.id)).toEqual(['t1']);
   });
 
+  it('attaches the withdrawal payout proof and reference to a paid withdrawal row', async () => {
+    store.wallet_transactions.push(
+      { id: 't1', transaction_id: 'TXN1', user_id: 'user-1', type: 'add_money', amount: 500, status: 'completed', created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 't2', transaction_id: 'TXN2', user_id: 'user-1', type: 'withdrawal', amount: 200, status: 'completed', created_at: '2026-02-01T00:00:00.000Z' }
+    );
+    store.withdrawal_requests.push({
+      id: 'wr1', user_id: 'user-1', wallet_transaction_id: 't2',
+      payment_proof_path: 'user-1/wr1.png', payment_reference: 'UTR123'
+    });
+
+    const res = await request(staffApp()).get('/api/wallet/admin/transactions');
+    expect(res.status).toBe(200);
+    const withdrawalRow = res.body.transactions.find((t) => t.id === 't2');
+    expect(withdrawalRow.payment_reference).toBe('UTR123');
+    expect(withdrawalRow.payment_proof_url).toBe('https://example.com/view/user-1/wr1.png?ttl=300');
+    const topupRow = res.body.transactions.find((t) => t.id === 't1');
+    expect(topupRow.payment_proof_url).toBeUndefined();
+  });
+
   it('paginates with page/limit', async () => {
     for (let i = 1; i <= 5; i++) {
       store.wallet_transactions.push({

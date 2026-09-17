@@ -626,8 +626,28 @@ router.get('/admin/transactions', requireRole(STAFF_ROLES), async (req, res) => 
   if (profilesError) return dbError(res, profilesError, 'Could not load user profiles', { log: LOG });
   const profileByUserId = new Map((profiles || []).map((p) => [p.user_id, p]));
 
+  // Withdrawal rows carry the staff-attached payout proof on withdrawal_requests
+  // (linked back by wallet_transaction_id), not on the ledger row itself — same
+  // proof shown on the Withdrawal Queue page, surfaced here too so staff can
+  // find it from the ledger without cross-referencing that queue.
+  const withdrawalTxIds = (data || []).filter((t) => t.type === 'withdrawal').map((t) => t.id);
+  const { data: withdrawalRows, error: withdrawalError } = withdrawalTxIds.length
+    ? await supabaseAdmin.from('withdrawal_requests').select('wallet_transaction_id, payment_proof_path, payment_reference').in('wallet_transaction_id', withdrawalTxIds)
+    : { data: [], error: null };
+  if (withdrawalError) return dbError(res, withdrawalError, 'Could not load payment proof', { log: LOG });
+  const proofByTxId = new Map(
+    await Promise.all((withdrawalRows || []).map(async (w) => [
+      w.wallet_transaction_id,
+      { payment_proof_url: await signedWithdrawalProofUrl(w.payment_proof_path), payment_reference: w.payment_reference }
+    ]))
+  );
+
   res.json({
-    transactions: (data || []).map((t) => ({ ...t, profile: profileByUserId.get(t.user_id) || null })),
+    transactions: (data || []).map((t) => ({
+      ...t,
+      profile: profileByUserId.get(t.user_id) || null,
+      ...(proofByTxId.get(t.id) || {})
+    })),
     page,
     limit,
     total: count ?? 0
