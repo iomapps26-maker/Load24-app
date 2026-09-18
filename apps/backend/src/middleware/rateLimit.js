@@ -120,3 +120,17 @@ export const linkPhoneVerifyOtpRateLimiter = rateLimit({
   keyGenerator: (req) => req.user?.id || req.ip,
   message: { error: 'Too many attempts, please try again later.' }
 });
+
+// Public "look up my sales contact by phone" for the marketing site's
+// Support page (load24 repo) — there's no login there, so this takes a
+// typed mobile number with no OTP proof of ownership. Keyed by phone (like
+// the WhatsApp limiters) since a bare number is cheap to enumerate and this
+// is unauthenticated.
+export const publicSalesContactLookupRateLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.query?.mobile || req.ip,
+  message: { error: 'Too many requests, please try again later.' }
+});

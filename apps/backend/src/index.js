@@ -24,6 +24,7 @@ import supportTicketsRouter from './routes/supportTickets.js';
 import walletRouter from './routes/wallet.js';
 import notificationsRouter from './routes/notifications.js';
 import salesContactRouter from './routes/salesContact.js';
+import publicSalesContactRouter from './routes/publicSalesContact.js';
 import adminDashboardRouter from './routes/admin/dashboard.js';
 import adminUsersRouter from './routes/admin/users.js';
 import adminSupportTicketsRouter from './routes/admin/supportTickets.js';
@@ -189,6 +190,7 @@ app.use('/api/auth/whatsapp', whatsappAuthRouter);
 // through supabaseAdmin rather than req.supabase.
 app.get('/api/app-config', appConfigHandler);
 app.use('/api/master-data', publicMasterDataRouter);
+app.use('/api/public/sales-contact', publicSalesContactRouter);
 
 // Onboarding-safe routes: reachable with just a valid session, before the
 // user has recorded the consents requireConsents checks for below. Profile

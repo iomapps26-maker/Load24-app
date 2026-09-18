@@ -21,6 +21,17 @@ function syntheticEmailFor(phoneE164: string): string {
 const sendOtpSchema = z.object({ phone: z.string() });
 const verifyOtpSchema = z.object({ phone: z.string(), code: z.string().regex(/^\d{6}$/) });
 
+// Play Store / App Store reviewers have no way to receive a real WhatsApp
+// message on a number tied to our Meta WABA, which blocks the "Sign in
+// details" demo-account requirement on every store submission. When both
+// env vars are set, this one phone number skips the real send/verify round
+// trip and accepts a fixed code instead — every other phone number is
+// unaffected. Leave both unset outside of an active store review.
+const PLAY_REVIEW_PHONE = process.env.PLAY_REVIEW_PHONE && process.env.PLAY_REVIEW_OTP
+  ? normalizeIndianPhone(process.env.PLAY_REVIEW_PHONE)
+  : null;
+const PLAY_REVIEW_OTP = process.env.PLAY_REVIEW_OTP || null;
+
 // POST /api/auth/whatsapp/send-otp — unauthenticated (this *is* the login
 // step, mounted in index.js before the requireAuth-gated /api/auth block).
 // Same endpoint serves both sign-in and sign-up; which one happens is
@@ -33,6 +44,10 @@ router.post('/send-otp', whatsappSendOtpRateLimiter, async (req, res) => {
 
   const phone = normalizeIndianPhone(parsed.data.phone);
   if (!phone) return res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number' });
+
+  if (phone === PLAY_REVIEW_PHONE) {
+    return res.status(200).json({ ok: true, expires_in: 300 });
+  }
 
   try {
     const { expires_in } = await issueOtp(phone);
@@ -61,9 +76,15 @@ router.post('/verify-otp', whatsappVerifyOtpRateLimiter, async (req, res) => {
   const phone = normalizeIndianPhone(parsed.data.phone);
   if (!phone) return res.status(400).json({ error: 'phone and 6-digit code are required' });
 
-  const result = await consumeOtp(phone, parsed.data.code);
-  if (!result.ok) {
-    return res.status(result.status).json({ error: result.error, attempts_remaining: result.attempts_remaining });
+  if (phone === PLAY_REVIEW_PHONE) {
+    if (parsed.data.code !== PLAY_REVIEW_OTP) {
+      return res.status(401).json({ error: 'Incorrect code' });
+    }
+  } else {
+    const result = await consumeOtp(phone, parsed.data.code);
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error, attempts_remaining: result.attempts_remaining });
+    }
   }
 
   const syntheticEmail = syntheticEmailFor(phone);
