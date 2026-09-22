@@ -57,15 +57,29 @@ export default function MyBidRow({ bid, t, navigation }) {
         </View>
       </View>
 
-      {bid.status === 'approved' && (
+      <View className="mt-3 flex-row gap-2">
+        {/* Every bidder, win or lose, can open the same rate-and-rank list the
+            poster reviews (GET /api/load-bids/load/:id now hands a bidder the
+            full spread, redacted to rate + role for everyone but this row —
+            see loadBids.js) — this is where the caller sees how their own
+            offer stacked up, not just its outcome badge above. */}
         <TouchableOpacity
-          className="mt-3 flex-row items-center justify-center gap-1 self-start rounded-lg bg-brand px-3 py-2"
-          onPress={() => navigation.navigate('TripDetails', { loadId: load.id })}
+          className="flex-1 flex-row items-center justify-center gap-1 self-start rounded-lg border border-slate-300 px-3 py-2"
+          onPress={() => navigation.navigate('SeeBidding', { loadId: load.id })}
         >
-          <Icon source="file-document-outline" size={14} color="white" />
-          <Text className="text-xs font-bold text-white">{t('viewTripDetails')}</Text>
+          <Icon source="gavel" size={14} color="#334155" />
+          <Text className="text-xs font-bold text-slate-700">{t('seeAllBids')}</Text>
         </TouchableOpacity>
-      )}
+        {bid.status === 'approved' && (
+          <TouchableOpacity
+            className="flex-1 flex-row items-center justify-center gap-1 self-start rounded-lg bg-brand px-3 py-2"
+            onPress={() => navigation.navigate('TripDetails', { loadId: load.id })}
+          >
+            <Icon source="file-document-outline" size={14} color="white" />
+            <Text className="text-xs font-bold text-white">{t('viewTripDetails')}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 }

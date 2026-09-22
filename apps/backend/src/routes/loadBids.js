@@ -651,9 +651,26 @@ router.post('/', async (req, res) => {
   }).catch((err) => console.error('[load-bids] bid_placed notify failed', err));
 });
 
-// GET /api/load-bids/load/:load_id — poster-only "See Bidding" view: the load
-// plus every bid placed on it. RLS (load_bids_select_own_or_poster) already
-// keeps this to the load's poster or the bidder themselves.
+// Fields safe to hand a fellow bidder about someone ELSE's bid on the same
+// load — the rate + role they need to see where their own offer ranks, none
+// of the identity/contact/vehicle detail only the poster gets while deciding
+// (see the BID_TYPE_KEY comment in SeeBiddingScreen.jsx).
+const PUBLIC_BID_FIELDS = ['id', 'load_id', 'amount', 'status', 'bid_by_type', 'expected_pickup_at', 'expires_at', 'reviewed_at', 'created_at'];
+
+function redactBid(bid, callerEmail) {
+  if (bid.bid_by_email === callerEmail) return { ...bid, is_mine: true };
+  const redacted = { is_mine: false };
+  for (const field of PUBLIC_BID_FIELDS) redacted[field] = bid[field];
+  return redacted;
+}
+
+// GET /api/load-bids/load/:load_id — the load plus every bid placed on it.
+// The poster sees full bid detail (RLS load_bids_select_own_or_poster) to
+// decide who to approve. A bidder on this load can open the same view — to
+// see the full spread of rates and where their own bid ranks — but RLS only
+// ever hands a non-poster caller their own row back, so that branch is built
+// here on the service-role client instead, with every bid that isn't theirs
+// redacted to PUBLIC_BID_FIELDS first (rate + role, never identity).
 router.get('/load/:load_id', async (req, res) => {
   await autoRejectExpired(req.supabase, req.params.load_id);
 
@@ -664,16 +681,36 @@ router.get('/load/:load_id', async (req, res) => {
     .single();
   if (loadError) return dbError(res, loadError, 'Could not load this load');
 
-  const { data: bids, error: bidsError } = await req.supabase
-    .from('load_bids')
-    .select('*')
-    .eq('load_id', req.params.load_id)
-    .order('created_at', { ascending: false });
+  const isPoster = req.user.email === load.posted_by;
+  let bids, bidsError;
+
+  if (isPoster) {
+    ({ data: bids, error: bidsError } = await req.supabase
+      .from('load_bids')
+      .select('*')
+      .eq('load_id', req.params.load_id)
+      .order('created_at', { ascending: false }));
+    if (bids) bids = bids.map((b) => ({ ...b, is_mine: false }));
+  } else {
+    ({ data: bids, error: bidsError } = await supabaseAdmin
+      .from('load_bids')
+      .select('*')
+      .eq('load_id', req.params.load_id)
+      .order('created_at', { ascending: false }));
+    if (!bidsError) {
+      // Same boundary RLS drew before this branch existed: only a party to
+      // at least one bid on this load may see the list at all.
+      if (!bids?.some((b) => b.bid_by_email === req.user.email)) {
+        return res.status(403).json({ error: 'Not authorized to view bidding for this load' });
+      }
+      bids = bids.map((b) => redactBid(b, req.user.email));
+    }
+  }
   if (bidsError) return dbError(res, bidsError, 'Could not load bids for this load');
 
-  // Once one bid is approved this load has a booking (spec §8) — hand it to the
-  // poster's "See Bidding" view so it can show the reference next to the
-  // confirmed bid without a second round-trip.
+  // Once one bid is approved this load has a booking (spec §8) — hand it to
+  // the viewer so it can show the reference next to the confirmed bid
+  // without a second round-trip.
   const booking = bids?.some((b) => b.status === 'approved')
     ? await getBookingByLoadId(req.params.load_id).catch((err) => {
         console.error('[load-bids] getBookingByLoadId failed for load', req.params.load_id, err);
@@ -681,7 +718,7 @@ router.get('/load/:load_id', async (req, res) => {
       })
     : null;
 
-  res.json({ load, bids, booking });
+  res.json({ load, bids, booking, viewer_role: isPoster ? 'poster' : 'bidder' });
 });
 
 // GET /api/load-bids/load/:load_id/trip-details — once a bid on this load

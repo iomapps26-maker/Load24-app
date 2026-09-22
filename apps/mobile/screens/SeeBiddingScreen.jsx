@@ -30,7 +30,7 @@ const BID_TYPE_KEY = {
   shipper: 'roleShipper'
 };
 
-function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
+function BidRow({ bid, rank, canReview, onApprove, onReject, approving, rejecting }) {
   const { t } = useLanguage();
   const [remainingMs, setRemainingMs] = useState(() => msRemaining(bid));
 
@@ -55,22 +55,30 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
   return (
     <View className="mb-3 rounded-2xl border border-slate-200 bg-white p-4">
       <View className="flex-row items-center justify-between">
-        <View>
-          <Text className="text-xl font-extrabold text-slate-900">₹{Number(bid.amount).toLocaleString('en-IN')}</Text>
-          <Text className="text-xs text-slate-400">
-            {BID_TYPE_KEY[bid.bid_by_type] ? t(BID_TYPE_KEY[bid.bid_by_type]) : t('bidderGeneric')}
-            {bid.status === 'approved' && bid.truck_number ? ` · ${bid.truck_number}` : ''}
-          </Text>
-          {!!pickupLabel(bid.expected_pickup_at) && (
-            <Text className="mt-0.5 text-xs text-slate-500">{t('expectedPickupShort')}: {pickupLabel(bid.expected_pickup_at)}</Text>
+        <View className="flex-1 flex-row items-start gap-2">
+          {!!rank && (
+            <View className={`mt-0.5 h-6 w-6 items-center justify-center rounded-full ${rank === 1 ? 'bg-green-600' : 'bg-slate-200'}`}>
+              <Text className={`text-[11px] font-extrabold ${rank === 1 ? 'text-white' : 'text-slate-600'}`}>#{rank}</Text>
+            </View>
           )}
+          <View>
+            <Text className="text-xl font-extrabold text-slate-900">₹{Number(bid.amount).toLocaleString('en-IN')}</Text>
+            <Text className="text-xs text-slate-400">
+              {BID_TYPE_KEY[bid.bid_by_type] ? t(BID_TYPE_KEY[bid.bid_by_type]) : t('bidderGeneric')}
+              {bid.is_mine ? ` · ${t('youSuffix')}` : ''}
+              {bid.status === 'approved' && bid.truck_number ? ` · ${bid.truck_number}` : ''}
+            </Text>
+            {!!pickupLabel(bid.expected_pickup_at) && (
+              <Text className="mt-0.5 text-xs text-slate-500">{t('expectedPickupShort')}: {pickupLabel(bid.expected_pickup_at)}</Text>
+            )}
+          </View>
         </View>
         <View className={`rounded-full px-3 py-1 ${statusStyle.bg}`}>
           <Text className={`text-xs font-bold ${statusStyle.text}`}>{statusStyle.label}</Text>
         </View>
       </View>
 
-      {stillOpen && (
+      {stillOpen && canReview && (
         <View className="mt-3 flex-row gap-2">
           <TouchableOpacity
             onPress={() => onReject(bid.id)}
@@ -95,13 +103,17 @@ function BidRow({ bid, onApprove, onReject, approving, rejecting }) {
   );
 }
 
-// Poster-only screen: shows one load exactly as it appears on the load feed,
-// plus every bid placed against it. Bids auto-reject 5 minutes after being
-// placed if the poster hasn't approved/rejected (migration 057) —
-// GET /api/load-bids/load/:id flips any expired pending bid on the server
-// (rate-limited to one sweep per load per 30s), so a 10s refetchInterval here
-// keeps the list fresh without hammering that endpoint. The per-bid countdown
-// in BidRow ticks every second locally regardless.
+// Shows one load exactly as it appears on the load feed, plus every bid
+// placed against it — reachable by the poster (Your Posted Loads / the load
+// feed card) to approve/reject, and by any bidder on this load (Trip
+// History's "See All Bids") to see the rate spread and their own rank,
+// read-only (canReview / viewer_role from the API gates the approve/reject
+// row). Bids auto-reject 5 minutes after being placed if the poster hasn't
+// approved/rejected (migration 057) — GET /api/load-bids/load/:id flips any
+// expired pending bid on the server (rate-limited to one sweep per load per
+// 30s), so a 10s refetchInterval here keeps the list — and the rate ranking
+// derived from it — fresh for every viewer without hammering that endpoint.
+// The per-bid countdown in BidRow ticks every second locally regardless.
 export default function SeeBiddingScreen() {
   const route = useRoute();
   const navigation = useNavigation();
@@ -151,8 +163,19 @@ export default function SeeBiddingScreen() {
     );
   }
 
-  const { load, bids = [], booking } = data || {};
-  const hasApprovedBid = bids.some((bid) => bid.status === 'approved');
+  const { load, bids = [], booking, viewer_role: viewerRole } = data || {};
+  const canReview = viewerRole === 'poster';
+  // A losing bidder is never a party to someone else's trip (TripDetails
+  // 403s them) — only surface the CTA when the approved bid is their own.
+  const hasApprovedBid = bids.some((bid) => bid.status === 'approved' && (canReview || bid.is_mine));
+
+  // Rate ranking, lowest first — computed client-side from whatever bids this
+  // viewer can see (the poster gets every bid, a bidder only this load's
+  // full redacted list — see GET /api/load-bids/load/:load_id) rather than
+  // trusting a server-stamped rank that would go stale between the 10s polls.
+  const rankById = new Map(
+    [...bids].sort((a, b) => Number(a.amount) - Number(b.amount)).map((bid, index) => [bid.id, index + 1])
+  );
 
   return (
     <ScrollView className="flex-1 bg-slate-50 px-4 pt-4">
@@ -186,7 +209,8 @@ export default function SeeBiddingScreen() {
         </TouchableOpacity>
       )}
 
-      <Text className="mb-3 text-lg font-bold text-slate-900">{t('allBids')}</Text>
+      <Text className="text-lg font-bold text-slate-900">{t('allBids')}</Text>
+      {bids.length > 0 && <Text className="mb-3 mt-0.5 text-xs text-slate-400">{t('rankHint')}</Text>}
       {bids.length === 0 ? (
         <Text className="mt-4 text-center text-slate-400">{t('noBidsYet')}</Text>
       ) : (
@@ -194,6 +218,8 @@ export default function SeeBiddingScreen() {
           <BidRow
             key={bid.id}
             bid={bid}
+            rank={rankById.get(bid.id)}
+            canReview={canReview}
             onApprove={(id) => approveMutation.mutate(id)}
             onReject={(id) => rejectMutation.mutate(id)}
             approving={approveMutation.isPending}
