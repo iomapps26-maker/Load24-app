@@ -15,6 +15,7 @@ import loadBidsRouter from './routes/loadBids.js';
 import onboardingRouter from './routes/onboarding.js';
 import authRouter from './routes/auth.js';
 import whatsappAuthRouter from './routes/whatsappAuth.js';
+import whatsappWebhookRouter from './routes/whatsappWebhook.js';
 import bankDetailsRouter from './routes/bankDetails.js';
 import bankAccountsRouter from './routes/bankAccounts.js';
 import trucksRouter from './routes/trucks.js';
@@ -182,6 +183,11 @@ app.use(
 // all — mounted at the more specific /api/auth/whatsapp path *before* the
 // requireAuth-gated /api/auth block below so it never hits that middleware.
 app.use('/api/auth/whatsapp', whatsappAuthRouter);
+
+// Meta's delivery-status callback — see whatsappWebhook.js for why this has
+// to exist and be public. No requireAuth: Meta's own GET handshake token
+// (WHATSAPP_WEBHOOK_VERIFY_TOKEN) is the only gate.
+app.use('/api/whatsapp/webhook', whatsappWebhookRouter);
 
 // Public, no auth — both called by the mobile app before/without a session
 // (app-config on launch, master-data to populate form dropdowns like truck

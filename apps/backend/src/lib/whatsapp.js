@@ -142,3 +142,39 @@ export async function sendWhatsAppLoadBroadcast(phoneE164, { loadId, route, vehi
   }
   return payload;
 }
+
+// Sends the approved MARKETING-category template (WHATSAPP_REGISTRATION_INVITE_TEMPLATE_NAME)
+// inviting a non-user to download and register — cold outreach, not tied to
+// any existing account or 24h chat window. Only one positional body variable
+// ({{1}}=name); the template's "Register Free" button is a static URL with
+// no per-recipient suffix, so it needs no button component in the send call
+// (only a dynamic URL button parameter would).
+export async function sendWhatsAppRegistrationInvite(phoneE164, name) {
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to: phoneE164.replace('+', ''),
+      type: 'template',
+      template: {
+        name: process.env.WHATSAPP_REGISTRATION_INVITE_TEMPLATE_NAME,
+        language: { code: process.env.WHATSAPP_REGISTRATION_INVITE_TEMPLATE_LANG },
+        components: [
+          { type: 'body', parameters: [{ type: 'text', text: name || 'there' }] }
+        ]
+      }
+    })
+  });
+
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(payload?.error?.message || `WhatsApp send failed: ${res.status}`);
+  }
+  return payload;
+}
