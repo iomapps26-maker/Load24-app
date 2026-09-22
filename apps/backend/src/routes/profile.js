@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { normalizeIndianPhone } from '../lib/phone.js';
 import { KYC_REQUIRED_DOCUMENTS, KYC_REQUIRES_LOCATION } from '../lib/kycRequiredDocs.js';
+import { getReferralStats, recordReferral } from '../lib/referrals.js';
 
 const router = Router();
 
@@ -79,9 +80,23 @@ router.get('/me', async (req, res) => {
   res.json(data);
 });
 
+// GET /api/profile/referral-stats — the caller's own referral code (lazily
+// generated on first call) plus how many people they've referred, and how
+// many of those completed KYC. Same route file as /me since both read the
+// signed-in user's own state; kept out of the RESTful /referrals namespace
+// on purpose since there is no such resource yet, just this one summary.
+router.get('/referral-stats', async (req, res) => {
+  try {
+    const stats = await getReferralStats(req.user.id);
+    res.json(stats);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // POST /api/profile — create/complete the profile for the signed-in user
 router.post('/', async (req, res) => {
-  const { full_name, mobile, user_type, company_name, city, state, pincode, contact_email } = req.body;
+  const { full_name, mobile, user_type, company_name, city, state, pincode, contact_email, referral_code } = req.body;
   if (!mobile || !user_type) {
     return res.status(400).json({ error: 'mobile and user_type are required' });
   }
@@ -157,6 +172,16 @@ router.post('/', async (req, res) => {
       });
     }
     return res.status(400).json({ error: error.message });
+  }
+
+  // Referral attribution only ever happens on the first profile a user ever
+  // creates (currentProfile is null) — a code sent along with a later edit
+  // is ignored, so re-saving the profile can never re-attribute or
+  // overwrite an existing referral. Never fails profile creation over a
+  // bad/unknown/duplicate code — same soft-fail spirit as
+  // publicSalesContact.js.
+  if (!currentProfile && referral_code) {
+    await recordReferral(req.user.id, referral_code).catch(() => null);
   }
 
   // A real role switch (not first-time signup, not a resave of the same

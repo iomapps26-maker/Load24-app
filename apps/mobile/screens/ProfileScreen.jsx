@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, Share } from 'react-native';
 import { Icon, TextInput, Button } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import Clipboard from '@react-native-clipboard/clipboard';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
@@ -321,6 +322,62 @@ function BankDetailsCard({ t }) {
   );
 }
 
+function ReferralCard({ t }) {
+  const [copied, setCopied] = useState(false);
+  const { data: stats } = useQuery({ queryKey: ['referralStats'], queryFn: api.profile.referralStats });
+
+  const handleCopy = () => {
+    if (!stats?.code) return;
+    Clipboard.setString(stats.code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleShare = () => {
+    if (!stats?.code) return;
+    Share.share({ message: `${t('referralShareMessage')}: ${stats.code}` }).catch(() => {});
+  };
+
+  if (!stats) return null;
+
+  return (
+    <SectionCard>
+      <View className="mb-3 flex-row items-center">
+        <Icon source="account-multiple-plus-outline" size={20} color="#7c3aed" />
+        <Text className="ml-2 text-base font-bold text-slate-900">{t('referralProgram')}</Text>
+      </View>
+
+      <Text className="text-xs text-slate-400">{t('yourReferralCode')}</Text>
+      <View className="mb-4 mt-1 flex-row items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
+        <Text className="text-lg font-bold tracking-widest text-brand">{stats.code}</Text>
+        <View className="flex-row items-center">
+          <TouchableOpacity className="mr-4 flex-row items-center" onPress={handleCopy} hitSlop={8}>
+            <Icon source={copied ? 'check' : 'content-copy'} size={16} color={copied ? '#16a34a' : '#334155'} />
+            {copied && <Text className="ml-1 text-xs text-green-600">{t('referralCodeCopied')}</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity className="flex-row items-center" onPress={handleShare} hitSlop={8}>
+            <Icon source="share-variant-outline" size={16} color="#334155" />
+            <Text className="ml-1 text-sm font-semibold text-slate-700">{t('shareCode')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View className="flex-row">
+        <View className="flex-1 items-center">
+          <Text className="text-2xl font-bold text-slate-900">{stats.total_referred}</Text>
+          <Text className="text-xs text-slate-500">{t('peopleReferred')}</Text>
+        </View>
+        <View className="flex-1 items-center">
+          <Text className="text-2xl font-bold text-green-600">{stats.verified_count}</Text>
+          <Text className="text-xs text-slate-500">{t('verifiedReferrals')}</Text>
+        </View>
+      </View>
+
+      <Text className="mt-3 text-xs text-slate-400">{t('referralHint')}</Text>
+    </SectionCard>
+  );
+}
+
 function ReviewsCard({ profile, t }) {
   const { data: reviews = [] } = useQuery({ queryKey: ['reviews'], queryFn: api.reviews.mine });
 
@@ -444,6 +501,8 @@ export default function ProfileScreen() {
           </View>
         </View>
       </SectionCard>
+
+      <ReferralCard t={t} />
 
       <SectionCard>
         <View className="flex-row items-center justify-between">

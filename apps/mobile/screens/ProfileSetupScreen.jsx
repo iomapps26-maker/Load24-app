@@ -80,6 +80,7 @@ export default function ProfileSetupScreen() {
   const [pincode, setPincode] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
 
@@ -124,7 +125,11 @@ export default function ProfileSetupScreen() {
           pincode: pincode.trim() || undefined,
           city: city.trim() || undefined,
           state: state.trim() || undefined,
-          contact_email: !isVerifiedEmail ? email.trim() || undefined : undefined
+          contact_email: !isVerifiedEmail ? email.trim() || undefined : undefined,
+          // Referral attribution only happens on the very first profile a
+          // user creates (backend ignores it on a later edit anyway) — only
+          // send it when there was no prior role on file.
+          referral_code: !originalRole ? referralCode.trim() || undefined : undefined
         }),
         // Editing an existing profile re-submits the same role — the
         // backend rejects a role the user already holds (409), which isn't
@@ -256,6 +261,20 @@ export default function ProfileSetupScreen() {
 
               <Text className="mb-1 text-sm text-slate-600">{t('state')}</Text>
               <TextInput mode="outlined" value={state} onChangeText={setState} />
+
+              {!originalRole && (
+                <>
+                  <Text className="mb-1 mt-4 text-sm text-slate-500">{t('referralCodeOptional')}</Text>
+                  <TextInput
+                    mode="outlined"
+                    autoCapitalize="characters"
+                    placeholder={t('referralCodePlaceholder')}
+                    value={referralCode}
+                    onChangeText={setReferralCode}
+                    left={<TextInput.Icon icon="account-multiple-plus-outline" />}
+                  />
+                </>
+              )}
             </View>
 
             <HelperText type="error" visible={!!error}>{error}</HelperText>

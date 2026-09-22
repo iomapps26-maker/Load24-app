@@ -69,7 +69,8 @@ export const api = {
   profile: {
     me: () => request('/api/profile/me'),
     save: (body) => request('/api/profile', { method: 'POST', body }),
-    deleteAccount: () => request('/api/profile', { method: 'DELETE' })
+    deleteAccount: () => request('/api/profile', { method: 'DELETE' }),
+    referralStats: () => request('/api/profile/referral-stats')
   },
   bankDetails: {
     me: () => request('/api/bank-details/me'),

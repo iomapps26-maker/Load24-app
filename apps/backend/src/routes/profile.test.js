@@ -105,6 +105,18 @@ vi.mock('../lib/supabase.js', () => ({
   }
 }));
 
+// lib/referrals.js is exercised on its own in lib/referrals.test.js — mocked
+// here so POST /'s referral-capture branch is testable without needing a
+// referral_codes/referrals table in the supabaseAdmin mock above, same
+// reasoning as contactAssignment.js's comment on why routes call wrapper
+// functions instead of supabaseAdmin.rpc(...) directly.
+const getReferralStatsMock = vi.fn();
+const recordReferralMock = vi.fn();
+vi.mock('../lib/referrals.js', () => ({
+  getReferralStats: (...args) => getReferralStatsMock(...args),
+  recordReferral: (...args) => recordReferralMock(...args)
+}));
+
 const { default: profileRouter } = await import('./profile.js');
 
 // In-memory stand-in for req.supabase.from('user_profiles')... — shares the
@@ -164,6 +176,11 @@ function createMockSupabase(seedRows = []) {
     }
   };
 }
+
+beforeEach(() => {
+  getReferralStatsMock.mockReset();
+  recordReferralMock.mockReset().mockResolvedValue(null);
+});
 
 function buildApp(mockSupabase, userId = 'user-1', userPhone = null) {
   const app = express();
@@ -341,5 +358,59 @@ describe('POST /api/profile — role switch resets KYC', () => {
     expect(res.status).toBe(201);
     expect(res.body.kyc_status).toBeUndefined();
     expect(mockAdminState.kycCases).toEqual([]);
+  });
+});
+
+describe('GET /api/profile/referral-stats', () => {
+  it('returns the stats from lib/referrals.js', async () => {
+    getReferralStatsMock.mockResolvedValue({ code: 'ABCD2345', total_referred: 2, verified_count: 1 });
+    const app = buildApp(createMockSupabase([]), 'user-1');
+    const res = await request(app).get('/api/profile/referral-stats');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ code: 'ABCD2345', total_referred: 2, verified_count: 1 });
+    expect(getReferralStatsMock).toHaveBeenCalledWith('user-1');
+  });
+
+  it('surfaces a failure as a 400', async () => {
+    getReferralStatsMock.mockRejectedValue(new Error('boom'));
+    const app = buildApp(createMockSupabase([]), 'user-1');
+    const res = await request(app).get('/api/profile/referral-stats');
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /api/profile — referral capture', () => {
+  const baseBody = { full_name: 'Test User', mobile: '9876543210', user_type: 'shipper' };
+
+  it('records a referral on first-time profile creation when a code is sent', async () => {
+    const app = buildApp(createMockSupabase([]), 'new-user', null);
+    const res = await request(app).post('/api/profile').send({ ...baseBody, referral_code: 'ABCD2345' });
+    expect(res.status).toBe(201);
+    expect(recordReferralMock).toHaveBeenCalledWith('new-user', 'ABCD2345');
+  });
+
+  it('does not attempt referral capture when no code is sent', async () => {
+    const app = buildApp(createMockSupabase([]), 'new-user', null);
+    const res = await request(app).post('/api/profile').send(baseBody);
+    expect(res.status).toBe(201);
+    expect(recordReferralMock).not.toHaveBeenCalled();
+  });
+
+  it('never re-attributes an existing profile on a later edit, even if a code is sent', async () => {
+    const app = buildApp(
+      createMockSupabase([{ user_id: 'user-1', mobile: '+919876543210', mobile_verified: true, user_type: 'shipper' }]),
+      'user-1',
+      null
+    );
+    const res = await request(app).post('/api/profile').send({ ...baseBody, referral_code: 'ABCD2345', full_name: 'Updated' });
+    expect(res.status).toBe(201);
+    expect(recordReferralMock).not.toHaveBeenCalled();
+  });
+
+  it('still saves the profile even if referral capture fails', async () => {
+    recordReferralMock.mockRejectedValue(new Error('boom'));
+    const app = buildApp(createMockSupabase([]), 'new-user', null);
+    const res = await request(app).post('/api/profile').send({ ...baseBody, referral_code: 'ABCD2345' });
+    expect(res.status).toBe(201);
   });
 });
