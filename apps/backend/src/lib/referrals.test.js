@@ -64,7 +64,13 @@ vi.mock('./supabase.js', () => ({
   }
 }));
 
-const { getOrCreateReferralCode, recordReferral, getReferralStats } = await import('./referrals.js');
+const {
+  getOrCreateReferralCode,
+  getOrCreateSalesContactReferralCode,
+  recordReferral,
+  getReferralStats,
+  getSalesContactReferralStats
+} = await import('./referrals.js');
 
 beforeEach(() => {
   rpcMock.mockReset();
@@ -87,13 +93,36 @@ describe('getOrCreateReferralCode', () => {
   });
 });
 
+describe('getOrCreateSalesContactReferralCode', () => {
+  it('calls get_or_create_sales_contact_referral_code with p_sales_contact_id and returns the code', async () => {
+    rpcMock.mockResolvedValue({ data: 'WXYZ6789', error: null });
+    const result = await getOrCreateSalesContactReferralCode('contact-1');
+    expect(rpcMock).toHaveBeenCalledWith('get_or_create_sales_contact_referral_code', { p_sales_contact_id: 'contact-1' });
+    expect(result).toBe('WXYZ6789');
+  });
+
+  it('throws on an RPC error', async () => {
+    rpcMock.mockResolvedValue({ data: null, error: new Error('boom') });
+    await expect(getOrCreateSalesContactReferralCode('contact-1')).rejects.toThrow('boom');
+  });
+});
+
 describe('recordReferral', () => {
   it('attributes the referred user to the code owner', async () => {
     mockState.referralCodes = [{ user_id: 'referrer-1', code: 'ABCD2345' }];
     const result = await recordReferral('new-user', 'abcd2345');
     expect(result).toBe('referrer-1');
     expect(mockState.referrals).toEqual([
-      { referrer_user_id: 'referrer-1', referred_user_id: 'new-user', code_used: 'ABCD2345' }
+      { referrer_user_id: 'referrer-1', referrer_sales_contact_id: null, referred_user_id: 'new-user', code_used: 'ABCD2345' }
+    ]);
+  });
+
+  it('attributes the referred user to a sales contact when the code belongs to one', async () => {
+    mockState.referralCodes = [{ sales_contact_id: 'contact-1', code: 'WXYZ6789' }];
+    const result = await recordReferral('new-user', 'wxyz6789');
+    expect(result).toBe('contact-1');
+    expect(mockState.referrals).toEqual([
+      { referrer_user_id: null, referrer_sales_contact_id: 'contact-1', referred_user_id: 'new-user', code_used: 'WXYZ6789' }
     ]);
   });
 
@@ -146,5 +175,28 @@ describe('getReferralStats', () => {
     ];
     const result = await getReferralStats('user-1');
     expect(result).toEqual({ code: 'ABCD2345', total_referred: 3, verified_count: 2 });
+  });
+});
+
+describe('getSalesContactReferralStats', () => {
+  it('returns the code with zero counts when nobody has been referred yet', async () => {
+    rpcMock.mockResolvedValue({ data: 'WXYZ6789', error: null });
+    const result = await getSalesContactReferralStats('contact-1');
+    expect(result).toEqual({ code: 'WXYZ6789', total_referred: 0, verified_count: 0 });
+  });
+
+  it('counts only referrals attributed to this sales contact, not to app-user referrers', async () => {
+    rpcMock.mockResolvedValue({ data: 'WXYZ6789', error: null });
+    mockState.referrals = [
+      { referrer_sales_contact_id: 'contact-1', referred_user_id: 'ref-a' },
+      { referrer_sales_contact_id: 'contact-1', referred_user_id: 'ref-b' },
+      { referrer_user_id: 'some-app-user', referred_user_id: 'ref-c' }
+    ];
+    mockState.userProfiles = [
+      { user_id: 'ref-a', kyc_status: 'verified' },
+      { user_id: 'ref-b', kyc_status: 'pending' }
+    ];
+    const result = await getSalesContactReferralStats('contact-1');
+    expect(result).toEqual({ code: 'WXYZ6789', total_referred: 2, verified_count: 1 });
   });
 });

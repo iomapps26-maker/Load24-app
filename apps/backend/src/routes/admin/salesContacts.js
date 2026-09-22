@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../../lib/supabase.js';
 import { dbError, writeError } from '../../lib/httpErrors.js';
+import { getOrCreateSalesContactReferralCode, getSalesContactReferralStats } from '../../lib/referrals.js';
 
 // Admin CRUD for the sales-contact roster (db/migrations/061_...) — sibling
 // of admin/supportContacts.js against sales_contact_roster instead. See
@@ -10,6 +11,15 @@ const LOG = '[admin/sales-contacts]';
 
 const router = Router();
 
+// Attaches referral_code/total_referred/verified_referred to a roster row.
+// N+1 (one stats call per row) is fine here — this roster is a handful of
+// staff, not a large table (see 061's assigned_count comment for the same
+// "not worth denormalizing yet" reasoning).
+async function withReferralStats(contact) {
+  const stats = await getSalesContactReferralStats(contact.id);
+  return { ...contact, referral_code: stats.code, total_referred: stats.total_referred, verified_referred: stats.verified_count };
+}
+
 // GET /api/admin/sales-contacts?is_active=
 router.get('/', async (req, res) => {
   let query = supabaseAdmin.from('sales_contact_roster').select('*').order('name', { ascending: true });
@@ -17,7 +27,11 @@ router.get('/', async (req, res) => {
 
   const { data, error } = await query;
   if (error) return dbError(res, error, 'Could not load sales contacts', { log: LOG });
-  res.json(data);
+  try {
+    res.json(await Promise.all((data || []).map(withReferralStats)));
+  } catch (err) {
+    dbError(res, err, 'Could not load referral stats for sales contacts', { log: LOG });
+  }
 });
 
 // GET /api/admin/sales-contacts/:id
@@ -25,7 +39,11 @@ router.get('/:id', async (req, res) => {
   const { data, error } = await supabaseAdmin.from('sales_contact_roster').select('*').eq('id', req.params.id).maybeSingle();
   if (error) return dbError(res, error, 'Could not load this sales contact', { log: LOG });
   if (!data) return res.status(404).json({ error: 'Sales contact not found' });
-  res.json(data);
+  try {
+    res.json(await withReferralStats(data));
+  } catch (err) {
+    dbError(res, err, 'Could not load referral stats for this sales contact', { log: LOG });
+  }
 });
 
 // POST /api/admin/sales-contacts { name, phone, email?, is_active? }
@@ -39,7 +57,18 @@ router.post('/', async (req, res) => {
     .select()
     .single();
   if (error) return writeError(res, error, 'Could not create this sales contact', { log: LOG });
-  res.status(201).json(data);
+
+  // Permanent referral code, generated the moment the contact exists — a
+  // failure here still leaves the contact created (the row above already
+  // committed); the next GET of this contact will simply retry generation,
+  // since getOrCreateSalesContactReferralCode is idempotent.
+  try {
+    const referral_code = await getOrCreateSalesContactReferralCode(data.id);
+    res.status(201).json({ ...data, referral_code, total_referred: 0, verified_referred: 0 });
+  } catch (err) {
+    console.error(LOG, err);
+    res.status(201).json({ ...data, referral_code: null, total_referred: 0, verified_referred: 0 });
+  }
 });
 
 // PATCH /api/admin/sales-contacts/:id
@@ -74,6 +103,23 @@ router.delete('/:id', async (req, res) => {
   if (existing.assigned_count > 0) {
     return res.status(409).json({
       error: `This contact has ${existing.assigned_count} user(s) assigned to it — deactivate it instead of deleting.`
+    });
+  }
+
+  // Same "deactivate instead" rule as assigned_count above, for referral
+  // history — referrals.referrer_sales_contact_id deliberately has no ON
+  // DELETE CASCADE (064_add_sales_contact_referrals.sql), so a contact with
+  // referrals attributed to it can't be hard-deleted without first clearing
+  // this check (or hitting the 23503 backstop below).
+  let referralStats;
+  try {
+    referralStats = await getSalesContactReferralStats(req.params.id);
+  } catch (err) {
+    return dbError(res, err, 'Could not delete this sales contact', { log: LOG });
+  }
+  if (referralStats.total_referred > 0) {
+    return res.status(409).json({
+      error: `This contact has ${referralStats.total_referred} referral(s) attributed to it — deactivate it instead of deleting.`
     });
   }
 

@@ -86,6 +86,17 @@ vi.mock('../../lib/supabase.js', () => ({
   supabaseAdmin: { from: (table) => makeAdminQueryBuilder(table) }
 }));
 
+// lib/referrals.js is exercised on its own in lib/referrals.test.js — mocked
+// here so the route's stats-attaching/delete-guard logic is testable
+// without needing referral_codes/referrals in the adminStore mock above,
+// same reasoning as routes/profile.test.js's mock of the same module.
+const getOrCreateSalesContactReferralCodeMock = vi.fn();
+const getSalesContactReferralStatsMock = vi.fn();
+vi.mock('../../lib/referrals.js', () => ({
+  getOrCreateSalesContactReferralCode: (...args) => getOrCreateSalesContactReferralCodeMock(...args),
+  getSalesContactReferralStats: (...args) => getSalesContactReferralStatsMock(...args)
+}));
+
 const { default: salesContactsRouter } = await import('./salesContacts.js');
 const { requireRole } = await import('../../middleware/requireRole.js');
 
@@ -104,6 +115,8 @@ function buildApp(userId = 'staff-1') {
 
 beforeEach(() => {
   adminStore = createAdminStore();
+  getOrCreateSalesContactReferralCodeMock.mockReset().mockResolvedValue('CODE0001');
+  getSalesContactReferralStatsMock.mockReset().mockResolvedValue({ code: 'CODE0001', total_referred: 0, verified_count: 0 });
 });
 
 function staff() {
@@ -129,6 +142,24 @@ describe('POST /api/admin/sales-contacts', () => {
     expect(res.body.is_active).toBe(true);
     expect(res.body.assigned_count).toBe(0);
   });
+
+  it('generates a permanent referral code for the new contact', async () => {
+    staff();
+    const res = await request(buildApp()).post('/api/admin/sales-contacts').send({ name: 'Vivek', phone: '9000000003' });
+    expect(res.status).toBe(201);
+    expect(res.body.referral_code).toBe('CODE0001');
+    expect(res.body.total_referred).toBe(0);
+    expect(res.body.verified_referred).toBe(0);
+    expect(getOrCreateSalesContactReferralCodeMock).toHaveBeenCalledWith(res.body.id);
+  });
+
+  it('still creates the contact even if referral code generation fails', async () => {
+    staff();
+    getOrCreateSalesContactReferralCodeMock.mockRejectedValue(new Error('boom'));
+    const res = await request(buildApp()).post('/api/admin/sales-contacts').send({ name: 'Vivek', phone: '9000000003' });
+    expect(res.status).toBe(201);
+    expect(res.body.referral_code).toBeNull();
+  });
 });
 
 describe('GET /api/admin/sales-contacts', () => {
@@ -141,6 +172,16 @@ describe('GET /api/admin/sales-contacts', () => {
     const res = await request(buildApp()).get('/api/admin/sales-contacts?is_active=true');
     expect(res.status).toBe(200);
     expect(res.body.map((r) => r.id)).toEqual(['1']);
+  });
+
+  it('attaches referral stats to each row', async () => {
+    staff();
+    adminStore.sales_contact_roster.push({ id: '1', name: 'Vivek', phone: '9000000003', is_active: true, assigned_count: 0 });
+    getSalesContactReferralStatsMock.mockResolvedValue({ code: 'CODE0001', total_referred: 4, verified_count: 2 });
+    const res = await request(buildApp()).get('/api/admin/sales-contacts');
+    expect(res.status).toBe(200);
+    expect(res.body[0]).toMatchObject({ referral_code: 'CODE0001', total_referred: 4, verified_referred: 2 });
+    expect(getSalesContactReferralStatsMock).toHaveBeenCalledWith('1');
   });
 });
 
@@ -166,6 +207,15 @@ describe('DELETE /api/admin/sales-contacts/:id', () => {
   it('refuses to delete a row with assigned users (409), and leaves it in place', async () => {
     staff();
     adminStore.sales_contact_roster.push({ id: '1', name: 'Vivek', phone: '9000000003', is_active: true, assigned_count: 5 });
+    const res = await request(buildApp()).delete('/api/admin/sales-contacts/1');
+    expect(res.status).toBe(409);
+    expect(adminStore.sales_contact_roster).toHaveLength(1);
+  });
+
+  it('refuses to delete a row with referrals attributed to it (409), and leaves it in place', async () => {
+    staff();
+    adminStore.sales_contact_roster.push({ id: '1', name: 'Vivek', phone: '9000000003', is_active: true, assigned_count: 0 });
+    getSalesContactReferralStatsMock.mockResolvedValue({ code: 'CODE0001', total_referred: 3, verified_count: 1 });
     const res = await request(buildApp()).delete('/api/admin/sales-contacts/1');
     expect(res.status).toBe(409);
     expect(adminStore.sales_contact_roster).toHaveLength(1);
