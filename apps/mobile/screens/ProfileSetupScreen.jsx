@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
 import { TextInput, Button, HelperText, Icon } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useLanguage } from '../lib/i18n';
@@ -88,6 +88,29 @@ export default function ProfileSetupScreen() {
     setState(foundState);
   });
 
+  // Also reused as "Edit Profile" post-onboarding (App.jsx) — load whatever
+  // is already saved so an edit doesn't start from blank fields, and so we
+  // know the role on file to warn before a switch resets KYC review (see
+  // resetKycCaseForRoleChange in the backend's POST /api/profile).
+  const { data: existingProfile } = useQuery({ queryKey: ['profile'], queryFn: api.profile.me });
+  const originalRole = existingProfile?.user_type ?? null;
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (!existingProfile || prefilled.current) return;
+    prefilled.current = true;
+    if (existingProfile.user_type) {
+      setSelectedRoles((prev) => (prev.length === 0 ? [existingProfile.user_type] : prev));
+    }
+    setFullName(existingProfile.full_name || '');
+    if (existingProfile.mobile) setMobile(existingProfile.mobile.replace(/\D/g, '').slice(-10));
+    setCompanyName(existingProfile.company_name || '');
+    setPincode(existingProfile.pincode || '');
+    setCity(existingProfile.city || '');
+    setState(existingProfile.state || '');
+  }, [existingProfile]);
+
+  const isRoleSwitch = !!originalRole && selectedRoles[0] && selectedRoles[0] !== originalRole;
+
   const saveProfile = useMutation({
     mutationFn: async () => {
       // Independent writes (different tables, no FK between them) — run
@@ -128,6 +151,14 @@ export default function ProfileSetupScreen() {
     if (!fullName.trim()) missing.push(t('fullName'));
     if (!mobile.trim()) missing.push(t('mobileNumber'));
     if (missing.length > 0) return setError(`${t('missingLabel')}: ${missing.join(', ')}`);
+
+    if (isRoleSwitch) {
+      Alert.alert(t('roleSwitchConfirmTitle'), t('roleSwitchConfirmMessage'), [
+        { text: t('cancel'), style: 'cancel' },
+        { text: t('roleSwitchConfirmButton'), style: 'destructive', onPress: () => saveProfile.mutate() }
+      ]);
+      return;
+    }
     saveProfile.mutate();
   };
 
@@ -148,6 +179,12 @@ export default function ProfileSetupScreen() {
                 t={t}
               />
             ))}
+            {isRoleSwitch && (
+              <View className="mb-4 flex-row items-start gap-2 rounded-xl bg-orange-100 p-3">
+                <Icon source="alert-circle-outline" size={18} color="#c2410c" />
+                <Text className="flex-1 text-xs text-orange-800">{t('roleSwitchWarning')}</Text>
+              </View>
+            )}
             <Button
               mode="contained"
               buttonColor="#f97316"
