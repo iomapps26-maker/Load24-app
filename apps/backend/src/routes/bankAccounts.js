@@ -31,7 +31,9 @@ function serializeAccount(row) {
     verification_status: row.verification_status,
     rejection_reason: row.rejection_reason ?? null,
     reviewed_by: row.reviewed_by ?? null,
-    reviewed_at: row.reviewed_at ?? null
+    reviewed_at: row.reviewed_at ?? null,
+    support_staff_id: row.support_staff_id ?? null,
+    support_action_at: row.support_action_at ?? null
   };
 }
 

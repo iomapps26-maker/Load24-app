@@ -44,6 +44,20 @@ function guessTargetId(params) {
   return values.length > 0 ? String(values[0]) : null;
 }
 
+// audit_log.detail keeps the request body so the trail shows *what* was
+// changed — but a staff-account create or password reset
+// (admin/staffAccounts.js) carries a plaintext password, which must never
+// be stored. Top-level keys only; no staff route nests one.
+const SECRET_KEYS = new Set(['password']);
+function redactSecrets(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const redacted = { ...body };
+  for (const key of Object.keys(redacted)) {
+    if (SECRET_KEYS.has(key)) redacted[key] = '[redacted]';
+  }
+  return redacted;
+}
+
 // Gates staff-only endpoints (e.g. withdrawal approval) against the
 // authoritative user_roles table — mirrors the has_role() Postgres helper
 // used by RLS policies, but for routes that need to act across other users'
@@ -72,7 +86,7 @@ export function requireRole(roles) {
         action: `${req.method} ${req.baseUrl}${req.route?.path || req.path}`,
         targetTable: guessTargetTable(req.baseUrl),
         targetId: guessTargetId(req.params),
-        detail: { query: req.query, body: req.body }
+        detail: { query: req.query, body: redactSecrets(req.body) }
       });
     }
 

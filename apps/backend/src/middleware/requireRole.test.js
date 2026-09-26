@@ -122,6 +122,13 @@ describe('requireRole', () => {
     expect(row.detail.body).toEqual({ name: 'thing' });
   });
 
+  it('never stores a password from the body (staff-account create / reset)', async () => {
+    staff();
+    await request(buildApp()).post('/api/admin/widgets').send({ login_id: 'ravi', password: 'hunter2hunter2' });
+
+    expect(adminStore.audit_log[0].detail.body).toEqual({ login_id: 'ravi', password: '[redacted]' });
+  });
+
   it('logs a PATCH mutation mounted router-level, with the id captured in the action string rather than target_id', async () => {
     staff();
     await request(buildApp()).patch('/api/admin/widgets/widget-1').send({ name: 'renamed' });

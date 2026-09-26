@@ -45,9 +45,12 @@ import adminMasterDataRouter, { publicMasterDataRouter } from './routes/admin/ma
 import adminAuditLogRouter from './routes/admin/auditLog.js';
 import adminSupportContactsRouter from './routes/admin/supportContacts.js';
 import adminSalesContactsRouter from './routes/admin/salesContacts.js';
+import adminStaffAccountsRouter from './routes/admin/staffAccounts.js';
+import executiveRouter from './routes/executive.js';
 import tripLocationPingsRouter from './routes/tripLocationPings.js';
 import { generateMatchSuggestions } from './lib/matchSuggestions.js';
 import { evaluateIncentiveRules } from './lib/incentiveEvaluation.js';
+import { sendLoadingReminders } from './lib/loadingReminders.js';
 
 // Staff roles for the whole /api/admin/* namespace below — matches
 // kyc.js's/trucks.js's STAFF_ROLES (not wallet.js's, which also includes
@@ -58,6 +61,11 @@ const ADMIN_STAFF_ROLES = ['admin', 'support_executive', 'support_manager'];
 // crm.js's own role set — CRM leads are a sales concern, not the general
 // admin/support one above.
 const CRM_STAFF_ROLES = ['admin', 'sales_executive', 'sales_team_lead', 'sales_manager'];
+// Executive Desk (routes/executive.js) — support staff acting on a caller's
+// behalf. Creating the executives' own logins (admin/staffAccounts.js) is
+// admin-only: an executive must not be able to mint more staff logins.
+const EXECUTIVE_DESK_ROLES = ['admin', 'support_executive', 'support_manager'];
+const STAFF_ACCOUNT_ADMIN_ROLES = ['admin'];
 
 const app = express();
 
@@ -258,6 +266,8 @@ app.use('/api/admin/master-data', requireAuth, requireRole(ADMIN_STAFF_ROLES), a
 app.use('/api/admin/audit-log', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminAuditLogRouter);
 app.use('/api/admin/support-contacts', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminSupportContactsRouter);
 app.use('/api/admin/sales-contacts', requireAuth, requireRole(ADMIN_STAFF_ROLES), adminSalesContactsRouter);
+app.use('/api/admin/staff-accounts', requireAuth, requireRole(STAFF_ACCOUNT_ADMIN_ROLES), adminStaffAccountsRouter);
+app.use('/api/executive', requireAuth, requireRole(EXECUTIVE_DESK_ROLES), executiveRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);
@@ -329,4 +339,13 @@ if (runInProcessJobs) {
   setInterval(() => {
     evaluateIncentiveRules().catch((err) => console.error('[incentives] evaluateIncentiveRules failed', err));
   }, 6 * 60 * 60 * 1000);
+
+  // Loading-time reminders (1h before / 20min before / time-reached) need to
+  // fire within a few minutes of their due instant to be useful, so this one
+  // runs on a tight interval rather than hourly — see lib/loadingReminders.js
+  // for the dedup-by-timestamp-column logic that makes redundant runs cheap.
+  sendLoadingReminders().catch((err) => console.error('[loading-reminders] sendLoadingReminders failed (startup run)', err));
+  setInterval(() => {
+    sendLoadingReminders().catch((err) => console.error('[loading-reminders] sendLoadingReminders failed', err));
+  }, 5 * 60 * 1000);
 }

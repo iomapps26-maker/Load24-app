@@ -222,8 +222,9 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   // load_id is a sequential "LDnnnnnn" assigned by a column default
   // (db/migrations/045) and the uuid primary key is DB-generated — never let
-  // a client set or override either.
-  const { load_id, id, ...body } = req.body;
+  // a client set or override either. Same for the "by Support Team" stamp
+  // (066_add_support_team_attribution.sql) — only executive.js sets it.
+  const { load_id, id, support_staff_id, support_action_at, ...body } = req.body;
   const payload = { ...body, posted_by: req.user.email };
 
   // Approximate road distance, looked up once at posting time and stored —
