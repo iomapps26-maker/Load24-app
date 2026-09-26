@@ -10,7 +10,7 @@ import loadsRouter from './loads.js';
 import trucksRouter from './trucks.js';
 import truckAvailabilityRouter from './truckAvailability.js';
 
-// Executive Desk (/admin/executive/ in the website repo): a support
+// Executive Desk (/executive/ in the website repo): a support
 // executive takes a phone call and does, on the caller's behalf, whatever
 // the caller could have done in the app themselves — register, fill the
 // profile, upload KYC, add bank details, add a truck, post truck

@@ -84,14 +84,14 @@ function buildApp() {
 beforeEach(resetState);
 
 describe('POST /api/admin/staff-accounts', () => {
-  it('turns a bare login ID into a staff email and grants support_executive', async () => {
+  it('turns a bare login ID into a staff email and grants desk_executive', async () => {
     const res = await request(buildApp())
       .post('/api/admin/staff-accounts')
       .send({ login_id: 'Ravi.K', password: 'longenough', full_name: 'Ravi Kumar' });
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ login_id: 'ravi.k', email: 'ravi.k@staff.load24.internal', full_name: 'Ravi Kumar', role: 'support_executive', disabled: false });
-    expect(state.userRoles).toEqual([expect.objectContaining({ user_id: res.body.user_id, role: 'support_executive', granted_by: ADMIN_ID })]);
+    expect(res.body).toMatchObject({ login_id: 'ravi.k', email: 'ravi.k@staff.load24.internal', full_name: 'Ravi Kumar', role: 'desk_executive', disabled: false });
+    expect(state.userRoles).toEqual([expect.objectContaining({ user_id: res.body.user_id, role: 'desk_executive', granted_by: ADMIN_ID })]);
     expect(state.authUsers[res.body.user_id]).toMatchObject({ password: 'longenough', email_confirm: true });
   });
 

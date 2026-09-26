@@ -3,19 +3,20 @@ import { supabaseAdmin } from '../../lib/supabase.js';
 
 const router = Router();
 
-// Support executive logins for the Executive Desk (/admin/executive/).
+// Executive logins for the Executive Desk (/executive/).
 // An admin creates each executive's own login ID + password here — staff
-// sign in to the portal with Supabase email/password (admin/login/), so a
+// sign in with Supabase email/password (/executive/login/), so a
 // login ID is really an email. A bare ID like "ravi.k" becomes
 // ravi.k@staff.load24.internal; the login page appends the same domain when
 // no "@" is typed, so executives never see it. A real email works too.
 //
-// Mounted admin-only in index.js — unlike the rest of /api/admin/*, which
-// support_executive can reach, an executive must not be able to mint more
-// staff logins.
+// Mounted admin-only in index.js — an executive must not be able to mint
+// more staff logins.
 export const STAFF_LOGIN_DOMAIN = 'staff.load24.internal';
 const MIN_PASSWORD_LENGTH = 8;
-const EXECUTIVE_ROLE = 'support_executive';
+// desk_executive (migration 067) opens only /api/executive — no admin
+// portal access, unlike support_executive.
+const EXECUTIVE_ROLE = 'desk_executive';
 // ~100 years: Supabase's way of disabling a login without deleting it (and
 // its audit_log history) — "none" lifts it again.
 const DISABLED_BAN_DURATION = '876000h';
@@ -45,7 +46,7 @@ function serialize(user, role) {
   };
 }
 
-// GET /api/admin/staff-accounts — every support executive login. Driven from
+// GET /api/admin/staff-accounts — every executive login. Driven from
 // user_roles (a handful of rows) with one getUserById per row, rather than
 // GoTrue's paginated listUsers over every app user.
 router.get('/', async (req, res) => {
@@ -101,7 +102,7 @@ router.post('/', async (req, res) => {
   res.status(201).json(serialize(created.user, EXECUTIVE_ROLE));
 });
 
-// Only accounts this page manages (support executives) can be changed here —
+// Only accounts this page manages (desk executives) can be changed here —
 // never an admin's own login or an app user's.
 async function executiveOr404(req, res) {
   const { data, error } = await supabaseAdmin
@@ -115,7 +116,7 @@ async function executiveOr404(req, res) {
     return false;
   }
   if (!data) {
-    res.status(404).json({ error: 'Support executive not found' });
+    res.status(404).json({ error: 'Executive login not found' });
     return false;
   }
   return true;

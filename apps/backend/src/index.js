@@ -64,7 +64,10 @@ const CRM_STAFF_ROLES = ['admin', 'sales_executive', 'sales_team_lead', 'sales_m
 // Executive Desk (routes/executive.js) — support staff acting on a caller's
 // behalf. Creating the executives' own logins (admin/staffAccounts.js) is
 // admin-only: an executive must not be able to mint more staff logins.
-const EXECUTIVE_DESK_ROLES = ['admin', 'support_executive', 'support_manager'];
+// desk_executive (migration 067, the role those logins get) is in this list
+// only — deliberately absent from ADMIN_STAFF_ROLES and every route-level
+// STAFF_ROLES, so executive logins get no admin-portal access.
+const EXECUTIVE_DESK_ROLES = ['admin', 'support_executive', 'support_manager', 'desk_executive'];
 const STAFF_ACCOUNT_ADMIN_ROLES = ['admin'];
 
 const app = express();

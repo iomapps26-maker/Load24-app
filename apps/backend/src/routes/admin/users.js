@@ -14,7 +14,8 @@ const GRANTABLE_ROLES = [
   'support_executive',
   'support_manager',
   'accounts_executive',
-  'accounts_manager'
+  'accounts_manager',
+  'desk_executive'
 ];
 
 // GET /api/admin/users?q=&page=&limit= — lists/searches users, joined with
