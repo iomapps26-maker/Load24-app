@@ -11,9 +11,18 @@ function formatDate(dateStr, language) {
   return d.toLocaleDateString(language === 'hi' ? 'hi-IN' : 'en-IN', { day: '2-digit', month: 'short' });
 }
 
-export default function LoadCard({ load, liked, onToggleLike, bidStatus, hideActions, isOwnLoad }) {
+// Mirrors MAX_BIDS_PER_LOAD in the backend's routes/loadBids.js (which
+// enforces it) — kept in sync by hand.
+const MAX_BIDS_PER_LOAD = 5;
+
+export default function LoadCard({ load, liked, onToggleLike, bidStatus, bidCount = 0, hideActions, isOwnLoad }) {
   const { language, t } = useLanguage();
   const navigation = useNavigation();
+  const bidsLeft = Math.max(0, MAX_BIDS_PER_LOAD - bidCount);
+  // A rejected (or expired) bid doesn't lock the load — the bidder may try
+  // again, same amount allowed, until they've used up MAX_BIDS_PER_LOAD.
+  const canRebid = bidStatus === 'rejected' && bidsLeft > 0;
+  const fill = (key, params) => Object.entries(params).reduce((s, [k, v]) => s.replace(`{${k}}`, String(v)), t(key));
 
   const truckTypeLabel =
     load.required_truck_type === 'other'
@@ -138,6 +147,13 @@ export default function LoadCard({ load, liked, onToggleLike, bidStatus, hideAct
               >
                 {bidStatus === 'approved' ? t('bidApproved') : bidStatus === 'rejected' ? t('bidRejected') : t('bidPending')}
               </Text>
+              {bidStatus === 'rejected' && (
+                <Text className="mt-0.5 text-xs text-red-600">
+                  {canRebid
+                    ? fill('bidAttemptsLeft', { left: bidsLeft, max: MAX_BIDS_PER_LOAD })
+                    : fill('bidLimitReached', { max: MAX_BIDS_PER_LOAD })}
+                </Text>
+              )}
             </View>
           ) : null
         )}
@@ -164,13 +180,13 @@ export default function LoadCard({ load, liked, onToggleLike, bidStatus, hideAct
           </TouchableOpacity>
         )}
 
-        {!hideActions && !bidStatus && !isOwnLoad && (
+        {!hideActions && (!bidStatus || canRebid) && !isOwnLoad && (
           <TouchableOpacity
             onPress={() => navigation.navigate('PlaceBid', { load })}
             className="mt-3 flex-row items-center justify-center gap-1.5 rounded-xl border-2 border-brand py-3"
           >
-            <Icon source="gavel" size={18} color="#f97316" />
-            <Text className="text-base font-bold text-brand">{t('letsBidding')}</Text>
+            <Icon source={canRebid ? 'refresh' : 'gavel'} size={18} color="#f97316" />
+            <Text className="text-base font-bold text-brand">{canRebid ? t('bidAgain') : t('letsBidding')}</Text>
           </TouchableOpacity>
         )}
       </View>

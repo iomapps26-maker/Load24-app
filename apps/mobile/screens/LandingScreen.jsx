@@ -19,7 +19,7 @@ export default function LandingScreen() {
   const insets = useSafeAreaInsets();
 
   return (
-    <ScrollView className="flex-1 bg-navy" contentContainerStyle={{ paddingBottom: 48 }}>
+    <ScrollView className="flex-1 bg-slate-50" contentContainerStyle={{ paddingBottom: 48 }}>
       {/* Header */}
       <View
         className="flex-row items-center justify-between px-5 pb-4"
@@ -27,16 +27,16 @@ export default function LandingScreen() {
       >
         <View className="flex-row items-center gap-2">
           <Image source={require('../assets/logo-mark.png')} style={{ width: 28, height: 28 }} resizeMode="contain" />
-          <Text className="text-xl font-bold text-white">
+          <Text className="text-xl font-bold text-slate-900">
             LOAD<Text className="text-brand">24</Text>
           </Text>
         </View>
         <View className="flex-row items-center gap-2">
-          <View className="flex-row rounded-full bg-white/10 p-1">
+          <View className="flex-row rounded-full bg-slate-200 p-1">
             <Button
               mode={language === 'hi' ? 'contained' : 'text'}
               compact
-              textColor={language === 'hi' ? undefined : 'white'}
+              textColor={language === 'hi' ? undefined : '#334155'}
               onPress={() => setLanguage('hi')}
             >
               हिंदी
@@ -44,7 +44,7 @@ export default function LandingScreen() {
             <Button
               mode={language === 'en' ? 'contained' : 'text'}
               compact
-              textColor={language === 'en' ? undefined : 'white'}
+              textColor={language === 'en' ? undefined : '#334155'}
               onPress={() => setLanguage('en')}
             >
               EN
@@ -55,8 +55,8 @@ export default function LandingScreen() {
 
       {/* Hero */}
       <View className="px-6 pb-8 pt-6">
-        <Text className="mb-3 text-center text-3xl font-bold text-white">{t('tagline')}</Text>
-        <Text className="mb-6 text-center text-sm text-slate-400">{t('heroSubtitle')}</Text>
+        <Text className="mb-3 text-center text-3xl font-bold text-slate-900">{t('tagline')}</Text>
+        <Text className="mb-6 text-center text-sm text-slate-500">{t('heroSubtitle')}</Text>
 
         <Button mode="contained" buttonColor="#f97316" className="mb-3" onPress={() => navigation.navigate('AuthChoice')}>
           {t('ctaShipper')}
@@ -77,7 +77,12 @@ export default function LandingScreen() {
         </Button>
 
         <View className="mt-6 items-center">
-          <Button mode="text" textColor="#f97316" onPress={() => navigation.navigate('AuthChoice')}>
+          <Button
+            mode="text"
+            textColor="#f97316"
+            labelStyle={{ fontWeight: '800', fontSize: 16 }}
+            onPress={() => navigation.navigate('AuthChoice')}
+          >
             {t('signIn')}
           </Button>
         </View>
@@ -85,26 +90,26 @@ export default function LandingScreen() {
 
       {/* How it works */}
       <View className="px-5 pb-8">
-        <Text className="mb-5 text-center text-xl font-bold text-white">{t('howItWorksTitle')}</Text>
+        <Text className="mb-5 text-center text-xl font-bold text-slate-900">{t('howItWorksTitle')}</Text>
         {STEPS.map((step, i) => (
-          <View key={step.titleKey} className="mb-4 rounded-2xl border border-brand/40 bg-navy-card p-5">
+          <View key={step.titleKey} className="mb-4 rounded-2xl border border-brand/40 bg-white p-5">
             <View className="mb-3 h-8 w-8 items-center justify-center rounded-full bg-brand">
               <Text className="font-bold text-white">{i + 1}</Text>
             </View>
             <Text className="mb-1 text-3xl">{step.icon}</Text>
-            <Text className="mb-1 text-lg font-bold text-white">{t(step.titleKey)}</Text>
-            <Text className="text-sm text-slate-400">{t(step.descKey)}</Text>
+            <Text className="mb-1 text-lg font-bold text-slate-900">{t(step.titleKey)}</Text>
+            <Text className="text-sm text-slate-500">{t(step.descKey)}</Text>
           </View>
         ))}
       </View>
 
       {/* Why LOAD24 */}
       <View className="px-5">
-        <Text className="mb-5 text-center text-xl font-bold text-white">{t('whyTitle')}</Text>
+        <Text className="mb-5 text-center text-xl font-bold text-slate-900">{t('whyTitle')}</Text>
         <View className="flex-row flex-wrap justify-between">
           {FEATURES.map((key) => (
-            <View key={key} className="mb-3 w-[48%] rounded-xl bg-navy-card px-3 py-4">
-              <Text className="text-sm text-slate-200">{t(key)}</Text>
+            <View key={key} className="mb-3 w-[48%] rounded-xl border border-slate-200 bg-white px-3 py-4">
+              <Text className="text-sm text-slate-700">{t(key)}</Text>
             </View>
           ))}
         </View>

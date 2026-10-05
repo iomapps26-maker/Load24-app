@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, BackHandler } from 'react-native';
 import { TextInput, Button, HelperText, Icon } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -56,7 +56,7 @@ function RoleCard({ role, selected, onPress, t }) {
 const isSyntheticEmail = (value) => !!value && value.endsWith('@phone.load24.internal');
 
 export default function ProfileSetupScreen() {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const { t } = useLanguage();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
@@ -111,6 +111,25 @@ export default function ProfileSetupScreen() {
   }, [existingProfile]);
 
   const isRoleSwitch = !!originalRole && selectedRoles[0] && selectedRoles[0] !== originalRole;
+
+  // First-time signup renders this as the only screen in the stack (App.jsx),
+  // so there's nothing to go back to — "back" from the role step signs out,
+  // and App.jsx swaps to Landing exactly like a fresh app start. As "Edit
+  // Profile" it's a pushed screen with its own header back, so leave it be.
+  const isOnboarding = !navigation.canGoBack();
+  const handleBack = () => {
+    if (step === 1) setStep(0);
+    else signOut();
+  };
+
+  useEffect(() => {
+    if (!isOnboarding) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  });
 
   const saveProfile = useMutation({
     mutationFn: async () => {
@@ -170,6 +189,19 @@ export default function ProfileSetupScreen() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1 bg-orange-50">
       <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 40, paddingBottom: Math.max(insets.bottom, 20) + 20 }}>
+        {isOnboarding && (
+          <TouchableOpacity
+            onPress={handleBack}
+            accessibilityRole="button"
+            accessibilityLabel={t('back')}
+            hitSlop={12}
+            className="absolute left-4 h-10 w-10 items-center justify-center rounded-full bg-white"
+            style={{ top: 28, zIndex: 1 }}
+          >
+            <Icon source="arrow-left" size={22} color="#0f172a" />
+          </TouchableOpacity>
+        )}
+
         <ProgressDots step={step} />
 
         {step === 0 ? (

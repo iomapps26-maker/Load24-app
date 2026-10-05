@@ -25,7 +25,10 @@ const TYPE_STYLE = {
   truck_verified: { icon: 'truck-check-outline', bg: 'bg-green-100', color: '#16a34a' },
   truck_availability_offered: { icon: 'truck-fast-outline', bg: 'bg-blue-100', color: '#2563eb' },
   truck_available_nearby: { icon: 'truck-outline', bg: 'bg-blue-100', color: '#2563eb' },
-  load_available_nearby: { icon: 'package-variant-closed', bg: 'bg-orange-100', color: '#ea580c' }
+  load_available_nearby: { icon: 'package-variant-closed', bg: 'bg-orange-100', color: '#ea580c' },
+  loading_reminder_1h: { icon: 'clock-outline', bg: 'bg-orange-100', color: '#ea580c' },
+  loading_reminder_20m: { icon: 'clock-alert-outline', bg: 'bg-orange-100', color: '#ea580c' },
+  loading_time_reached: { icon: 'truck-fast-outline', bg: 'bg-orange-100', color: '#ea580c' }
 };
 const DEFAULT_STYLE = { icon: 'bell-outline', bg: 'bg-slate-100', color: '#334155' };
 

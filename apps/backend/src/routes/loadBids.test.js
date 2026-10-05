@@ -194,7 +194,7 @@ vi.mock('../lib/supabase.js', () => ({
   }
 }));
 
-const { default: loadBidsRouter, __resetExpirySweepCooldown } = await import('./loadBids.js');
+const { default: loadBidsRouter, __resetExpirySweepCooldown, MAX_BIDS_PER_LOAD } = await import('./loadBids.js');
 
 // Row-aware stand-in for req.supabase covering the tables POST /:id/approve
 // touches: it reads the target bid, claims the load ('active' -> 'matched'),
@@ -287,7 +287,11 @@ const pastIso = () => new Date(Date.now() - 60_000).toISOString();
 // truck, then their wallet balance (security deposit). Defaults clear every
 // condition; each test overrides just the row/field it exercises.
 // `insertedRows` captures the load_bids insert payload for pass-through asserts.
-function buildBidApp(availableBalance, { callerEmail = 'bidder@example.com', profile = {}, load = {}, truck = null } = {}) {
+// `priorBids` are the caller's earlier bids on this load (re-bid gate).
+function buildBidApp(
+  availableBalance,
+  { callerEmail = 'bidder@example.com', profile = {}, load = {}, truck = null, priorBids = [] } = {}
+) {
   getAvailableBalance.mockResolvedValue(availableBalance);
   const profileRow = {
     kyc_status: 'verified',
@@ -326,6 +330,7 @@ function buildBidApp(availableBalance, { callerEmail = 'bidder@example.com', pro
         }
         if (table === 'load_bids') {
           return {
+            select: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: priorBids, error: null }) }) }),
             insert: (row) => {
               insertedRows.push(row);
               return {
@@ -865,6 +870,58 @@ describe('POST /api/load-bids — eligibility gate (spec §2)', () => {
     const res = await bid(buildBidApp(5000, { load: { status: 'matched' } }));
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('load_not_active');
+  });
+});
+
+describe('POST /api/load-bids — re-bidding after a rejection', () => {
+  beforeEach(() => {
+    notifyEmail.mockClear();
+    getBiddingSettings.mockResolvedValue({ load24_charge_percent: 4, security_deposit: DEFAULT_DEPOSIT });
+  });
+
+  const bid = (app) => request(app).post('/api/load-bids').send({ load_id: 'load-1', amount: 5000 });
+  const future = () => new Date(Date.now() + 60000).toISOString();
+  const past = () => new Date(Date.now() - 60000).toISOString();
+
+  it('lets a bidder bid again (same amount) after a rejected bid', async () => {
+    const app = buildBidApp(5000, { priorBids: [{ status: 'rejected', expires_at: past() }] });
+    const res = await bid(app);
+    expect(res.status).toBe(201);
+    expect(app.locals.insertedRows[0].amount).toBe(5000);
+  });
+
+  it('treats a pending bid past its expires_at as rejected', async () => {
+    const res = await bid(buildBidApp(5000, { priorBids: [{ status: 'pending', expires_at: past() }] }));
+    expect(res.status).toBe(201);
+  });
+
+  it('blocks a new bid while an earlier one is still pending', async () => {
+    const app = buildBidApp(5000, { priorBids: [{ status: 'pending', expires_at: future() }] });
+    const res = await bid(app);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('bid_already_active');
+    expect(app.locals.insertedRows).toHaveLength(0);
+  });
+
+  it('blocks a new bid once an earlier one was approved', async () => {
+    const res = await bid(buildBidApp(5000, { priorBids: [{ status: 'approved', expires_at: past() }] }));
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('bid_already_active');
+  });
+
+  it(`caps a bidder at ${MAX_BIDS_PER_LOAD} bids per load`, async () => {
+    const rejected = Array.from({ length: MAX_BIDS_PER_LOAD }, () => ({ status: 'rejected', expires_at: past() }));
+    const app = buildBidApp(5000, { priorBids: rejected });
+    const res = await bid(app);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('bid_limit_reached');
+    expect(app.locals.insertedRows).toHaveLength(0);
+  });
+
+  it('allows the last bid under the cap', async () => {
+    const rejected = Array.from({ length: MAX_BIDS_PER_LOAD - 1 }, () => ({ status: 'rejected', expires_at: past() }));
+    const res = await bid(buildBidApp(5000, { priorBids: rejected }));
+    expect(res.status).toBe(201);
   });
 });
 

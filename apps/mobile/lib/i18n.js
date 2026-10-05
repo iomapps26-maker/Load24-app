@@ -103,6 +103,9 @@ const translations = {
     bidPending: 'Bid pending',
     bidApproved: 'Bid approved',
     bidRejected: 'Bid rejected',
+    bidAgain: 'Bid again',
+    bidAttemptsLeft: '{left} of {max} bids left on this load',
+    bidLimitReached: 'Bid limit reached — {max} bids on this load',
     bookingId: 'Booking ID',
     bookingStatusConfirmed: 'Confirmed',
     bookingStatusInTransit: 'In transit',
@@ -272,6 +275,7 @@ const translations = {
     driverMobile: 'Driver Mobile',
     truckVerified: 'Verified',
     truckNotVerified: 'Verification pending',
+    bySupportTeam: 'by Support Team',
     done: 'Done',
     docTruckRc: 'RC (Registration Certificate)',
     docTruckPermit: 'Permit',
@@ -634,7 +638,13 @@ const translations = {
 
     // Misc
     editProfile: 'Edit Profile',
-    couldNotGetLocation: 'Could not get location'
+    couldNotGetLocation: 'Could not get location',
+
+    // Notification permission prompt (App.jsx)
+    notifPermTitle: 'Turn on notifications',
+    notifPermMessage: 'Allow Load24 notifications so you never miss new loads, bids and trip updates.',
+    notifPermOpenSettings: 'Open Settings',
+    notifPermLater: 'Later'
   },
   hi: {
     appName: 'LOAD24',
@@ -737,6 +747,9 @@ const translations = {
     bidPending: 'बोली लंबित',
     bidApproved: 'बोली स्वीकृत',
     bidRejected: 'बोली अस्वीकृत',
+    bidAgain: 'फिर से बोली लगाएं',
+    bidAttemptsLeft: 'इस लोड पर {max} में से {left} बोलियां बाकी',
+    bidLimitReached: 'बोली सीमा पूरी — इस लोड पर {max} बोलियां',
     bookingId: 'बुकिंग आईडी',
     bookingStatusConfirmed: 'कन्फर्म',
     bookingStatusInTransit: 'रास्ते में',
@@ -904,6 +917,7 @@ const translations = {
     driverMobile: 'ड्राइवर का मोबाइल',
     truckVerified: 'सत्यापित',
     truckNotVerified: 'सत्यापन बाकी है',
+    bySupportTeam: 'सपोर्ट टीम द्वारा',
     done: 'हो गया',
     docTruckRc: 'RC (पंजीकरण प्रमाणपत्र)',
     docTruckPermit: 'परमिट',
@@ -1266,7 +1280,11 @@ const translations = {
     editProfile: 'प्रोफ़ाइल संपादित करें',
     couldNotGetLocation: 'स्थान नहीं मिल सका',
     ownerMobile: 'मालिक का संपर्क नंबर',
-    driverDetailsOptional: 'ड्राइवर विवरण वैकल्पिक हैं — अगर आपने अभी ड्राइवर तय नहीं किया है तो बाद में जोड़ें।'
+    driverDetailsOptional: 'ड्राइवर विवरण वैकल्पिक हैं — अगर आपने अभी ड्राइवर तय नहीं किया है तो बाद में जोड़ें।',
+    notifPermTitle: 'सूचनाएं चालू करें',
+    notifPermMessage: 'नए लोड, बोली और ट्रिप अपडेट कभी न चूकें — Load24 की सूचनाएं चालू करें।',
+    notifPermOpenSettings: 'सेटिंग्स खोलें',
+    notifPermLater: 'बाद में'
   }
 };
 

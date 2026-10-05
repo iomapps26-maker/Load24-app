@@ -1,5 +1,6 @@
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Icon } from 'react-native-paper';
+import SupportTeamTag from './SupportTeamTag';
 
 export default function MyLoadRow({ load, t, navigation }) {
   // Once a load is matched, bidding is over — send the poster straight to
@@ -17,6 +18,7 @@ export default function MyLoadRow({ load, t, navigation }) {
           {load.material_type} • ₹{Number(load.bhada_price).toLocaleString('en-IN')}
           {!!load.distance_km && ` • ${load.distance_km} km`}
         </Text>
+        <SupportTeamTag record={load} t={t} className="mt-1" />
       </View>
       {isMatched ? (
         <TouchableOpacity

@@ -1,6 +1,6 @@
-import { Platform } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import messaging from '@react-native-firebase/messaging';
-import notifee, { AndroidImportance } from '@notifee/react-native';
+import notifee, { AndroidImportance, AuthorizationStatus } from '@notifee/react-native';
 import { api } from './api';
 import { getDeviceId, getDeviceInfo } from './device';
 import { navigate } from './navigationRef';
@@ -21,19 +21,61 @@ export async function ensureNotificationChannel() {
   await notifee.createChannel({ id: DEFAULT_CHANNEL_ID, name: 'Load24', importance: AndroidImportance.HIGH });
 }
 
-// Asks for POST_NOTIFICATIONS (Android 13+ only — a no-op on older versions,
-// where notification permission is implicit at install time) and, if
-// granted, fetches this device's FCM token and registers it against the
-// current session via the same /devices/checkin call AuthContext.js already
-// makes on every sign-in (see routes/auth.ts) — best-effort throughout,
-// same as that call: a failure here must never block sign-in.
+const isGranted = (settings) =>
+  settings.authorizationStatus === AuthorizationStatus.AUTHORIZED ||
+  settings.authorizationStatus === AuthorizationStatus.PROVISIONAL;
+
+// Guards against stacking a second dialog when App.jsx's mount check and an
+// AppState 'active' check land back to back.
+let permissionCheckInFlight = false;
+
+// Called by App.jsx on every app open/foreground. If notifications aren't
+// allowed it asks: first the system POST_NOTIFICATIONS dialog (Android 13+;
+// older versions are allowed at install time and return AUTHORIZED here),
+// and once Android stops showing that dialog (it does after the user denies
+// it twice) an in-app Alert pointing at the app's notification settings
+// instead. Uses notifee, not messaging().requestPermission(): on Android the
+// latter is a stub that resolves AUTHORIZED without ever showing the dialog.
+export async function ensureNotificationPermission({ title, message, openSettingsLabel, laterLabel }) {
+  if (permissionCheckInFlight) return;
+  permissionCheckInFlight = true;
+  try {
+    if (isGranted(await notifee.getNotificationSettings())) return;
+    if (isGranted(await notifee.requestPermission())) return;
+
+    await new Promise((resolve) => {
+      Alert.alert(
+        title,
+        message,
+        [
+          { text: laterLabel, style: 'cancel', onPress: resolve },
+          {
+            text: openSettingsLabel,
+            onPress: () => {
+              notifee.openNotificationSettings().catch(() => {});
+              resolve();
+            }
+          }
+        ],
+        { cancelable: true, onDismiss: resolve }
+      );
+    });
+  } catch {
+    // best-effort — never let a permission check break app start
+  } finally {
+    permissionCheckInFlight = false;
+  }
+}
+
+// Fetches this device's FCM token and registers it against the current
+// session via the same /devices/checkin call AuthContext.js already makes on
+// every sign-in (see routes/auth.ts). Deliberately doesn't prompt (that's
+// ensureNotificationPermission's job) — an FCM token is valid whether or not
+// notifications are currently allowed, so registering it regardless means
+// pushes start showing the moment the user allows them. Best-effort
+// throughout: a failure here must never block sign-in.
 export async function registerPushToken() {
   try {
-    const authStatus = await messaging().requestPermission();
-    const granted =
-      authStatus === messaging.AuthorizationStatus.AUTHORIZED || authStatus === messaging.AuthorizationStatus.PROVISIONAL;
-    if (!granted) return;
-
     const token = await messaging().getToken();
     const device_id = await getDeviceId();
     await api.auth.deviceCheckin({ device_id, device_info: getDeviceInfo(), push_token: token });

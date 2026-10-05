@@ -34,6 +34,11 @@ const TRIP_DOCUMENT_TYPES = ['eway_bill', 'bilty', 'pod'];
 // same as TRUCK_REQUIRED_ROLES above.
 const BID_REVIEW_STAFF_ROLES = ['admin', 'sales_executive', 'sales_team_lead', 'sales_manager'];
 
+// A bidder whose bid was rejected (by the poster or by the confirmation
+// window lapsing) may bid on the same load again — the same amount is fine —
+// up to this many bids per load in total.
+export const MAX_BIDS_PER_LOAD = 5;
+
 const router = Router();
 
 // Supabase/PostgREST error.message can be raw internal detail (missing
@@ -574,6 +579,34 @@ router.post('/', async (req, res) => {
 
   const ineligible = checkBidEligibility({ profile: bidderProfile, load, truck: bidderTruck, now: new Date() });
   if (ineligible) return res.status(ineligible.status).json(ineligible.body);
+
+  // Re-bidding: only once every earlier bid on this load is out of play. A
+  // 'pending' bid past its expires_at counts as rejected even if no read has
+  // flipped it yet (autoRejectExpired is lazy). load_bids RLS lets the caller
+  // read their own rows.
+  const { data: priorBids, error: priorBidsError } = await req.supabase
+    .from('load_bids')
+    .select('status, expires_at')
+    .eq('load_id', load_id)
+    .eq('bid_by_email', req.user.email);
+  if (priorBidsError) return dbError(res, priorBidsError, 'Could not check your earlier bids');
+  const nowMs = Date.now();
+  const hasLiveBid = (priorBids || []).some(
+    (b) => b.status === 'approved' || (b.status === 'pending' && new Date(b.expires_at).getTime() > nowMs)
+  );
+  if (hasLiveBid) {
+    return res.status(409).json({
+      error: 'You already have an active bid on this load — wait for the load owner to respond',
+      code: 'bid_already_active'
+    });
+  }
+  if ((priorBids || []).length >= MAX_BIDS_PER_LOAD) {
+    return res.status(409).json({
+      error: `You can bid on a load at most ${MAX_BIDS_PER_LOAD} times`,
+      code: 'bid_limit_reached',
+      max_bids_per_load: MAX_BIDS_PER_LOAD
+    });
+  }
 
   // Load Confirmation Rule (marketplace spec §5): placing a bid moves a
   // security-deposit amount into a real wallet HOLD (a 'security_hold' ledger

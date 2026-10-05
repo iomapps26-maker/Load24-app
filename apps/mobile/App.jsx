@@ -17,7 +17,7 @@ import { api } from './lib/api';
 import { navigationRef, navigate } from './lib/navigationRef';
 import { consumePostLoginIntent } from './lib/postLoginIntent';
 import { setPendingLoadLink, consumePendingLoadLink } from './lib/pendingLoadLink';
-import { ensureNotificationChannel, subscribeToPushNotifications } from './lib/pushNotifications';
+import { ensureNotificationChannel, ensureNotificationPermission, subscribeToPushNotifications } from './lib/pushNotifications';
 import { consumePendingNotification } from './lib/pendingNotification';
 import { navigateForNotification } from './lib/notificationRouting';
 import LandingScreen from './screens/LandingScreen';
@@ -227,6 +227,28 @@ function AuthGate() {
   useEffect(() => {
     ensureNotificationChannel();
     return subscribeToPushNotifications();
+  }, []);
+
+  // Ask for notification permission on every app open (cold start and each
+  // return to the foreground) until it's allowed — see
+  // ensureNotificationPermission. tRef keeps the prompt in the current
+  // language: the saved language loads async after mount, so the listener's
+  // closure would otherwise be stuck with the initial one.
+  const tRef = useRef(t);
+  tRef.current = t;
+  useEffect(() => {
+    const check = () =>
+      ensureNotificationPermission({
+        title: tRef.current('notifPermTitle'),
+        message: tRef.current('notifPermMessage'),
+        openSettingsLabel: tRef.current('notifPermOpenSettings'),
+        laterLabel: tRef.current('notifPermLater')
+      });
+    check();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') check();
+    });
+    return () => subscription.remove();
   }, []);
 
   // Same "consume once the authenticated tree exists" pattern as the

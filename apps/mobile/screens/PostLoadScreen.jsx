@@ -13,6 +13,7 @@ import { useLanguage } from '../lib/i18n';
 import { usePincodeAutofill } from '../lib/usePincodeAutofill';
 import ConfirmDetailsCheckbox from '../components/ConfirmDetailsCheckbox';
 import DateField from '../components/DateField';
+import TimeField from '../components/TimeField';
 
 const REQUIRED = [
   'loading_pincode', 'loading_address', 'loading_landmark', 'loading_city', 'loading_state',
@@ -200,7 +201,7 @@ export default function PostLoadScreen() {
         <Field label={t('contactMobile')} required keyboardType="phone-pad" value={form.loading_poc_mobile} onChangeText={set('loading_poc_mobile')} />
         <View className="flex-row gap-3">
           <View className="flex-1"><DateField label={t('loadingDate')} required value={form.loading_date} onChange={set('loading_date')} /></View>
-          <View className="flex-1"><Field label={t('loadingTime')} required placeholder={t('phLoadingTime')} value={form.loading_time} onChangeText={set('loading_time')} /></View>
+          <View className="flex-1"><TimeField label={t('loadingTime')} required value={form.loading_time} onChange={set('loading_time')} /></View>
         </View>
 
         <Text className="mb-4 mt-2 text-lg font-bold text-slate-900">{t('unloadingPoint')}</Text>

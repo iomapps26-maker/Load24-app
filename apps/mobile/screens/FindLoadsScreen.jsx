@@ -116,6 +116,18 @@ export default function FindLoadsScreen() {
     queryFn: api.loadBids.mine
   });
 
+  // /mine is newest-first, so the first match is the caller's latest bid on
+  // the load. A 'pending' bid past expires_at is effectively rejected (the
+  // backend flips it lazily) — show it that way so "Bid again" appears.
+  const latestBidStatus = (bids, loadId) => {
+    const latest = bids.find((b) => b.load_id === loadId);
+    if (!latest) return undefined;
+    if (latest.status === 'pending' && latest.expires_at && new Date(latest.expires_at).getTime() <= Date.now()) {
+      return 'rejected';
+    }
+    return latest.status;
+  };
+
   const renderPoint = (target, value, onClear, markerIcon, markerColor, placeholder) => (
     <Pressable
       className="flex-1 flex-row items-center gap-1.5 px-3 py-2.5"
@@ -219,7 +231,8 @@ export default function FindLoadsScreen() {
               load={item}
               liked={myLikes.some((l) => l.load_id === item.id)}
               onToggleLike={toggleLike}
-              bidStatus={myBids.find((b) => b.load_id === item.id)?.status}
+              bidStatus={latestBidStatus(myBids, item.id)}
+              bidCount={myBids.filter((b) => b.load_id === item.id).length}
               isOwnLoad={!!profile?.user_email && item.posted_by === profile.user_email}
             />
           )}

@@ -27,4 +27,13 @@ export function navigateForNotification(navigation, notification) {
   // "View Load"/"Bid" buttons (App.jsx), just reached by tapping the
   // notification instead of a WhatsApp message.
   if (type === 'load_available_nearby' && data?.load_id) return navigation.navigate('PlaceBid', { loadId: data.load_id });
+  // The three loading-time reminders (backend's lib/loadingReminders.js) —
+  // same destination as bid_approved/bid_rejected above, since they're about
+  // an already-confirmed trip.
+  if (
+    (type === 'loading_reminder_1h' || type === 'loading_reminder_20m' || type === 'loading_time_reached') &&
+    data?.load_id
+  ) {
+    return navigation.navigate('TripDetails', { loadId: data.load_id });
+  }
 }
