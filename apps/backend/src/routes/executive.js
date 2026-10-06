@@ -94,7 +94,9 @@ const SECTIONS = [
   {
     // Bids on the caller's own loads: list them, accept one (which locks the
     // load, creates the booking and declines the rest — all inside
-    // loadBids.js's approve), decline one, and read the confirmed trip.
+    // loadBids.js's approve), decline one, read the confirmed trip, and fill
+    // in its paperwork (E-Way Bill / Bilty / POD files, the E-Way Bill number,
+    // the POD's delivery person) — loadBids.js lets either trip party do that.
     // loadBids.js only lets the load's poster approve/reject, and req.user is
     // the caller here (never staff — actAsUser refuses staff accounts), so
     // the desk can't act on anyone else's load. No table is stamped: the bid
@@ -108,11 +110,15 @@ const SECTIONS = [
       ['GET', new RegExp(`^/load/${UUID}$`)],
       ['GET', new RegExp(`^/load/${UUID}/trip-details$`)],
       ['POST', new RegExp(`^/${UUID}/approve$`)],
-      ['POST', new RegExp(`^/${UUID}/reject$`)]
+      ['POST', new RegExp(`^/${UUID}/reject$`)],
+      ['POST', new RegExp(`^/load/${UUID}/documents/upload-url$`)],
+      ['POST', new RegExp(`^/load/${UUID}/documents$`)],
+      ['POST', new RegExp(`^/load/${UUID}/documents/number$`)],
+      ['POST', new RegExp(`^/load/${UUID}/documents/delivery-contact$`)]
     ],
     // Accepting is once per load and must always reach the user; declines
     // are deduped among themselves like any other section's writes.
-    noticeKind: (req) => (req.path.endsWith('/approve') ? 'approve' : 'reject'),
+    noticeKind: (req) => (req.path.endsWith('/approve') ? 'approve' : req.path.endsWith('/reject') ? 'reject' : 'trip_documents'),
     notice: (body, kind) =>
       kind === 'approve'
         ? {
@@ -120,11 +126,17 @@ const SECTIONS = [
             body: `LOAD24 Support Team accepted a ₹${Number(body?.amount).toLocaleString('en-IN')} bid on your load${body?.booking?.booking_ref ? ` · Booking ${body.booking.booking_ref}` : ''}. Trip details are ready.`,
             data: { load_id: body?.load_id, bid_id: body?.id, booking_ref: body?.booking?.booking_ref ?? null }
           }
-        : {
-            title: 'Bid declined by Support Team',
-            body: 'LOAD24 Support Team declined a bid on your load for you.',
-            data: { load_id: body?.load_id, bid_id: body?.id }
-          }
+        : kind === 'reject'
+          ? {
+              title: 'Bid declined by Support Team',
+              body: 'LOAD24 Support Team declined a bid on your load for you.',
+              data: { load_id: body?.load_id, bid_id: body?.id }
+            }
+          : {
+              title: 'Trip documents updated by Support Team',
+              body: 'LOAD24 Support Team updated the documents on your trip.',
+              data: {}
+            }
   },
   {
     mount: 'trucks',

@@ -167,6 +167,11 @@ vi.mock('./loadBids.js', stubRouter('bids', (r) => {
     res.json({ id: req.params.id, load_id: 'load-1', amount: 25000, status: 'approved', booking: { booking_ref: 'BK000042' } })
   );
   r.post('/:id/reject', (req, res) => res.json({ id: req.params.id, load_id: 'load-1', amount: 24000, status: 'rejected' }));
+  r.post('/load/:loadId/documents/upload-url', (req, res) => res.json({ storage_path: `${req.user.id}/x-eway_bill.pdf`, token: 't' }));
+  r.post('/load/:loadId/documents', (req, res) => res.json({ ok: true, document: { document_type: req.body.document_type } }));
+  r.post('/load/:loadId/documents/number', (req, res) => res.json({ ok: true, document: { document_type: 'eway_bill' } }));
+  r.post('/load/:loadId/documents/delivery-contact', (req, res) => res.json({ ok: true, document: { document_type: 'pod' } }));
+  r.post('/load/:loadId/deliver', (req, res) => res.json({}));
   r.post('/', (req, res) => res.status(201).json({}));
 }));
 
@@ -353,10 +358,28 @@ describe("bids on the caller's loads (load-bids section)", () => {
     expect(state.notifyCalls.map((n) => n.data.action)).toEqual(['reject', 'approve']);
   });
 
+  it('fills in trip paperwork as the caller, notifying once', async () => {
+    const app = buildApp();
+    const base = `/api/executive/users/${USER_ID}/load-bids/load/${LOAD}/documents`;
+    const minted = await request(app).post(`${base}/upload-url`).send({ document_type: 'eway_bill', file_name: 'e.pdf' });
+    await request(app).post(base).send({ document_type: 'eway_bill', storage_path: minted.body.storage_path });
+    await request(app).post(`${base}/number`).send({ document_type: 'eway_bill', document_number: '123456789012' });
+    await request(app).post(`${base}/delivery-contact`).send({ delivery_person_name: 'Raju', delivery_person_contact: '9876543210' });
+
+    expect(minted.body.storage_path.startsWith(`${USER_ID}/`)).toBe(true);
+    expect(seen.every((s) => s.userId === USER_ID)).toBe(true);
+    expect(seen).toHaveLength(4);
+    expect(state.notifyCalls).toHaveLength(1);
+    expect(state.notifyCalls[0]).toMatchObject({ title: 'Trip documents updated by Support Team', data: { action: 'trip_documents' } });
+  });
+
   it('blocks placing bids or other bid endpoints from the desk', async () => {
-    const res = await request(buildApp()).post(`/api/executive/users/${USER_ID}/load-bids`).send({ load_id: LOAD, amount: 1 });
+    const app = buildApp();
+    const res = await request(app).post(`/api/executive/users/${USER_ID}/load-bids`).send({ load_id: LOAD, amount: 1 });
+    const deliver = await request(app).post(`/api/executive/users/${USER_ID}/load-bids/load/${LOAD}/deliver`);
 
     expect(res.status).toBe(404);
+    expect(deliver.status).toBe(404);
     expect(seen).toHaveLength(0);
   });
 });
