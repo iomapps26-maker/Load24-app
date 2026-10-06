@@ -55,6 +55,7 @@ function queryBuilder(table) {
     select: () => b,
     eq: (field, value) => {
       if (field === 'data->>section') filters.push((r) => r.data?.section === value);
+      else if (field === 'data->>action') filters.push((r) => r.data?.action === value);
       else filters.push((r) => r[field] === value);
       return b;
     },
@@ -160,6 +161,14 @@ vi.mock('./trucks.js', stubRouter('trucks', (r) => {
   r.get('/queue', (req, res) => res.json([]));
 }));
 vi.mock('./truckAvailability.js', stubRouter('availability', () => {}));
+vi.mock('./loadBids.js', stubRouter('bids', (r) => {
+  r.get('/load/:loadId', (req, res) => res.json({ load: { id: req.params.loadId }, bids: [], viewer_role: 'poster' }));
+  r.post('/:id/approve', (req, res) =>
+    res.json({ id: req.params.id, load_id: 'load-1', amount: 25000, status: 'approved', booking: { booking_ref: 'BK000042' } })
+  );
+  r.post('/:id/reject', (req, res) => res.json({ id: req.params.id, load_id: 'load-1', amount: 24000, status: 'rejected' }));
+  r.post('/', (req, res) => res.status(201).json({}));
+}));
 
 const { default: executiveRouter } = await import('./executive.js');
 
@@ -308,5 +317,46 @@ describe('GET /api/executive/users', () => {
   it('returns nothing for an empty query', async () => {
     const res = await request(buildApp()).get('/api/executive/users?q=');
     expect(res.body.users).toEqual([]);
+  });
+});
+
+describe("bids on the caller's loads (load-bids section)", () => {
+  const BID_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const BID_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const LOAD = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+  it('lists and accepts bids as the load poster, without stamping the load', async () => {
+    state.tables.loads.push({ id: 'load-1', posted_by: 'wa919876543210@phone.load24.internal' });
+    const app = buildApp();
+    const list = await request(app).get(`/api/executive/users/${USER_ID}/load-bids/load/${LOAD}`);
+    const approve = await request(app).post(`/api/executive/users/${USER_ID}/load-bids/${BID_A}/approve`);
+
+    expect(list.status).toBe(200);
+    expect(approve.status).toBe(200);
+    expect(approve.body.booking.booking_ref).toBe('BK000042');
+    expect(seen.map((s) => s.userId)).toEqual([USER_ID, USER_ID]);
+    expect(state.tables.loads[0].support_staff_id).toBeUndefined();
+    expect(state.notifyCalls).toHaveLength(1);
+    expect(state.notifyCalls[0]).toMatchObject({
+      userId: USER_ID,
+      title: 'Bid accepted by Support Team',
+      data: { section: 'load-bids', action: 'approve', booking_ref: 'BK000042' }
+    });
+  });
+
+  it('still announces the acceptance right after a decline on the same call', async () => {
+    const app = buildApp();
+    await request(app).post(`/api/executive/users/${USER_ID}/load-bids/${BID_B}/reject`);
+    await request(app).post(`/api/executive/users/${USER_ID}/load-bids/${BID_B}/reject`);
+    await request(app).post(`/api/executive/users/${USER_ID}/load-bids/${BID_A}/approve`);
+
+    expect(state.notifyCalls.map((n) => n.data.action)).toEqual(['reject', 'approve']);
+  });
+
+  it('blocks placing bids or other bid endpoints from the desk', async () => {
+    const res = await request(buildApp()).post(`/api/executive/users/${USER_ID}/load-bids`).send({ load_id: LOAD, amount: 1 });
+
+    expect(res.status).toBe(404);
+    expect(seen).toHaveLength(0);
   });
 });

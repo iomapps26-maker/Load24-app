@@ -9,12 +9,14 @@ import bankDetailsRouter from './bankDetails.js';
 import loadsRouter from './loads.js';
 import trucksRouter from './trucks.js';
 import truckAvailabilityRouter from './truckAvailability.js';
+import loadBidsRouter from './loadBids.js';
 
 // Executive Desk (/executive/ in the website repo): a support
 // executive takes a phone call and does, on the caller's behalf, whatever
 // the caller could have done in the app themselves — register, fill the
 // profile, upload KYC, add bank details, add a truck, post truck
-// availability, post a load.
+// availability, post a load, and accept (or decline) a bid on that load —
+// which confirms the trip and creates its booking, same as the app.
 //
 // Rather than re-implementing each of those flows, the executive calls the
 // *same* user-facing route under /api/executive/users/:userId/<section>/...
@@ -88,6 +90,41 @@ const SECTIONS = [
       body: `LOAD24 Support Team posted your load${body?.loading_city && body?.unloading_city ? ` ${body.loading_city} → ${body.unloading_city}` : ''}.`,
       data: { load_id: body?.id }
     })
+  },
+  {
+    // Bids on the caller's own loads: list them, accept one (which locks the
+    // load, creates the booking and declines the rest — all inside
+    // loadBids.js's approve), decline one, and read the confirmed trip.
+    // loadBids.js only lets the load's poster approve/reject, and req.user is
+    // the caller here (never staff — actAsUser refuses staff accounts), so
+    // the desk can't act on anyone else's load. No table is stamped: the bid
+    // and booking aren't the caller's own edits, and a "by Support Team" label
+    // on the load would claim the load itself was posted by support. The
+    // audit_log row requireRole() writes records which executive did it.
+    mount: 'load-bids',
+    router: loadBidsRouter,
+    table: null,
+    allow: [
+      ['GET', new RegExp(`^/load/${UUID}$`)],
+      ['GET', new RegExp(`^/load/${UUID}/trip-details$`)],
+      ['POST', new RegExp(`^/${UUID}/approve$`)],
+      ['POST', new RegExp(`^/${UUID}/reject$`)]
+    ],
+    // Accepting is once per load and must always reach the user; declines
+    // are deduped among themselves like any other section's writes.
+    noticeKind: (req) => (req.path.endsWith('/approve') ? 'approve' : 'reject'),
+    notice: (body, kind) =>
+      kind === 'approve'
+        ? {
+            title: 'Bid accepted by Support Team',
+            body: `LOAD24 Support Team accepted a ₹${Number(body?.amount).toLocaleString('en-IN')} bid on your load${body?.booking?.booking_ref ? ` · Booking ${body.booking.booking_ref}` : ''}. Trip details are ready.`,
+            data: { load_id: body?.load_id, bid_id: body?.id, booking_ref: body?.booking?.booking_ref ?? null }
+          }
+        : {
+            title: 'Bid declined by Support Team',
+            body: 'LOAD24 Support Team declined a bid on your load for you.',
+            data: { load_id: body?.load_id, bid_id: body?.id }
+          }
   },
   {
     mount: 'trucks',
@@ -191,19 +228,28 @@ export async function stampSupportAction(table, filter, staffUserId) {
 // not once per write.
 const NOTICE_DEDUPE_MS = 15 * 60 * 1000;
 
-async function notifyOncePerSection(userId, section, body) {
-  const { data: recent } = await supabaseAdmin
-    .from('notifications')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('type', 'support_team_action')
-    .eq('data->>section', section.mount)
-    .gte('created_at', new Date(Date.now() - NOTICE_DEDUPE_MS).toISOString())
-    .limit(1);
-  if (recent && recent.length > 0) return;
+// A section with several kinds of action (load-bids: accept vs decline)
+// dedupes each kind separately via data.action.
+async function notifyOncePerSection(userId, section, body, kind) {
+  if (kind !== 'approve') {
+    let query = supabaseAdmin
+      .from('notifications')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('type', 'support_team_action')
+      .eq('data->>section', section.mount);
+    if (kind) query = query.eq('data->>action', kind);
+    const { data: recent } = await query.gte('created_at', new Date(Date.now() - NOTICE_DEDUPE_MS).toISOString()).limit(1);
+    if (recent && recent.length > 0) return;
+  }
 
-  const { title, body: text, data } = section.notice(body);
-  await notifyUser(userId, { type: 'support_team_action', title, body: text, data: { ...data, section: section.mount } });
+  const { title, body: text, data } = section.notice(body, kind);
+  await notifyUser(userId, {
+    type: 'support_team_action',
+    title,
+    body: text,
+    data: { ...data, section: section.mount, ...(kind ? { action: kind } : {}) }
+  });
 }
 
 function stampAfterSuccess(section) {
@@ -213,6 +259,11 @@ function stampAfterSuccess(section) {
     const originalJson = res.json.bind(res);
     res.json = (body) => {
       if (res.statusCode >= 300) return originalJson(body);
+      const kind = section.noticeKind?.(req);
+      if (!section.table) {
+        notifyOncePerSection(req.user.id, section, body, kind).catch((err) => console.error('[executive] notify failed', err));
+        return originalJson(body);
+      }
       const filter = section.rowFilter(req, body);
       if (!filter) return originalJson(body);
 
@@ -222,7 +273,7 @@ function stampAfterSuccess(section) {
           if (body && typeof body === 'object' && !Array.isArray(body) && section.table !== 'kyc_cases') {
             body.support_staff_id = req.staffUser.id;
           }
-          notifyOncePerSection(req.user.id, section, body).catch((err) => console.error('[executive] notify failed', err));
+          notifyOncePerSection(req.user.id, section, body, kind).catch((err) => console.error('[executive] notify failed', err));
         })
         .catch((err) => console.error('[executive] support stamp failed', err))
         .finally(() => originalJson(body));
@@ -256,7 +307,8 @@ router.get('/users', async (req, res) => {
 
 // GET /api/executive/users/:userId/overview — everything the executive needs
 // on one screen while on the call: profile, KYC case + documents, bank
-// details, trucks, availability postings and recent loads. Read-only;
+// details, trucks, availability postings and recent loads (with bid
+// counts). Read-only;
 // bypasses actAsUser since it touches nothing.
 router.get('/users/:userId/overview', async (req, res) => {
   const { userId } = req.params;
@@ -283,6 +335,23 @@ router.get('/users/:userId/overview', async (req, res) => {
   const failed = [kycCase, bank, trucks, availability, loads].find((r) => r.error);
   if (failed) return res.status(400).json({ error: failed.error.message });
 
+  // Bid counts per load, for the Loads tab's "Bids" column — the bids
+  // themselves are fetched per load through the load-bids section.
+  const loadIds = (loads.data || []).map((l) => l.id);
+  const { data: bidRows, error: bidsError } = loadIds.length
+    ? await supabaseAdmin.from('load_bids').select('load_id, status, expires_at').in('load_id', loadIds)
+    : { data: [], error: null };
+  if (bidsError) return res.status(400).json({ error: bidsError.message });
+  const now = Date.now();
+  const bidSummary = new Map();
+  for (const b of bidRows || []) {
+    const sum = bidSummary.get(b.load_id) || { total: 0, pending: 0, approved: 0 };
+    sum.total += 1;
+    if (b.status === 'pending' && new Date(b.expires_at).getTime() > now) sum.pending += 1;
+    if (b.status === 'approved') sum.approved += 1;
+    bidSummary.set(b.load_id, sum);
+  }
+
   const { data: kycDocuments, error: docsError } = kycCase.data
     ? await supabaseAdmin.from('kyc_documents').select('document_type, file_name, uploaded_at').eq('case_id', kycCase.data.id)
     : { data: [], error: null };
@@ -297,7 +366,7 @@ router.get('/users/:userId/overview', async (req, res) => {
     bank_details: bankDetails,
     trucks: trucks.data || [],
     availability: availability.data || [],
-    loads: loads.data || []
+    loads: (loads.data || []).map((l) => ({ ...l, bids: bidSummary.get(l.id) || { total: 0, pending: 0, approved: 0 } }))
   });
 });
 
